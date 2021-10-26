@@ -1,0 +1,228 @@
+/***********************************************/
+/* 2col_leftNav.css                            */
+/* Use with template 2col_leftNav.html          */
+/***********************************************/
+
+/***********************************************/
+/* HTML tag styles                             */
+/***********************************************/ 
+
+body {
+	background: #FDF1E1;
+	font-family: Verdana,sans-serif;
+	color: #000000;
+	margin: 0px 0px 0px 0px;
+	padding: 0px 0px 0px 0px;
+}
+
+p {
+	margin: 10px 0px 0px 0px;
+	padding: 0px 0px 0px 0px;
+}
+	
+a:link, a:visited, a:hover {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+	
+h1, h2, h3, h4, h5, h6 {
+	font: bold;
+	margin: 10px 0px 0px 0px;
+}
+
+h1 { font-size: 120%; }
+
+h2 { font-size: 114%; }
+
+h3, h4, h5, h6 { font-size: 100%; }
+
+ul {
+	margin-top: 10px;
+	list-style-type: square;
+}
+
+ol {
+	margin-top: 10px;
+}
+
+ul ul {
+ list-style-type: disc;
+}
+
+table {
+		margin-top: 10px;
+}
+		
+label {
+ font: bold 100% Verdana,sans-serif;
+ color: #334d55;
+}
+
+
+/***********************************************/
+/* Layout Divs                                 */
+/***********************************************/
+
+#masthead {
+	margin: 0;
+	padding: 10px 0px 0px 0px;
+	border-bottom: 2px solid #cccccc;
+	width: 100%;
+}
+
+#navBar {
+	margin: 0 75% 0 0;
+	padding: 0px 0px 0px 10px;
+	font-size: 80%;
+}
+
+#content {
+  float:right;
+	width: 75%;
+	border-left: 2px solid #cccccc;
+}
+
+#gallery {
+    width: 100%;
+}
+
+/***********************************************/
+/*Component Divs                               */
+/***********************************************/
+
+#siteName {
+	margin: 0px;
+	padding: 0px 0px 0px 0px;
+}
+
+
+/*************** #pageName styles **************/
+
+#pageName {
+	padding: 0px 0px 10px 10px;
+}
+
+
+/************* #globalNav styles **************/
+
+#globalNav {
+padding: 0px 0px 10px 10px;
+font-size: 80%;
+}
+/* 'nowrap' prevents links from line-wrapping if there are too many to fit in one line
+   this will force a horizontal scrollbar if there isn't enough room for all links
+   remove rule or change value to 'normal' if you want the links to line-wrap */
+
+#globalNav img {
+ display: block;
+}
+
+#globalNav a {
+	padding: 0px 4px 0px 0px; 
+}
+
+
+/************** .feature styles ***************/
+
+.feature {
+	padding: 10px 0px 10px 10px;
+	margin: 0px 0px 0px 0px;
+}
+
+.feature img {
+	float: left;
+	padding: 0px 10px 10px 0px;
+}
+/* adjust margins to change separation between the feature image and text flowing around it */
+
+
+/************** .story styles *****************/
+
+.story {
+	clear: both;
+	margin: 0px 0px 0px 0px;
+	padding: 10px 0px 10px 10px;
+	border-top: 2px solid #cccccc
+}
+
+.image {
+	clear: both;
+	margin: 0px 0px 0px 0px;
+	padding: 10px 0px 10px 10px;
+	border-bottom: 2px solid #cccccc
+}
+
+/************* #siteInfo styles ***************/
+
+#siteInfo {
+	clear: both;
+	border-top: 2px solid #cccccc;
+	margin: 0px 0px 0px 0px;
+	padding: 10px 10px 0px 10px;
+}
+
+#siteInfo img {
+	padding: 0px 0px 10px 0px;
+}
+
+/* negative top margin pulls siteinfo up so its top border overlaps (and thus lines up with)
+	the bottom border of the navBar in cases where they "touch"
+
+#siteInfo img{
+	vertical-align: middle;
+	align: center;
+}
+*/
+
+
+/************* #search styles ***************/
+
+#search {
+	padding: 5px 0px 5px 10px;
+	border-bottom: 2px solid #cccccc;
+}
+
+#search form {
+ margin: 0px;
+ padding: 0px;
+}
+
+#search label {
+	display: block;
+	margin: 0px;
+	padding: 0px;
+}
+
+/*********** #navBar link styles ***********/
+/*
+#navBar ul a:link, #navBar ul a:visited {display: block;}
+
+#navBar h4 {
+	padding: 0px 0px 10px 0px;
+	}
+*/
+
+#navBar ul {
+	list-style: disc;
+	padding: 0px;
+	margin: 0px;
+	}
+
+/* hack to fix IE/Win's broken rendering of block-level anchors in lists
+#navBar li {border-bottom: 1px solid #cccccc;}
+*/
+
+/* fix for browsers that don't need the hack
+html>body #navBar li {border-bottom: none;}
+*/
+
+/*********** #sectionLinks styles ***********/
+
+#sectionLinks {
+	position: relative;
+	margin: 0px 0px 0px 0px;
+	padding: 0px 0px 0px 0px;
+}
