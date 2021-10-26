@@ -1,0 +1,1636 @@
+.MACRO	KED
+KED		Keypad Editor program
+
+  SYNTAX
+	KED                     ;invoke KED.SAV
+	*<filespec>[/options]   ;* is CSI prompt
+	*...
+	*^Z                     ;exit to CLI
+
+  SEMANTICS
+	See the RT-11 Keypad Editor User's Guide.
+
+	Termination of the Keypad Editor
+	[GOLD] [COMMAND] Prompt is Command:
+	EXIT [ENTER] to save current edit version
+	QUIT [ENTER] to terminate without saving edit modifications
+
+	To define page size, screen size and margin wrap
+	[GOLD] [COMMAND] Prompt is Command:
+
+	SET PAGE _ [ENTER] to number of lines per page (Default=Formfeed)
+	SET SCREEN _ [ENTER] to 80/132 characters per line on screen
+	SET WRAP _ [ENTER] to line length for auto right margin
+
+  OPTIONS
+	/C      Creates a new file
+	/I      Inspects input file;  does not allow changes
+		No switch to edit file.  A back-up file will be created with
+		the extension .BAK
+
+  EXAMPLES
+	See the RT-11 Keypad Editor User's Guide.
+.ENDM
+.MACRO	LIBR
+LIBR		Librarian program
+
+  SYNTAX
+	LIBR                    ;invoke LIBR.SAV
+	*[libraryfile][,listfile]=inputfiles[/options]
+	*...                    ;* is CSI prompt
+	*^Z                     ;exit to CLI
+
+  SEMANTICS
+	See the RT-11 System User's Guide
+
+  OPTIONS
+	/A      Includes in library directory all global symbols includeing
+		absolute global symbols
+	/C      Allows multiple input lines
+	/D      Deletes a module from a library file
+	/E      Extracts a module from a library and stores it as a .OBJ file
+	/G      Deletes a global symbol from a library directory
+	/M:n    Creates a macro library from an ASCII input file and allocates
+		n blocks for the macro name directory
+	/N      Includes module names in library directory
+	/P      Includes psect names in library directory
+	/R      Replaces modules in a library file
+	/U      Updates (inserts and replaces) modules in a library file
+	/W      Produces a wide (132 column) library directory listing
+	/X      Creates a library with multiple global definitions
+	//      Allows multiple input lines until next occurance of //
+		no option Assumes module insertion
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	LINK
+LINK		Linker program
+
+  SYNTAX
+	LINK                    ;invoke LINK.SAV
+	*[binfile][,mapfile][,stbfile]=objfiles[/options]
+	*...                    ;* is CSI prompt
+	*^Z                     ;exit to CLI
+
+  SEMANTICS
+	See the RT-11 System User's Guide
+
+  OPTIONS
+	/A      Lists global symbols in alphabetical order
+	/B:n    Sets bottom address of program to n;  invalid with /H and /R
+	/C      Continues input on new line;  do not use with //
+	/D      Allows duplicate library subroutines
+	/E:n    Extends root program segment to specified value
+	/F      Uses default FORTRAN library FORLIB.OBJ when linking
+	/G      Increases size of linker's library directory buffer
+	/H:n    Specifies highest address to be used by relocatable code;
+		invalid with /B, /Q, /R, /Y
+	/K:n    Inserts value of n into word 56 of block 0 as virtual SETTOP
+		high limit;  n can be 1 to 32 (decimal);  valid only with /V
+	/L      Produces output file in .LDA format;  invalid with /R, /V
+	/M:n    Defines stack address
+	/N      Produces global cross-reference listing as part of load map
+	/O:n    Produces overlay structure;  invalid with /L
+	/P:n    Changes amount of space linker uses for library routines;
+		default is 170
+	/Q      Specifeis start address of up to eight root program sections;
+		invalid iwht /R, /H
+	/R:n    Produces output in .REL format;  n is the stack size;  invalid
+		with /B, /H, /K, /L, /Q
+	/S      Allows maximum memory space for linker symbol table
+	/T:n    Defines transfer address
+	/U:n    Rounds up a program section;  n must be a power of 2
+	/V      Enables special XM monitor SETTOP and LIMIT features;  invalid
+		with /L
+	/W      Produces a wide load map listing (132 columns)
+	/X      Does not output bitmap if codes is below 400
+	/Y:n    Starts a program section on address boundary n;  invalid with
+	/H
+	/Z:n    sets unused location to n
+	//      Allows multiple input lines;  use on first and last lines of
+		input
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	LOG
+LOG		Log process
+
+  SYNTAX
+	None
+
+  SEMANTICS
+	The Log process is used to record significant system events (traps)
+	for later analysis.  Traps are evoked when unusual but nonfatal
+	network events occur, such as invalid packet formats, misrouted
+	datagrams, etc., and when users log in and out of the system, for
+	example.
+
+	The data are recorded in a special file called LOG.TXT, which can be
+	created using the CRMAIL utility and inspected using any text editor.
+	Each line begins with a timestamp followed by the PID of the process
+	generating the line. The data describing the event occupies the
+	remainder of the line. Detailed coding formats are described in the
+	program module identified following the "?" character.
+
+	The Log process is also used to initiate TCP server processes and
+	initiate daemons to send or receive mail and transmit spool files,
+	if enabled.
+
+  OPTIONS
+	The Log process runs as a special server (dedicated user process).
+	Any of the commands which change fixed user-process tables (see
+	HELP information for USER) can be used with the Log process as well,
+	including the ON and OFF commands.
+
+	The ON and OFF commands can be used to set and clear bits in the
+	options word of the parameter area associated with the process.  The
+	ON command sets the option bits corresponding to the one bits of
+	<code> (which is an octal value) to one, while the OFF command sets
+	these bits to to zero.  Options for the Log process are as follows:
+
+	2	Log to file LOG.TXT (OFF: disable, ON:  enable)
+	3	Log to terminal TT: (OFF: disable, ON:  enable)
+	4	Mail daemon (OFF: disable, ON: enable)
+	5	Spool daemon (OFF: disable, ON: enable)
+
+  EXAMPLES
+	17:19:56 002 ?TRAP-I-TCP service request [10.2.0.62] 37
+	17:19:58 042 ?TELSRV-I-Open UT-SALLY.ARPA 37
+	17:20:03 042 ?TELSRV-I-Closed
+	18:10:21 006 ?TRAP-I-ICMP 005 000 [10.0.0.89] -> [128.8.0.2]
+	18:13:08 050 ?GATE-F-Neighbor down 2 [10.3.0.27]
+	18:24:19 046 ?UDP-I-Time request [18.26.0.8]
+	18:24:34 046 ?UDP-I-Name request [18.26.0.8]
+	18:30:54 006 ?TRAP-I-Leader error 000017 003400 001400 015400 000633
+	18:33:59 006 ?TRAP-I-ICMP 005 000 [10.0.0.89] -> [128.8.0.2]
+	18:34:22 012 ?TRAP-I-Link up
+	18:37:30 014 ?TRAP-I-Link down
+	18:44:46 046 ?UDP-I-Time request [18.26.0.33]
+	18:50:14 050 ?GATE-I-Neighbor up 2 [10.3.0.27]
+.ENDM
+.MACRO	LOGIN
+LOGIN		Assign user private volume
+
+  SYNTAX
+	login <username> <password> ;entered by user
+				;or
+	login <username>	;entered by user
+	Password: <enter user password> ;host prompts for pw
+				;or
+	login                   ;entered by user
+	Userid: <enter user name> ;host prompts for name
+	Password: <enter user password> ;host prompts for pw
+
+  SEMANTICS
+	This program is used to log a user into the system, as well as assign
+	a private volume for his files. Its use is mandatory for remote
+	virtual-terminal (see TELSRV) and file-transfer (see FTPSRV) access
+	and optional for local access. See the SYSMGR information and the ON
+	command in the USER information for further information.
+
+  OPTIONS
+	None, but see also the help information for LOGOUT.
+
+  EXAMPLES
+	.login smith
+	.Password:
+	(Note:  the password is not echoed and a message is given only in the
+	event of an error.)
+.ENDM
+.MACRO	LOGOUT
+LOGOUT		De-assign user private volume
+
+  SYNTAX
+	logout                  ;entered by user
+
+  SEMANTICS
+	After a user has assigned a private volume using the LOGIN command,
+	the default volume may be restored by typing LOGOUT. Also causes
+	disconnect in the case of the TELNET server.
+
+  OPTIONS
+	None, but see also the help information for LOGIN.
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	MACPIC
+MACPIC		Macintosh to bitmap conversion
+
+  SYNTAX
+	MACPIC			;invoke MACPIC.SAV
+	*<outfilespec>=<infilespec>
+	*...                    ;* is CSI prompt
+	*^Z                     ;exit to CLI
+
+  SEMANTICS
+	This program reads a MacPaint file encoded in uuencode format and
+	constructs a bitmap file in Sun format.
+
+	The first 512 bytes of the file are the header. The first four bytes
+	comprise the version number, followed by 38 * 8 = 304 bytes of
+	patterns. The remaining 204 bytes are reserved for future expansion.
+	If the version number is zero, the patterns are ignored. Hence,
+	programs that wish to create files to be read into MacPaint can just
+	write out 512 bytes of zero as the header. Following the header are
+	720 compressed scanlines of data which form the 576 wide by 720 tall
+	bitmap.
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	MAIL
+MAIL		Message and mail-file formats
+
+  SYNTAX
+	See RFC-822.
+
+  SEMANTICS
+
+	The format of the ARPANET message data structures is described in
+	RFC-822.  In this model messages are sent by a user to a specified
+	recipent in the format <username>@<hostname>, where <hostname> is the
+	name of a host and <username> is the name of an user known to that
+	host.  The implied address, usually called a mailbox, is typically
+	associated with a mail file belonging to the recipient.  The mail file
+	format used in the Fuzzball system is line-structured, with each line
+	terminated by the ASCII sequence <CR><LF>, and contains only ASCII
+	printing characters and format effectors.  Messages consist of a file
+	header, which contains a character count, followed by the message
+	itself.  Messages are stored one after the other with the last
+	followed by an ASCII <SUB> character for compatibility with other
+	RT-11 components.  Figure 1 shows the format of a typical message.
+
+	17-Sep-83 17:53:49,314;000000000000
+	RCPT to:<Zorica@dcn5>
+	RCPT to:<@dcn1:Gross@dcn5>
+	DLVD to:<Mills@dcn6>
+	Return-path:  <Mills@dcn6>
+	Date:  17-Sep-83 17:53:25-UT
+	From:  Mills@dcn6
+	Subject:  Test message
+	To:  Zorica@dcn5
+	cc:  <@dcn1:Gross@dcn5>, Mills@dcn6
+
+	Folks,
+
+	This message demonstrates RFC-821 and RFC-822 formats.
+
+	Dave
+	-------
+
+	The first line is the file header, including the date, time and count
+	of characters in the message text, and followed by an array of twelve
+	flag characters used by other programs of the message system.  The
+	message itself begins immediately following the <CR><LF> which
+	terminates this line and includes first the transport (RFC-822) header
+	followed by the message (RFC-821) header and, finally, the body of the
+	message itself.  In the above example the lines beginning with RCPT
+	and DLVD belong to the transport header and the lines following that
+	up until the blank line belong to the message header.
+
+	Mail files can be created in three ways:  (1) by copying a mail file
+	from a TOPS-20 or Fuzzball host as-is to a Fuzzball host, (2) by
+	creating and appending a new message locally and (3) by receiving and
+	appending a message from another host.  Case (1) has been found useful
+	during testing and in cases involving large amounts of mail which can
+	be bulk-transferred more efficient file-transfer protocols like FTP
+	and NIFTP. However, TOPS-20 files do not include the transport header,
+	so that messages sent from these files require manual intervention.
+	Case (2) is implemented by an interactive mail editor which operates
+	much like the TOPS-20 SNDMSG program to construct and edit messages
+	and append them, along with their transport and message headers,
+	onto a specified mail file.  Case (3) is implemented by the SMTP
+	Server, which listens for messages from the network and appends them
+	onto the UNSENT.MSG mail file.
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	See above.
+.ENDM
+.MACRO	MESSAGES
+MESSAGES	Network messages
+
+  SYNTAX
+	?<code>-<severity>-<string>
+		<code>		name of module originating the message
+		<severity>	I = information, W = warning, F = fatal
+		<string>	explanatory string
+
+  SEMANTICS
+	Following is a list of network-related messages which may be generated
+	by network-layer and transport-layer protocol modules. In most cases
+	additional information is available in the help information under the
+	name indicated in the <code> field.
+
+	?<code>-I-Open
+		The connection has opened successfully.
+	?<code>-I-Closed
+		The connection has closed and all resources returned to the
+		operating system.
+	?<code>-F-Invalid signal
+		This indicates a serious, probably fatal, software error.
+	?<code>-I-Remote disconnect
+		The remote end of the connection has initiated a close
+		sequence (FIN indication). The sequence will be complete only
+		after the local end initiates a companion close sequence.
+	?<code>-I-Remote interrupt
+		The remote end of the connection has initiated a TCP URGENT
+		sequence, but no provision for that has been incorporated in
+		the local end.
+	?<code>-W-Connection error: <string>
+		An error in the protocol or network has been recognized,
+		either explicitly by an ICMP message received from the network
+		or implicitily as the result of a problem in the local host
+		routing tables. Additional information is provided by
+		<string>, which can be one of the following:
+	
+		String			Source		Most probable cause
+		-----------------------------------------------------------
+		unspecified reason	internal	software error
+		parameter error		ICMP message	bad datagram format
+		time exceeded		ICMP message	routing loop
+		reassembly error	ICMP message	high packet losses
+		net unreachable		ICMP message	remote gateway down
+		host unreachable	ICMP message	remote host down
+		protocol unreachable	ICMP message	unsupported protocol
+		port unreachable	ICMP message	unsupported service
+		fragmentation error	ICMP message	bad datagram format
+		source route failed	ICMP message	bad network route
+		gateway down		local routing	local gateway down
+		host down		local routing	local host down
+
+	?<code>-W-Host not responding: <string>
+		A timeout has occured during transmission due to the condition
+		indicated by <string>, which may be one of the following:
+
+		String				Condition
+		--------------------------------------------------------------
+		unspecified reason		software error
+		initial connection timeout	waiting for connection to open
+		ACK timeout			waiting for acknowledgment of
+						  data sent
+		send window timeout		waiting for the receiver to
+						  accept more data
+		idle connection timeout		nothing whatever heard for an
+						  unreasonably long time
+
+	?<code>-F-Connection reset:
+		A TCP RESET segment has been received, usually indicating a
+		broken or unsynchronized connection. Additional information is
+		provided by <string>, which can be one of the following:
+
+		String				Cause
+		--------------------------------------------------------------
+		unspecified reason		software error
+		connection-open state		(a) unsupported service (port)
+						  or (b) previous half-open
+						  connection
+		data-transfer state		other end has crashed or timed
+						  out and has restarted
+		connection-close state		other end has prematurely
+						  terminated TIME-WAIT state
+
+	?<code>-I-Listening...
+		This message, produced by some modules, indicates the module
+		is listening for a connection request and does not represent
+		an error.
+	?<code>-F-Connection open error
+		An attempt was made to transfer data over a connection that
+		has not opened or an attempt was made to open a connection
+		already open. This usually indicates a software error.
+	?<code>-F-Invalid parameter
+		An invalid parameter was detected in a call to a system
+		routine, indicating a software error.
+	?<code>-W-Insufficient resources
+		Sufficient system resources are not currently available for
+		the operation requested. Protocol modules typically retry the
+		operation, so this message does not necessarily indicate an
+		error.
+	?<code>-W-Gateway down
+		A local gateway is down.
+	?<code>-W-Host down
+		A local host is down.
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	MMM
+MMM		Multi-Media Mail program
+
+  SYNTAX
+	MMM			;invoke MMM.SAV
+	...                     ;* is prompt
+	QUIT			;return to CLI
+
+  SEMANTICS
+
+	The Multi-Media Mail (MMM) program is used to compose, read, answer
+	and forward documents in the format described in RFC-759 and RFC-767
+	as amended. It is designed to operate with other user and server
+	programs conforming to these protocols. Multi-media messages can be
+	composed and displayed under either the RT-11 or Fuzzball operating
+	systems; however, they can be sent to and received from other systems
+	only under the Fuzzball operating system.
+
+	The MMM program can be used with ordinary text data and no special
+	peripheral devices other than a standard video or hardcopy terminal;
+	however, full functionality requires special peripheral devices for
+	non-text data. The Fuzzball operating system presently supports the
+	Lincoln Laboratory LPCM Speech Codec for voice data input/output, the
+	Dacom 450 Facsimile Transceiver for hardcopy image and facsimile data
+	input/output and the Peritek VCG Color Bitmap Display for text, image,
+	facsimile and graphics data presentation.
+
+	Following is a summary of the data types, protocols and attributes
+	presently supported:
+
+	Data type	Protocol		Attributes
+	---------------------------------------------------------------------
+	Text		VERBATIM, PARAGRAPH	size, font (Peritek VCG only)
+	Image		BITMAP			width, height
+	Voice		LPC			none
+	Facsimile	Rapicom-450-BLOCK	none
+	Graphics	TEKTRONIX		(see elsewhere)
+
+	The MMM program is is used in interactive mode to compose and display
+	multi-media messages. It consists of a number of overlayed modules
+	which operate with special files, called mailbags, in RFC-759 format.
+	A mailbag consists of a list structure containing one or more
+	multi-media messages, each of which includes the message proper in
+	Multi-Media Content Protocol (MMCP) format enclosed in an envelope in
+	Multi-Media Transport Protocol (MMTP) format. A mailbag is queued by
+	MMM for transmission to a designated Internet host, following which
+	the system spooler daemon (PRTQ) transmits it using TCP and port
+	number 45 as specified in RFC-759.
+
+	Upon recognizing a TCP connection request on port 45, the TCP
+	dispatcher (TELSRV) activates the MMM program in daemon mode to
+	process the incoming mailbag. The program extracts messages from the
+	mailbag and delivers them to the respective users and also queues
+	acknowledgments for these messages, which are then returned to the
+	sender via the system spooler daemon.
+
+	Acknowledgements for previously sent messages may also be included in
+	the mailbag. These are extracted by the MMM program and matched with
+	previously sent but not acknowledged messages. Upon successful match
+	the message and its acknowledgment are discarded.
+
+	Each MMM message is saved in a separate file with extension MMM and
+	can be separately extracted and read using the MMM program. As the
+	message is read various data objects, including speech, image and text
+	data, either displayed immediately or sent to the spooling system for
+	possible forwarding to special devices that may be attached to other
+	hosts. Alternativiely, the data objects can be stored in local files
+	for later manipulation or playback.
+
+	A MMM message is constructed from data previously recorded, including
+	speech, image and text data stored in separate files. The MMM program
+	is used to assemble these data objects in the message, include address
+	and subject information and send the message to the spooling system
+	for transmission. Facilities are included to answer and forward
+	previously received messages.
+
+  OPTIONS
+   ANSWER
+	Answer a previously received message. The program will prompt for the
+	<filespec> of the message, then prompt for each data item in turn
+	("Protocol?") as described under the SEND command.
+   PLAY
+	Playback MMM message previously read using the READ command. The
+	program will display the message header followed by a request for
+	disposition for each data object in the message. In each request
+	the type and size of the object is displayed followed by the
+	default device name. An empty line causes the data to be output
+	to that device, which need not reside on the same machine.
+	Alternatively, a <filespec> causes the data to be stored in the
+	file of that name with default extensions shown in the SEND command.
+   QUIT
+	Return to the CLI.
+   READ <filespec>
+	Read MMM mailbag <filespec> (default extension is MMM).
+   SEND
+	Compose and send an MMM message to one or more recipients. The
+	program will prompt first for the "To:" list and expect a recipient
+	in the usual form <user>@<hostname> in each line, with the list
+	terminated by a single <CR>. It will then prompt for the "Cc:"
+	list in the same way. Next, it will prompt for the "Subject:" line
+	and, finally, for each data item in turn ("Protocol?"). In response
+	to the data-item prompt, the one of the following can be supplied:
+
+	Name		Data Type	  Extension
+	-------------------------------------------
+	VERBAT		ASCII Text		TXT
+	IMAGE		Sun bitmap		BIT
+	VOICE		LPCM Voice		LPC
+	FACSIM		Dacom Facsimile		FAX
+	GRAPHI		Tektronix Graphics	TEK
+	DOCUME		MMM Message		MMM
+
+	The program will then ask for the name of the file containing the
+	data type and insert it into the MMM message. The list of data types
+	is terminated by an empty line. At this point the message is queued
+	for transmission.
+   SHOW
+	Display data structure summary, including tallies of nodes, main
+	storage, temporary files and file sizes.
+
+  EXAMPLES
+	.mmm
+	DCN6.ARPA MMM User Process (11-Oct-84 Version) 05-Jan-86 01:47:28
+	*read msg56
+	*play
+
+	Return-path: <MPM@[10.3.0.52].ARPA,MPM@dcn6.arpa>
+	Received-from: USC-ISIB.ARPA by dcn6.arpa at 1985-12-24-02:43:57
+	Transaction: 6230 number 48444
+
+	Date: 1985-12-23-12:17:25,000-07:00
+	From: JKReynolds@USC-ISIB.ARPA
+	Subject: Christmas Vision
+	To:   mills@dcn6.arpa, forsdick@bbn-diamond.arpa,
+	      rthomas@usc-isib.arpa, tcrowley@bbn-jade.arpa,
+	      rschaaf@usc-isib.arpa, rtomlinson@usc-isib.arpa,
+	      travers@bbn-diamond.arpa, clynn@bbn-diamond.arpa,
+	      khuber@bbn-diamonds.arpa, jsecunda@bbn-diamond.arpa
+
+	--- Sequential presentation ---
+
+	Image protocol BITMAP-1 [508x82 pels] (11 blocks): Destination [VCG:]?
+		[The image appears immediately on the Peritek display.]
+
+	Image protocol BITMAP-1 [504x471 pels] (58 blocks): Destination
+		[VCG:]? joyce
+		[The image is stored in the file JOYCE.BIT in Sun bitmap
+		format for possible later display or transport to a Sun
+		workstation or another Fuzzball.]	
+
+	*read msg55
+	*play
+
+	Return-path: <MPM@bbn-diamond.arpa,MPM@DCN6.ARPA>
+	Received-from: bbn-diamond.arpa by DCN6.ARPA at 1985-11-07-17:33:50
+	Transaction: 350 number 1
+
+	Date: 1985-11-07-12:39:00,0-05:00
+	From: forsdick@bbn-diamond.ARPA
+	Subject: Stock Market and Weather for November 7, 1985
+	To:   Mills@DCN6.ARPA, MOConner@ISIB.ARPA
+	Cc:   Forsdick@BBN-Diamond.ARPA
+
+	--- Sequential presentation ---
+
+	Text protocol Verbatim-1 (2 blocks): Destination [TT:]? 
+	From the New York Times, Thursday November 7, 1985:
+
+	With a concerted push from institutional investors in the waning
+	minutes of trading, the Dow Jones industrial average jumped the
+	historic 1,400 hurdle yesterday with relative ease, ending the day at
+	1,403.44. ... The Dow first closed above 1,000 on Nov. 14, 1972. It
+	took more than 10 years, until Feb. 24, 1983, for it to finish above
+	1,100.  In the rush of that year's bull market, it was just two months
+	-- until April 26 -- before the Dow ended above 1,300.
+
+	Text protocol Verbatim-1 (1 blocks): Destination [TT:]? 
+                                       Satellite Photo
+                         Nov 6 2 P.M. (EST)
+
+	Image protocol BitMap-1 [664x459 pels] (75 blocks): Destination
+		[VCG:]?
+		[A satellite photograph appears immediately on the Peritek
+		display.]
+
+	Text protocol Verbatim-1 (1 blocks): Destination [TT:]? 
+	Low and middle clouds extend from New England to the Ohio Valley.  A
+	band of frontal clouds causing light and moderate rain extends from
+	the upper lake region to Oklahoma. Skies are mostly clear over the
+	southern portion of the country and the Midwest.  Broken clouds and
+	snow are visible over the Rockies and the Northwest.
+
+	Image protocol BitMap-1 [683x494 pels] (83 blocks): Destination
+		[VCG:]? 
+		[A weather map appears immediately on the Peritek display.]
+
+	Voice protocol LPCM-1 (24 blocks): Destination [LPC:]? 
+		[The speech data are automatically stored in a spool file,
+		transmitted to another Fuzzball equipped with an LPCM
+		speech codec and decoded. Meanwhile, the operator dials
+		a special PBX trunk (code 422 in our version) and hears
+		the playback.]
+
+	*send
+	To? mills@dcn7
+	To? 
+	Cc? 
+	Subject? Test message
+	Protocol? verbat
+	Text protocol source? y.txt
+	Protocol? image
+	Image protocol source? joyce
+	Protocol? 
+	?MMM-I-Queue MILLS DK:VM3001.MMM[61] for [128.4.0.7]
+	*quit
+.ENDM
+.MACRO	MSG
+MSG		Mail reader program
+
+  SYNTAX
+	MSG                     ;invoke MSG.SAV
+	...                     ;-> is prompt
+	Q(uit) or E(xit) or ^Z  ;return to CLI
+
+  SEMANTICS
+	This module is part of the groupe of modules (SNDMSG,CRMAIL,SMTP)
+	which form the mail system The purpose of MSG is to examine and
+	operate on messages that are stored in the mail file.
+
+	The program first attempts to open a given file which has to be in the
+	mail format (created by CRMAIL).  If it succeedes it creates a table
+	which holds the information about each message.  The information is :
+	offset to that message and number of bytes in that message.  After
+	displaying the information about the file blocks:
+
+	A maximum of 500 file blocks are available of which 70 are in use.
+
+	it displayes a promt ' <- '.  The process is now ready to accept the
+	user command.  Every command is followed by a message sequence which
+	is composed of one of the following:
+
+	1) a number
+	2) two numbers separated by any nonnumeric character
+	3) one of the following special sequence characters:
+	A - All messages
+	D - Deleted messages
+	E - Examined messages
+	I - All messages in inverse order
+	N - Not examined messages
+	U - Undeleted messages
+
+	The valid command characters and their operations are:
+
+	A -     Answers to the specified message
+	The process first displayes the header of the message-
+	Answer message:
+	1       09-Mar  Mills at dcn3   COMSAT final report(298char)
+	then it chains to the SNDMSG process to form the answer message.
+	Below are the prompt fields issued by the SNDMSG process:
+
+	From:  - enter user address
+
+	Reply-to (t or c):  - request for the address that will appear on the
+	'To:' line in the answer message.  In every case the address from the
+	'From:' field in the original message ( the senders address) is
+	entered on the 'To:' line.  The following are the options for the
+	'To:' line:
+	[RET]   - only the senders address
+	t       - senders address and all the address in the 'To:'
+	field of the original message
+	c       - senders address, all the addresses in the original 'To:'
+	field and all the addresses in the original 'Cc:' field.
+
+	Cc:     - Additional address
+	Message:  - text of the message
+
+	^Z terminates the message after which the program chains back to the
+	MSG.  Note that the user is not prompted for the subject.  The answer
+	messsage uses the same subject title that was in the original message
+	prefixed by 'Re:'.  The only time when the user is promted for the
+	subject is when the original message does not have that field.  (for
+	more information check SNDMSG)
+
+	B -     Backup, print previous message
+	It prints the message in the same format as in t command
+
+	C -     Print the information about the current message number and
+	file name:
+
+	Current message number is 36 of 37 messages in the file UNSENT.MSG
+	A maximum of 500 file blocks are availableof which 70 are in
+	use.
+	D -     Mark a given message sequence for deletion.  The message
+	remains part of the file until the file is updated.
+
+	E -     Exit the program and update the open file
+	Examines all of the messages and deletes the ones that are marked for
+	deletion.
+
+	F -     Forward one or more messages
+	The process first displayes headers of all the messages that have to
+	be forwarded:
+
+	Forward message(s):
+	1       09-Mar  Mills at dcn3   COMSAT final report
+
+	After this the process chains to SNDMSG which will build the message
+	that has to be forwarded.  (check SNDMSG for explanation of promt
+	fields).  The first part of the message text is the text that the user
+	types in.  The second part is the inserted forwarded message(s).
+	Forwarded text is preceeded by the line that says-
+
+	--- beginning of forwarded message ---
+
+	and ended by the line
+
+	--- end of forwarded message ---
+
+	^Z will complete the message and chain back to MSG.
+
+	G -     Set the current message number to the one given
+
+	H -     Print the header information of the given message sequence
+	Prints the message number, date, from filed and the first 30
+	characters of the subject field:
+
+	1       09-Mar  Mills at dcn3   COMSAT final report
+
+	I -     Include the byte count in the headers
+	It is an ON/OFF switch giving either a prompt
+	Length included
+	or      Length NOT included
+	in the present implementation the length is always included
+
+	L -     Create a listing file of the given message sequence
+	After entering the l command with the message sequence the process
+	prompts for the file name -
+
+	List file name:
+	and then copies all the required message into the given file
+
+	N -     Next, print next message
+	Same action as the t command
+
+	P -     Put a message from the open file into another file
+	The file created of the specified subset of messages is again in the
+	mail file format
+
+	Q -     Quit the msg program
+	Quits the MSG program closing the mail file without updating it (see E
+	command)
+
+	S -     Chain to SNDMSG
+	chains to SNDMSG process inorder to create a new message (for more
+	information see SNDMSG)
+
+	R -     Use the given file as the active file
+	It opens a message file.  If another message file was already active
+	it closes that file and issues a prompt -
+
+	Mail file name:
+	The new file becomes an active mail file
+
+	T -     Displayes a given message sequence to the console
+
+	U -     Unmark a given message sequence for deletion
+
+	-       Mark a given message sequence as examined
+
+	- -     Mark a given message sequence as not examined
+
+	!  -    Search the file "UNSENT.TXT"
+
+	?  -    Type a list of valid command characters to the console
+	Prints the text from the msg.hlp file
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	NETCLK
+NETCLK		Network set-clock program
+
+  SYNTAX
+	NETCLK	<hostname>	;invoke NETCLK.SAV
+
+  SEMANTICS
+	This program can be used to set the local host date and time from a
+	remote host supporting an RFC-868 compatible time server. The
+	<hostname> defaults to DCN1.ARPA, which is presently synchronized
+	to NBS Radio WWVB to within a few milliseconds.
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	NETWORK
+NETWORK		Network Process commands
+
+  SYNTAX
+	SET <devname> <command> <argument> ;CLI command
+
+  SEMANTICS
+	See USER process commands and GENERAL help information
+
+  OPTIONS
+   ASG <logname> <device>
+	This command is used for special network processes that can process
+	ASCII data in addition to ordinary datagrams. It is used to establish
+	the process or device as the destination of ASCII data received via
+	the link.
+   CMD
+	List the available commands.  Additional information is available with
+	the HELP program.
+   DEVICE <logname>
+	Display a formatted summary of the device table, which establishes the
+	association between the logical and physical names of each process
+	together with additional data.  If <logname> is a valid logical name,
+	the data associated with that process is displayed.  If <logname> is
+	defaulted the entire table is displayed.
+   IDENT <address>
+	Set the address assigned to the link to <address>.  Note that these
+	values are constructed automatically during normal system operations,
+	so that this command is intended only for exceptional circumstances.
+   OFF <code>
+	The ON and OFF commands can be used to set and clear bits in the
+	options word of the parameter area associated with the process.  The
+	ON command sets the option bits corresponding to the one bits of
+	<code> (which is an octal value) to one, while the OFF command sets
+	these bits to to zero.  Options for the network process are as
+	follows:
+
+	10      Link enable (OFF:  enable, ON:  disable)
+	11      HELLO neighbor (OFF:  enable, ON:  disable)
+	13      External loopback (OFF:  disable, ON:  enable)
+	14      HELLO messages (OFF:  disable, ON:  enable)
+
+   ON <code>
+	(see the OFF command)
+   SHOW
+	Display a formatted summary of various quantitites of interest,
+	including packet tallies, network parameters and addresses.
+   SIZE <size>
+	Set the buffer size for inbound datagrams and the maximum fragment
+	size for outbound datagrams to <size>. Note that the size is
+	ordinarily set at the maximum transmission unit (MTU) size, which is
+	an intrinsic parameter of the network, so that this command is
+	intended only for exceptional circumstances.
+   STATUS
+	Display a formatted summary of device-dependent status variables. The
+	interpretation of these data depend on the various device drivers
+	used.
+
+	There are several formats for the status information depending upon
+	the network driver and configuration. Among these are the following:
+
+	Code	Driver/network
+	--------------------------------
+	ARP	ARPAnet 1822 DH protocol
+	DCN	DCnet network link
+	DMV	DCNet DMV11 network link
+	ETH	Ethernet
+	HDH	ARPAnet HDH protocol
+	PCG	IBM PCIP gateway
+	PKT	AX.25 packet radio
+	X25	X.25 network link
+
+  EXAMPLES
+	.set lh0 cmd
+	Commands are:
+	CMD   SHO   ON   OFF   ID   SIZ   STA
+
+	.set lh0 sho
+	Process type:  000027 options:  040000
+	Subnet:  DCN status:  0 min buf:  0 retry:  3750
+	Foreign address:  [0.0.0.0] max size:  256
+	Input packets:    0
+	  bad format:     0
+	  bad checksum:   0
+	  returned:       0
+	  dropped:        0
+	  HELLO msgs:     0
+	ICMP msgs:        0
+	Output packets:   29
+	Input errors:     0
+	Output errors:    0
+	No buffer:        0
+.ENDM
+.MACRO	NIFTP
+NIFTP		Network-independent file transfer program
+
+  SYNTAX
+	NIFTP                   ;invoke NIFTP.SAV
+	...
+	QUIT                    ;exit to CLI
+
+  SEMANTICS
+	The Network-Independent File Transfer Protocol (NIFTP) has been the
+	object of an ongoing standardization effort in the United Kingdom.
+	The current specifications are given in a document called the Blue
+	Book and published by the National Physical Laboratory in 1980.  A
+	subset of this protocol is supported for file transfers between
+	Fuzzball hosts and certain TOPS-20 ARPANET hosts using two programs,
+	the NIFTP User, a PDP11 program written in the C language by Steve
+	Treadwell and the NIFTP Server, a TOPS-20 program written in the BCPL
+	language by Chris Bennett, both of University College London.
+
+	The NIFTP User runs in interactive mode on a Fuzzball host. The NIFTP
+	Server resides at a TOPS-20 ARPANET host (presently USC-ISIE) and is
+	activated upon receipt of a TCP connection on port 47.  The NIFTP User
+	is controlled by user commands in the same way as the Command Language
+	Interpreter (CLI) and other user programs.  It in turn controls the
+	NIFTP Server by the protocol specified in the Blue Book.  These
+	programs can also be used with other implementations conforming to the
+	Blue Book protocol.
+
+	A file transfer operation proceeds by first specifying the remote host
+	using the CONNECT command and then the user name and password using
+	the LOGIN command.  Following this, the SEND and GET commands are used
+	to transfer files to and from the remote host as required.  For each
+	transfer a connection is established to the NIFTP Server, which
+	verifies the user name and password and establishes the working
+	directory, following which the file transfer takes place.  At the
+	conclusion of the file transfer the connection is closed.  The QUIT
+	command is used to exit to the CLI.
+
+	The NIFTP User is normally controls all connection and file-transfer
+	operations.  The syntax of NIFTP User commands is similar to that of
+	CLI commands and consists of a keyword followed by a list of arguments
+	separated by spaces.  Only the first three characters of a keyword are
+	significant.  In the case of some commands expecting two file names as
+	arguments, if the second argument is missing a copy of the first
+	argument replaces it.  Ordinarily this convention leads to the
+	intended action;  however, there are cases where misdirected use of
+	this feature can result in unintended actions.
+
+	The NIFTP User prompt is "*", signifying the program is ready for the
+	next command.  A prompt appears as each command sequence is completed
+	with the NIFTP Server.  Prompts will not appear following commands
+	which have only local significance or in which errors are detected.
+
+  OPTIONS
+   ABORT
+	If a data transfer is not in progress, do nothing.  Else, send the
+	NIFTP Server ABORT signal and wait for the connection to be closed
+	from the remote end.
+   ASCII
+	The ASCII and IMAGE commands set the mode for subsequent file
+	transfers.  The default is ASCII.
+   BRIEF
+	The BRIEF and VERBOSE commands control output of detailed commentary
+	dialog.  BRIEF disables this and VERBOSE enables it.  The default is
+	BRIEF.
+   CONNECT <hostname> <port>
+	Set the <hostname> and <port> for a subsequent file transfer.  The
+	<hostname> specification is in the form n1,n2,n3,n4, where n1,...,n4
+	are decimal integers with values in the range 0-255, and the default
+	is the ARPANET host USC-ISID (10,1,0,27).  The <port> specification is
+	a decimal number in the range 0-32767 with a default of 47 (NIFTP).
+   GET <remotename> <localname>
+	Open a connection to the remote host previously specified by the
+	CONNECT, LOGIN and ASCII/IMAGE commands.  Then transfer the file
+	<remotename> on the remote host to <localname> on the local host.  The
+	<remotename> must contain no more than 40 ASCII printing characters,
+	while the <localname> must be a valid RT-11 file name or sequential
+	device name.  If <localname> is missing, assume the string
+	<remotename> in its place.
+   HELP
+	Display helpful information, including a list of commands.
+   IMAGE
+	(see the ASCII command)
+   LOGIN <user> <password>
+	Specify the <user> and <password> for subsequent data transfers.  Both
+	<user> and <password> must contain no more than 40 ASCII printing
+	characters.
+   QUIT
+	Execute an implied ABORT command and exit to the CLI.
+   SEND <localname> <remotename>
+	Open a connection to the remote host previously specified by the
+	CONNECT, LOGIN and ASCII/IMAGE commands.  Then transfer the file
+	<localname> on the local host to <remotename> on the remote host.  The
+	<localname> must be a valid RT-11 file or sequential device name,
+	while the <remotename> must contain no more than 40 ASCII printing
+	characters.  If <remotename> is missing, assume the string <localname>
+	in its place.
+   SHOW
+	Display a formatted summary of various quantitites of interest,
+	including the current host, file and block number.
+   VERBOSE
+	(see the BRIEF command)
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	PING
+PING		Internet measurements program
+
+  SYNTAX
+	PING                    ;invoke PING.SAV
+	...
+	QUIT                    ;exit to CLI
+
+  SEMANTICS
+	The Packet InterNet Groper (PING) is an internet measurement and
+	debugging tool.  It can function both as a user and server and is
+	normally run in interactive mode by a user at a Fuzzball host. PING is
+	designed to send datagrams to cooperating internet hosts and gateways
+	which echo these datagrams to the sender.  The roundtrip delays are
+	then recorded and used to develop summary statistics and histograms.
+	PING is not designed to test throughput capabilities, since only a
+	single datagram is allowed on the roudtrip path.  Ordinarily, PING
+	datagrams use the Internet Control Message Protocol (ICMP) Echo and
+	Echo Reply messages, since these are echoed by many Internet hosts and
+	gateways, including all those using the Fuzzball internet software.
+	However, the ICMP datagram formats can be used with other protocol
+	numbers in the IP header.
+
+	A PING operation proceeds by first opening a raw-datagram connection
+	with the remote host using the CONNECT command.  The PING command is
+	used to begin a volley of ICMP Echo - ICMP Echo Reply exchanges
+	between the local and remote hosts.  Roundtrip delay samples are
+	recorded in a buffer capable of holding about 500 samples.  Finally,
+	the SHOW command is used to select the format and display the results.
+	The QUIT command is used to exit to the CLI.
+
+  OPTIONS
+   ABORT
+	Terminate the PING volley and ignore subsequent datagrams.
+   BRIEF
+	The BRIEF and VERBOSE commands control output of detailed commentary
+	dialog.  BRIEF disables this and VERBOSE enables it.  The default is
+	VERBOSE.
+   CLOSE
+	Close the data-collection file.
+   CONNECT <hostname> <protocol>
+	Open a raw-datagram connection to <hostname> with <protocol>
+	specified. The <protocol> is a decimal integer In the range 0-255 and
+	defaults to 1 (ICMP).
+   CREATE <filespec>
+	Create a data-collection file for delay samples.  As each ICMP Echo
+	Reply message is received from the network and the roundtrip delay is
+	calculated the value is written to the file as a 16-bit integer.
+   DISCONNECT
+	Execute an implied ABORT command and close the raw-datagram
+	connection.
+   HELP
+	Display helpful information, including a list of commands.
+   LOCAL <hostname>
+	Set the local address to <hostname>, with default the local primary
+	address. This feature can be used to select local secondary addresses
+	in the case of a multi-homed host.
+   OFF <code>
+	The ON and OFF commands are used to set and clear selected options.
+	The ON command enables the selected option and the OFF command
+	disables it.  Options supported include:
+
+	ACK	Controls response to the ICMP Echo datagram (OFF:  process,
+		ON:  return AN ICMP Echo Reply datagram)
+	DUMP    Controls printing of the IP header (OFF:  disable, ON:
+		enable)
+	TIME	Controls packet type (OFF: ICMP Echo, ON: ICMP Timestamp)
+	TRACE   Controls printing of the datagram header, including the
+		roundtrip delay and clock offsets (OFF:  disable, ON:  enable)
+   ON <code>
+	(see the OFF command)
+   OPTION <code> <hostname1> <hostname2> ...
+	Specify the Internet source route as the sequence <hostname1>
+	<hostname2> ...  (up to nine).  Set the option code in the IP options
+	field to <code> (octal), where code is 203 (loose source route), 207
+	(record route) or 211 (strict source route).
+   PING <count>
+	Begin a PING volley with the selected remote host and protocol.  The
+	number of roundtrip volleys requested is <count>, which defaults to
+	one.
+   QUIT
+	Execute an implied DISCONNECT command and return to the CLI.
+   RESTART
+	Resume a PING volley with the select remote host and protocol.  This
+	command is useful after a PING datagram has been lost in the network.
+   ROUTE <hostname1> <hostname2> ...
+	Specify the Internet source route as the sequence <hostname1>
+	<hostname2> ...  (up to nine).
+   SHOW <format>
+	Display a formatted summary of various quantitites of interest,
+	including the current host and PING headers.  The <format> selects the
+	format of the display.  If it is SUMMARY the data printed include the
+	number of volleys together with the mean, minimum, maximum and
+	overflow of the samples collected.  If it is HISTOGRAM a histogram of
+	the samples collected is printed.
+   SIZE <size> <code>
+	Set the maximum datagram size to <size> octets, including the Internet
+	header. The <code> can be FIXED (default) or RANDOM. In the latter
+	case the size is uniformly distributed on the interval 40 to <size>
+	octets.
+   TIME <time> <code>
+	Set the transmit timer to <time> (seconds). The action depends on the
+	value of the <code>. If <code> is RTX (default) new datagrams are
+	transmitted immediately following the matching reply to the last one
+	and the the last one is retransmitted (possibly repeatedly) at
+	intervals of <time> until a matching reply is received. If <code> is
+	FIXED new datagrams are transmitted at fixed intervals of <time> and
+	the last one is never retransmitted.
+   TOS <type-of-service>
+	Specify the Internet type-of-service octet (in octal).
+   VERBOSE
+	(see the BRIEF command)
+
+  EXAMPLES
+	ping    
+	DCN1.ARPA PING User Process (22-Aug-81 Version) 21-May-83 21:13:21
+	connect 10,1,0,20 40
+	?INET-I-(PIN)-Open [10.1.0.20]
+	ping 100
+	?PING-I-Operation complete
+	show histogram
+	Samples:  100 mean:  424 min:  389 max:  658 overflow:  0
+	Value   Count
+	----------------+
+	350     28      |****************************
+	400     58      |*****************************************
+	450     7       |*******
+	500     3       |***
+	550     2       |**
+	600     1       |*
+	650     1       |*
+	quit
+	?INET-I-(PIN)-Closed
+.ENDM
+.MACRO	PIP
+PIP		Peripheral interchange program
+
+  SYNTAX
+	PIP                     ;invoke PIP.SAV
+	*<filespec>[/options]=<filespec>[/options]
+	*...                    ;* is CSI prompt
+	*^Z                     ;exit to CLI
+
+  SEMANTICS
+	See the RT-11 System User's Guide
+
+  OPTIONS
+	/A      Copies files in ASCII mode
+	/B      Copies files in formatted binary mode
+	/C:date Includes only files with date
+	/D      Deletes files
+	/E      Waits for volume to be mounted before executing the command
+	/F      Marks output files as protected
+	/G      Ignores any input errors
+	/H      Copies files from one large volume to several small volumes
+	/I:date Copies only files created on or after date
+	/J:date Copies only files created before date
+	/K:n    Transfers n copies of the output files to a sequential device,
+		such as LP:, PC;  or TT:
+	/M:n    Controls positioning and rewinding of magtape (not supported
+		in BOS/VOS)
+	/N      Does not copy or rename a file if a file of the same name
+		exists on the output device
+	/O      Deletes a file on the output device before copying, if a file
+		if a file of a given name already exists
+	/P      Copies or deletes all files not specified
+	/Q      Queries before performing operation
+	/R      Renames input filename to output filename
+	/S      Copies files one block at a time
+	/T:date Puts date on all files copied or renamed
+	/U      Copies and concatenates specified files
+	/V      Verifies output file;  do not use with /A or /B
+	/W      Logs operations on console
+	/Y      Includes .SYS files in operation
+	/Z      Removes protection from output files
+		no option Copies files in image mode
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	PRINT
+PRINT		Local spooler server
+
+  SYNTAX
+	PRINT <filespec>	;invoke PRINT.SAV
+				or
+	PRINT			;invoke PRINT.SAV
+	*<filespec>[/options]
+	*...                    ;* is CSI prompt
+	*^Z                     ;exit to CLI
+
+  SEMANTICS
+	Queues <filespec> for printing by the PRTQ program. This program
+	creates a control file (with extension SPQ) containing data used by
+	PRTQ to identify and label the data file, which has been previously
+	created. It then signals the LOG process to create a PRTQ daemon to
+	output the data file to the specified device (LP: is the default).
+
+	This program can be used to spool files to a device on another
+	Internet host (see /R option). It can also be used to queue MMM mail
+	files for transmission to another MMM-capable Internet host.
+
+  OPTIONS
+	/B:n	Output n banner pages
+	/C:n	Output n copies
+	/D	Delete data file after printing
+	/L	List entire output queue
+	/L:n	List nth output queue entry (long form)
+	/M	Queue MMM mail
+	/P:dev	Output to device dev
+	/R	Prompt for remote directory in <user>@<host> format
+	/U	Unix file (no cr's)
+	/X:n	Delete nth output queue entry (Note: an entry which is
+		actively being processed by PRTQ cannot be deleted.)
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	PRTQ
+PRTQ		Printer daemon
+
+  SYNTAX
+	None (invoked by LOG process)
+
+  SEMANTICS
+	This program is invoked automatically by the LOG process when a file
+	is queued for printing. The program scans the directory of DK: for the
+	oldest occurance of a file with SPQ extension, indicating a control
+	file created by SPQSRV or PRINT. Each control file names both an
+	output device and a data file. When printing is complete the control
+	file is deleted and the data file deleted (if specified).
+
+	This program is also used to spool files to a remote host. See the
+	PRINT program for further details.
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	RSOLV
+RSOLV		Domain resolver
+
+  SYNTAX
+	RSOLV [<server-host>]	;invoke RSOLV.SAV
+	Host name? <host-name>	;note prompt
+	...
+	*^Z                     ;exit to CLI
+	<server-host> is the domain name of the host supporting the domain
+	name server (default USC-ISIF), while <host-name> is the domain name
+	to be resolved.
+
+  SEMANTICS
+	This program is used to query the Domain Name Server data base, which
+	presently contains the host name/address mappings for the .ARPA
+	domain. See RFC-882 and RFC-883 for further information on the domain
+	system. The program is given the full name of an Internet host, which
+	is then encoded into a request and sent to one of the server hosts
+	(presently including USC-ISIB and USC-ISIF, with the latter as
+	default). The resource records returned are simply displayed on the
+	operator terminal.
+
+  OPTIONS
+	Requests are in the form <host-name> <type>, where <host-name>
+	is the name of a host and <type> is one of the following:
+	1 (A)		host address
+	2 (NS)		authoritative name server
+	3 (MD)		mail destination
+	4 (MF)		mail forwarder
+	5 (CNAME	canonical name for an alias
+	6 (SOA)		marks the start of a zone of authority
+	7 (MB)		mailbox domain name
+	8 (MG)		mail group member
+	9 (MR)		mail rename domain name
+	10 (NULL)	null RR
+	11 (WKS)	well known service description
+	12 (PTR)	domain name pointer
+	13 (HINFO)	host information
+	14 (MINFO)	mailbox or mail list information
+	252 (AXFR)	request for a transfer of an entire zone of authority
+	253 (MAILB)	request for mailbox-related records (MB, MG or MR)
+	254 (MAILA)	request for mail agent RRs (MD and MF)
+	255 (*)		request for all records
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	RUNOFF
+RUNOFF		Text formatting program
+
+  SYNTAX
+	RUNOFF                  ;invoke RUNOFF.SAV
+	*<outfile>=<infile>     ;* is CSI prompt
+	*...
+	*^Z                     ;exit to CLI
+	;default extensions:  <outfile>.DOC, <infile>.RNO
+
+  SEMANTICS
+	RUNOFF command summary:
+	.B n    Blank lines of length n independent of line spacing
+	.BR     Break to next line
+	.C n    Center next line with n characters to right margin
+	.FG n   Figure size in number of lines
+	.F      Fill lines for justification mode
+	.J      Justify lines to right margin setting
+	.LM n   Left margin set to position n
+	.NF     No fill or justification off
+	.NJ     No justification of right margin
+	.NNM    No numbering of pages
+	.NM     Number pages
+	.PS n,m Paper size n=lines/page m=right margin
+	.P n    Paragraph with n spaces indented (default=5)
+	.RM     Right margin set to position n
+	.S n    Skip n line spacing
+	.SP n   Spacing of lines 2=double spacing
+	.UC     Upper case and lower case letters printed
+
+  OPTIONS
+	/B:n    Start printing with page n
+	/E:n    Stop printing after page n
+	/F      Simulate FF's with 66 lines/page (uses multi-LF's)
+	/F:n    Simulate FF's with n lines/page (uses multi-LF's)
+	/H:NO   Disable hyphenation
+	/H:YES  Enable hyphenation (default)
+	/I      Display useage information
+	/T:A    Output device is an AJ832
+	/T:D    Output device is a Diablo
+	/T:N    Output device does not support scripting (default)
+	/U:B    Underline with spacing-backspace (default)
+	/U:L    Use overprint-underscore
+	/U:N    Supress underlining
+	/U:S    Simulate with hyphen on next line
+	/V      Display version of this program
+	/W      Wait for <CR> before each page
+
+	  EXAMPLES
+		None
+.ENDM
+.MACRO	SMPSRV
+SMPSRV		Mail transfer server program
+
+  SYNTAX
+	See RFC-821.
+
+  SEMANTICS
+	The SMTP Server is designed to be compatible with the protocol
+	specified in RFC-821.  It is invoked by the TELSRV progam upon receipt
+	of a TCP connection on port 25.  Commands consist of four characters,
+	only the first three of which are significant.  Replies consist of a
+	three-digit code, the first of which indicates the status of the
+	request according to the following code:
+
+	1xx     The action requested has begun.  Additional server commands
+		can be given to initiate unrelated actions.
+	2xx     The action requested has completed successfully.
+	3xx     Additional commands are necessary to completely specify the
+		action requested.
+	4xx     The action requested was aborted due to an error condition
+		believed to be temporary.  The command may be retried at a
+		later time.
+	5xx     The action requested was aborted due to an error condition
+		believed to be permanent.
+
+  OPTIONS
+   DATA
+	This command indicates the body of the message will follow.  Reply
+	code 200 is returned, following which the sender is expected to send
+	the text of the message followed by the sequence <CR><LF>.<CR><LF>.
+	Reply code 250 is returned at that time.
+   HELP
+	Display helpful user information, including a list of FTP Server
+	commands.  All but the last line returned have reply code 111.  The
+	last line returned has reply code 211.
+   HELO <hostname>
+	This command is used in the initial dialog to verify that the sender
+	<hostname> agrees with its internet address.  A reply code in the form
+
+	215 <hostname>
+
+	is returned, where <hostname> is the name of the SMTP Server host.
+   MAIL from:<sender>
+	This command specifies the <sender> return route for a message.  If
+	the <sender> syntax is acceptable a 200 reply code is returned.
+   NOOP
+	Do nothing.  Reply code 200 is returned.
+   QUIT
+	Close the connection and exit to the CLI.  Reply code 226 is returned.
+   RSET
+	This command is used to reset internal buffers in case the sender
+	aborts a sequence of commands.
+   RCPT to:<recipient>
+	This command specifies a <recipient> route for a message.  If the
+	<recipient> syntax is acceptable and the first host along the route is
+	known at the SMTP Server host, a 200 reply code is returned.
+
+  EXAMPLES
+	See RFC-821.
+.ENDM
+.MACRO	SMTP
+SMTP		Mail transfer user program
+
+  SYNTAX
+	SMTP                    ;invoke SMTP.SAV
+	...
+	QUIT                    ;exit to CLI
+				;or
+	SMTP <hostname> <route> ;invoke SMTP.SAV, execute an
+				;implied SEND <hostname> <route>
+				;command and exit to CLI upon
+				;completion
+
+  SEMANTICS
+	The Simple Mail Transfer Protocol (SMTP) functions are provided using
+	two programs, the SMTP User and the SMTP Server.  The SMTP User runs
+	in interactive mode on a Fuzzball host. The SMTP Server normally
+	resides at some other host and is activated upon receipt of a TCP
+	connection on port 25.  The SMTP User can be controlled by user
+	commands in the same way as the Command Language Interpreter (CLI)
+	and can also be controlled directly by other user programs. It in
+	turn controls the SMTP Server by standardized server commands, with
+	the actions taken indicated by standardized replies.  These programs
+	operate with the protocol described in RFC-821 and can be used with
+	other implementations conforming to this protocol.
+
+	Mail is sent to recipients at the various internet hosts by the SMTP
+	User program.  This program first searches a specified mail file and
+	constructs a data structure including a set of pointers to each
+	recipient mailbox string along with the internet address associated
+	with the recipient host.  It then sorts this structure by internet
+	address and constructs a source-route string, if necessary, as
+	specified by the operator.  Finally, it connects to each host in turn
+	and sends its messages as required by the host.  As delivery to each
+	recipient is confirmed, the SMTP User program overwrites the recipient
+	mailbox string with an acknowledgment code.
+
+	It may happen that some messages sent to a host may specify recipients
+	not at that host, in which case these messages must be forwarded to
+	the final destination as required by RFC-821.  This would be the case
+	when an operator at a local host wishes to stage a batch of messages
+	at another host for later relay to other hosts not on-line at the
+	moment.  In addition, forwarding is also required when the final
+	destination host supports some transport protocol other than TCP, so
+	that an intermediary supporting both protocols is required.  The
+	present system supports two operational modes, one in which mail is
+	sent automatically either directly to the destination or via an
+	intermediate relay, as directed by internal tables, and the other in
+	which it is sent manually according to a source route specified by the
+	operator.
+
+	Mail is ordinarily received at a host in unattended mode by the SMTP
+	Server.  This program appends each message as it is received to a
+	public, controlled-access mail file called UNSENT.MSG.  For those
+	messages addressed to a recipient at the receiving host, the
+	corresponding recipient mailbox string is overwritten with a delivery
+	notice;  the remainder are left for later relay by the SMTP User
+	program.
+
+  OPTIONS
+   ABORT
+	Abort the current mail transfer sequence and close the connection.
+   BRIEF
+	The BRIEF and VERBOSE commands control output of detailed commentary
+	dialog.  BRIEF disables this and VERBOSE enables it.  The default is
+	BRIEF.
+   HELP
+	Display helpful information, including a list of commands.
+   QUIT
+	Execute an implied ABORT command and exit to the CLI.
+   SEND <filespec> <route>
+	Scan the file <filespec> on the local host for unsent messages.  Then
+	sort the recipient table by recipient host address.  Finally open SMTP
+	connections to each recipient host in turn and send the messages for
+	that host.  The <filespec> must refer to a mail file in standard
+	format.  The <route> specification is optional.  If used, it
+	desginates the source route in the form:
+
+	<@HOST1,@HOST2,...,@HOSTn:USER@HOSTn>
+
+   SHOW
+	Display a formatted summary of various quantitites of interest,
+	including the current host, file and block number.
+   VERBOSE
+	(see the BRIEF command)
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	SNDMSG
+SNDMSG		Mail composition program
+
+  SYNTAX
+	SNDMSG                  ;invoke SNDMSG.SAV
+	...
+	^Z                      ;exit to CLI
+	SNDMSG can also be invoked from MSG by executing one of the commands:
+	s, f, a.  If that is the case, ^Z will return to the MSG process.
+
+  SEMANTICS
+	SNDMSG is a module which together with a MSG, CRMAIL and SMTP form an
+	electronic mail system.  The purpose of SNDMSG is to create an
+	electronic messages and store it in mail file.  SMTP is responsible
+	for sending and receiving the messages , MSG examines the messages in
+	the mail file and CRMAIL creates the mail file.
+
+	When SNDMSG is invoked it first checks if the date is set.  If not it
+	exits printing the message:
+	Please enter the data.
+	If the date exists in the system it proceedes asking for the name of
+	the output file.  The name specified has to end with '.MSG'.  After
+	the file is succesfully open (it has to be in the mail format) the
+	pointer is positioned to the end of the file.  User is promted with
+	several questions (From:, Subject:, To:, Cc:).  After getting the
+	information from the user to all this questions SNDMSG creates the
+	message and writes it into the mail file.
+
+	SNDMSG[RET] - invokes the sndmsg.sav
+	Output file name:  - enter the name of the mail file
+
+	From:  - address of the sender.  The address usually has the form
+	'username@hostaddress'.  For more explanation on the semantics of
+	address field chech the RFC-822
+
+	To:  - List of addresses to where the user wants the message to be
+	sent to.  Every address is followed by a come.  Addresses can be
+	entered on several lines (folded) with the restriction that one
+	address can not be folded and that every line except for the last has
+	to be terminated by ','.
+
+	cc:  - Additional list of recipients which where not included in the
+	'To:' list.  Same rules apply as for the 'To:' field.
+
+	Subject:  - title of the message.  Enter any character string that
+	fits on one line
+
+	Message:  - enter the text of the message.  Changes in the text can
+	only be made to the current line (SNDMSG does not have the capability
+	of the KED).  Text of the message can also come from a text file by
+	typing ^B followed by the name of the file or:
+
+	^B [RET]
+	Input file:  FILENM.EXT[RET]
+	To end the text of the message type:  '^Z'.  At this point the message
+	is created in the file.
+
+	The user is prompted with another To:  - type ^Z to terminate the
+	session or follow the above mentioned steps to create another message.
+	^N - will abort the currently typed message
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	SPELL
+SPELL		Spelling correction program
+
+  SYNTAX
+	SPELL                   ;invoke SPELL.SAV
+	*[<f1>][,<f2>]=<f3>[<f4>,...][/options]
+	*...                    ;* is CSI prompt
+	*^Z                     ;exit to CLI
+	;default extensions:  <f1>.LST, <f2>.WRD, <f3>.RNO, <f4>.RNO
+
+  SEMANTICS
+	<f1>    Contains all words in source not in dictionary (optional)
+	<f2>    Contains all words in source and dictionary (optional)
+	<f3>    Contains words to be checked
+	<f4>    Up to 5 dictionary files (optional)
+
+  OPTIONS
+	/A      AP120B file - lines after " are examined
+	/C:n    Consider only words of >n letters
+	/D      Dictionaries SY:SPELL.WRD,DK:SPELL.WRD are not used
+	/E      Every error is printed (not once for each word)
+	/F      FORTRAN file
+	/I      Inhibit word matching
+	/H      Help
+	/M      MACRO file
+	/N:n    Output files are limited to n chars per line
+	/P      Pack 3 errors per line
+	/R      RUNOFF file
+	/S:n    Space for >n letters after loading system dictionary
+	/T      RTL2 file - lines after % are examined
+	/U      Outputs dictionary in upper case
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	SPQSRV
+SPQSRV		Network spooler server
+
+  SYNTAX
+	None (invoked by TCP connection to port 515)
+
+  SEMANTICS
+	This program is invoked by TELSRV upon a TCP connection to port 515.
+	This port is used by Berkeley 4.2bsd systems to support a remote
+	printer spooler. The program interprets the data following as either
+	a control file or data file, depending upon the dialog. Data files
+	stored in this way are automatically queued for printing by the PRTQ
+	program.
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                

@@ -1,0 +1,895 @@
+	.TITLE	FTPSRV	DCN/FTP SERVICE
+	.SBTTL	SYSTEM AND MODULE DEFINITONS
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn basic operating system - dcn/ftp service
+;
+; This program implements a version of the tcp ftp server
+; Described in rfc-765.
+;
+; External symbols
+;
+	.GLOBL	RDDEC,RDASC,ERRLVL
+	.GLOBL	FLAGS,OPNBLK,CTRL,RECV,SEND,HELP,NETAST
+	.GLOBL	TTOBUF,CHAIN,PRTPTR,PRIDNT,NAMRST,ASG,CONECT
+;
+; Entry symbols
+;
+	.GLOBL	NETDAT,NETSIG,INIT,KWKTBL,COM00
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.IOD,.CLP,.CHN,.LGD ;dcnlib definitions
+	.MCALL	.KWTAB,.MSG,.DSBCR,.ENBCR ;dcnlib macros
+	.MCALL	$DFSIG		;moslib macros
+	.MCALL	DFCON,OPNBLK,ADDR,CALL ;netlib macros
+	.MCALL	ENTER,LOOK,FORMAT
+	.MCALL	.EXIT,.PRINT,.CSISP,.SETTO,.SERR,.HERR ;rt-11 macros
+	.MCALL	.LOOKU,.ENTER,.DELET,.RENAM,.READW,.WRITW,.CLOSE,.PURGE
+	.COM			;define common data
+	.IOD			;define emulator storage areas
+	.CLP			;define rt-11 emulator areas
+	.CHR			;define ascii character codes
+	.CHN			;define argument area
+	.LGD			;define login file entry
+	$DFSIG			;define interprocess signals
+	DFCON			;define interprocess signals
+;
+; Module definitions
+;
+	.MACRO	ABORT COM	;abort and return reply code
+	MOV	COM,R0
+	JSR	PC,ABRT
+	.ENDM	ABORT
+;
+	.MACRO	GTARG ARG,PTR	;get argument (test for busy)
+	MOV	ARG,R1
+	JSR	PC,GETRG1
+	BCS	PTR
+	.ENDM	GTARG
+;
+	.MACRO	GTARGL ARG,PTR	;get argument (test for login or busy)
+	MOV	ARG,R1
+	JSR	PC,GETRG2
+	BCS	PTR
+	.ENDM	GTARGL
+;
+; Assembly parameters
+;
+WLDCRD	=	35*50*50	;magic rad50 wildcard "*"
+DIROFS	=	6		;beginning of rt-11 directory (block)
+P.TCP	=	6		;tcp-4 protocol number
+OPNSIZ	=	8192.		;ccb size (multiple of 64.)
+FILSIZ	=	2.		;buffer size (blocks)
+;
+; Status flags (flags)
+;
+STOBIT	=	040000		;stor bit
+RTRBIT	=	020000		;retr bit
+LSTBIT	=	010000		;list bit
+NLSBIT	=	004000		;nlst bit
+STABIT	=	002000		;stat bit
+PASBIT	=	001000		;user/pass bit
+RENBIT	=	000400		;rnfr/rnto bit
+EOFBIT	=	000200		;end of file bit
+ACTIVE	=	STOBIT+RTRBIT+LSTBIT+NLSBIT+STABIT+PASBIT+RENBIT+EOFBIT ;active mask
+BINBIT	=	000100		;image mode bit
+LOGBIT	=	000020		;login completed bit
+	.PAGE
+	.SBTTL	DATA TRANSFER ROUTINES
+;
+	.PSECT	$BOSI,RO,I
+;
+; Net completion routine
+;
+NETSUB:	JSR	PC,NETAST
+	RTS	PC
+;
+; Process net signals
+;
+NETSIG:	BIT	#ACTIVE,FLAGS	;is something happening
+	BEQ	1$		;branch if no
+	CMPB	R0,#SG.EST	;yes. is this established
+	BNE	3$		;branch if no
+	BIT	#RTRBIT,FLAGS	;yes is retr/list in progress
+	BEQ	2$		;branch if no
+	JSR	PC,NETSNC	;yes. start transfer
+1$:	RTS	PC
+;
+2$:	JSR	PC,NETDAT	;stor. start transfer
+	RTS	PC
+;
+3$:	CMPB	R0,#SG.SC	;no. is this send complete
+	BNE	4$		;branch if no
+	BIT	#RTRBIT,FLAGS	;yes is retr/list in progress
+	BEQ	5$		;branch if no
+	JSR	PC,NETSNC	;yes. signal complete
+	RTS	PC
+;
+4$:	CMPB	R0,#SG.RC	;is this remote close
+	BNE	6$		;branch if no
+	BIT	#STOBIT,FLAGS	;yes. is stor in progress
+	BEQ	5$		;branch if no
+	BIS	#EOFBIT,FLAGS	;yes. close and end file
+	JSR	PC,WRTFIL
+	RTS	PC
+;
+5$:	ABORT	#COM06		;426 transfer aborted
+	RTS	PC
+;
+6$:	CMPB	R0,#SG.CC	;is this close complete
+	BNE	7$		;branch if no
+	FORMAT	RPYPTR,#STOBGN	;send final repoly
+	BIC	#ACTIVE,FLAGS
+7$:	RTS	PC
+;
+; Send complete received from net
+;
+NETSNC:	BIT	#EOFBIT,FLAGS	;yes. is this eof
+	BNE	RED5A		;branch if yes
+	BIT	#LSTBIT,FLAGS	;is this list
+	BEQ	RED7		;branch if no
+	.READW	#ARGBLK,#0,#TTOBUF,#2*256.,FILBLK ;read next directory block
+	BCS	RED5		;branch if error
+	MOV	TTOBUF+2,R1
+	BNE	1$
+	BIS	#EOFBIT,FLAGS
+	BR	2$
+;
+1$:	ASL	R1		;compute block number of next segment
+	ADD	#DIROFS-2,R1
+	MOV	R1,FILBLK
+2$:	MOV	#16,FILCNT	;get pointers
+	ADD	TTOBUF+6,FILCNT
+	MOV	#TTOBUF+12,R1
+	MOV	FILBUF,PRTPTR
+3$:	BIT	#004000,@R1	;is it end of segment
+	BNE	8$		;branch if yes
+	BIT	#002000,@R1	;no. is it permanent
+	BEQ	7$		;branch if no
+	CMP	#WLDCRD,FILNAM+2 ;yes. do name match
+	BEQ	4$		;branch if yes
+	CMP	2(R1),FILNAM+2
+	BNE	7$		;branch if no
+	CMP	4(R1),FILNAM+4
+	BNE	7$		;branch if no
+4$:	CMP	#WLDCRD,FILNAM+6 ;yes. do extension match
+	BEQ	5$		;branch if yes
+	CMP	6(R1),FILNAM+6
+	BNE	7$		;branch if no
+5$:	MOV	#COM08,R0	;yes. print file name
+	BIT	#NLSBIT,FLAGS	;is this nlst
+	BNE	6$		;branch if yes
+	MOV	#COM08A,R0	;no. include other useful info
+6$:	JSR	PC,FORMAT
+7$:	ADD	FILCNT,R1	;no. step to next entry
+	BR	3$
+;
+8$:	MOV	PRTPTR,R1	;plant backstop for format
+	MOVB	#'^,(R1)+
+	MOVB	#'+,(R1)+
+	CLRB	(R1)+
+	MOV	PRTPTR,FILBCT	;compute byte count
+	CLR	PRTPTR
+	SUB	FILBUF,FILBCT
+	BEQ	NETSNC		;branch if nuttin'
+	BIT	#STABIT,FLAGS	;is this stat
+	BEQ	RED6		;branch if no
+	FORMAT	FILBUF		;yes. stuff it
+	BR	NETSNC
+;
+RED5:	TSTB	@#52		;is this eof
+	BEQ	RED5A		;branch if yes
+	ABORT	#COM33		;451 file read error [file]
+	RTS	PC
+;
+RED5A:	ABORT	#COM42		;226 transfer complete
+	RTS	PC
+;
+RED7:	MOV	#FILSIZ*256.,R1	;request full buffer
+	.READW	#ARGBLK,#0,FILBUF,R1,FILBLK ;fill buffer
+	BCS	RED5		;branch if error
+	CMP	R0,R1		;is buffer full
+	BEQ	3$		;branch if yes
+	BIS	#EOFBIT,FLAGS	;no. must be eof
+3$:	MOV	R0,FILCNT	;update pointers
+	MOV	R0,FILBCT
+	ASL	FILBCT
+	SWAB	R0
+	BIC	#^C377,R0
+	ADD	R0,FILBLK
+REDINT:	BIT	#BINBIT,FLAGS	;is image option set
+	BNE	RED6		;branch if yes
+	MOV	FILBCT,R0	;no. set up for edit scan
+	CLR	FILBCT
+	MOV	FILBUF,R1
+	MOV	R1,R2
+6$:	BICB	#200,@R1	;mask and test for nul
+	BEQ	7$		;branch if yes
+	CMPB	@R1,#DEL	;no. is it del
+	BEQ	7$		;branch if yes
+	MOVB	@R1,(R2)+	;no. copy byte
+	INC	FILBCT
+7$:	CMPB	(R1)+,#SUB	;was it eof (sub)
+	BNE	10$		;branch if no
+	BIS	#EOFBIT,FLAGS	;yes. stop in tracks
+	BR	RED6
+;
+10$:	DEC	R0		;continue to end of block
+	BNE	6$
+RED6:	MOV	FILBCT,R0	;did anything remain
+	BEQ	1$		;branch if no
+	CALL	SEND,R0,FILBUF,OPNBLK+CONPTR ;tcp send
+	TST	R0		;did it take
+	BEQ	2$		;branch if yes
+	JSR	PC,PRIDNT	;no. print error comment
+	ABORT	#COM06		;426 transfer aborted
+2$:	RTS	PC
+;
+1$:	JMP	NETSNC
+;
+; Data received from net
+;
+NETDAT:	MOV	#FILSIZ*512.,R0	;get data from net
+	SUB	FILBCT,R0
+	MOV	FILBUF,R1
+	ADD	FILBCT,R1
+	CALL	RECV,R0,R1,OPNBLK+CONPTR ;tcp receive
+	BIC	#100000,R0	;is anything there
+	BEQ	1$		;branch if no
+	ADD	R0,FILBCT	;compute new byte count
+	JSR	PC,WRTFIL
+1$:	RTS	PC
+;
+; Subroutine to write file and close if indicated
+;
+WRTFIL:	MOV	FILBCT,R1	;get current byte count
+	CMP	R1,#FILSIZ*512.	;is buffer full
+	BHIS	3$		;branch if yes
+	BIT	#EOFBIT,FLAGS	;no. is this eof
+	BEQ	1$		;branch if no
+3$:	BIT	#512.-1,R1	;yes. zero-fill to block boundary
+	BEQ	4$
+	MOV	R1,R0
+	ADD	FILBUF,R0
+	CLRB	@R0
+	INC	R1
+	BR	3$
+;
+4$:	BIT	#STOBIT,FLAGS	;is operation in progress
+	BEQ	6$		;branch if no
+	ASR	R1		;yes. convert to word count
+	MOV	R1,FILCNT
+	BEQ	6$		;branch if null
+	.WRITW	#ARGBLK,#0,FILBUF,FILCNT,FILBLK
+	BCS	2$		;branch if error
+	MOV	FILCNT,R1
+	SWAB	R1
+	BIC	#^C377,R1
+	ADD	R1,FILBLK
+6$:	CLR	FILBCT
+	BIT	#EOFBIT,FLAGS	;is this eof
+	BEQ	1$		;branch if no
+	TST	FILBLK		;is file null
+	BEQ	7$		;branch if yes
+	.CLOSE	#0		;close file
+	ABORT	#COM42		;226 transfer complete
+1$:	RTS	PC
+;
+7$:	ABORT	#COM39		;551 null file [file]
+	RTS	PC
+;
+2$:	ABORT	#COM34		;451 file write error [file]
+	RTS	PC
+	.PAGE
+	.SBTTL	COMMAND INTERPRETATION
+;
+; Unrecognized, unsupported, obsolete or superfluous command
+;
+NTFD:	FORMAT	#COM29		;500 unrecognized command
+	RTS	PC
+;
+UNSCMD:	FORMAT	#COM31		;502 unsupported command
+	RTS	PC
+;
+OBSCMD:	FORMAT	#COM23		;502 obsolete command
+	RTS	PC
+;
+SPFCMD:	FORMAT	#COM22		;202 no action required
+	RTS	PC
+;
+; Stat (sta) show ftp status
+; (segment of command language interpreter)
+; (no arguments)
+;
+STAT:	MOV	FLAGS,ARGBLK	;move under umbrella
+	FORMAT	#COM24,#STOBGN
+	FORMAT	#COM25,#OPNBLK
+	FORMAT	#COM26,#STOBGN
+	GTARG	#ARG,1$		;get file name
+	TSTB	ARG		;is file null
+	BEQ	1$		;branch if no
+	BIS	#STABIT,FLAGS	;yes. do file list thing
+	JMP	NLS1
+;
+1$:	RTS	PC
+;
+; Quit (qui) leave the game
+; (segment of command language interpreter)
+; (no arguments)
+;
+QUIT:	GTARG	#ARG,RIN2	;test busy
+	FORMAT	#COM40,CHAIN	;221 closing
+	.EXIT
+;
+; Rein (rei) reinitialize
+; (segment of command language interpreter)
+; (no arguments)
+;
+REIN:	GTARG	#ARG,RIN2	;test busy
+	BICB	#300,OPNBLK+CONFLG
+INIT:	.SERR			;disable error trapping
+	BIC	#ACTIVE+BINBIT+LOGBIT,FLAGS ;set quiet mode
+	MOV	#1,ERRLVL
+	FORMAT	#HERALD,CHAIN	;from the top
+	MOV	#STOBGN,R0
+2$:	CLR	(R0)+
+	CMP	R0,#STOEND
+	BLO	2$
+	MOV	#OPNSIZ+<FILSIZ*512.>+100,R0 ;allocate storage
+	JSR	PC,NAMRST
+	ADD	#77,R0		;align on segment block boundary
+	BIC	#77,R0		;(only so can use full segment for ccb)
+	MOV	R0,OPNBLK+CONPTR
+	ADD	#OPNSIZ,R0
+	MOV	R0,FILBUF
+	MOV	CHAIN,R0	;copy data connection info
+	ADD	#CONBLK+CONLCL-CONPAR,R0
+	MOV	#OPNBLK+CONLCL,R1
+	MOV	(R0)+,(R1)+	;local address
+	MOV	(R0)+,(R1)+
+	MOV	(R0)+,@R1	;local port L-1
+	SWAB	@R1
+	DEC	@R1
+	SWAB	(R1)+
+	MOV	(R0)+,(R1)+	;foreign address
+	MOV	(R0)+,(R1)+
+	MOV	(R0)+,(R1)+	;foreign port U
+RIN2:	RTS	PC
+;
+; Port (por) specify active data port
+; (segment of command language interpreter)
+; Arg = internet address, port
+;
+PORT:	BIT	#ACTIVE,FLAGS	;is operation in progress
+	BNE	PAV2		;branch if no
+	MOV	#OPNBLK+CONRMT,R1 ;specify port
+	MOV	#6,R2
+1$:	JSR	PC,RDDEC	;copy next octet
+	BEQ	2$		;branch if not enough
+	MOVB	R0,(R1)+
+	SOB	R2,1$
+	FORMAT	#COM04		;200 ok
+	RTS	PC
+;
+2$:	ABORT	#COM30		;501 invalid argument
+	RTS	PC
+;
+; Pasv (pav) specify passive data port
+; (segment of command language interpreter)
+; (note - pass and pasv are context-dependent)
+;
+PASV:	BIT	#ACTIVE,FLAGS	;is operation in progress
+	BNE	PAV2		;branch if no
+	BISB	#300,OPNBLK+CONFLG ;yes. specify listen mode
+	MOV	@#SYSPTR,R0	;invent local port
+	MOVB	IOHRPY(R0),OPNBLK+CONLCL+4
+	FORMAT	#COM27,#OPNBLK	;227 Entering passive mode. [port]
+	RTS	PC
+;
+PAV2:	FORMAT	#COM38		;503 invalid command sequence
+	RTS	PC
+;
+; Type (typ) specify representation type
+; (segment of command language interpreter)
+; Arg = data (a, i, l 8)
+; Note: only type = a (ascii), i (image) or l 8 (image) supported
+; Note: the argument following l is not checked
+;
+TYPE:	GTARG	#ARG,STR3	;get data
+	CMPB	ARG,#'A		;is it "a"
+	BEQ	2$		;branch if yes
+	CMPB	ARG,#'a
+	BNE	4$		;branch if no
+2$:	BIC	#BINBIT,FLAGS	;yes. set ascii mode
+	FORMAT	#COM04A		;200 ascii transfers
+	RTS	PC
+;
+4$:	CMPB	ARG,#'I		;no. is it "i"
+	BEQ	3$		;branch if yes
+	CMPB	ARG,#'i
+	BEQ	3$		;branch if yes
+	CMPB	ARG,#'L		;no. is it "l"
+	BEQ	3$		;branch if yes
+	CMPB	ARG,#'l
+	BNE	STR1		;branch if no
+3$:	BIS	#BINBIT,FLAGS	;yes. set image bit
+	FORMAT	#COM04B		;200 image transfers
+	RTS	PC
+;
+; Mode (mod) specify transfer mode
+; (segment of command language interpreter)
+; Arg = mode (s, b, c)
+; Note: only mode = s (stream) supported
+;
+MODE:	GTARG	#ARG,STR3	;get mode
+	BCS	STR3		;branch if invalid sequence
+	CMPB	ARG,#'S		;is it "s"
+	BEQ	STR2		;branch if yes
+	CMPB	ARG,#'s
+	BEQ	STR2		;branch if yes
+	BR	STR1		;no. report error
+;
+; Stru (str) specify file structure
+; (segment of command language interpreter)
+; Arg = structure (f, r, p)
+; Note: only structure = f (file) supported)
+;
+STRU:	GTARG	#ARG,STR3	;get structure
+	BCS	STR3		;branch if invalid sequence
+	CMPB	ARG,#'F		;is it "s"
+	BEQ	STR2		;branch if yes
+	CMPB	ARG,#'f
+	BEQ	STR2		;branch if yes
+STR1:	ABORT	#COM30		;501 invalid argument
+STR3:	RTS	PC
+;
+STR2:	FORMAT	#COM04		;200 ok
+	RTS	PC
+;
+; Verbose (ver) be very noisy
+; (segment of command language interpreter)
+; arg = error level
+;
+VERB:	JSR	PC,RDDEC	;set error level
+	MOV	R0,ERRLVL
+	RTS	PC
+	.PAGE
+	.SBTTL	.	COMMANDS TO SET TRANSFER PARAMETERS
+;
+; Noop (noo) no-operation
+; (segment of command language interpreter)
+; (no arguments)
+;
+NOOP:	FORMAT	#COM04		;200 ok
+	RTS	PC
+;
+; User (use) specify user
+; (segment of command language interpreter)
+; Arg = user name
+;
+USEX:	GTARG	#USERID,1$	;get user name
+	BIS	#PASBIT,FLAGS	;mark login in progress
+	FORMAT	#COM02		;331 enter password
+1$:	RTS	PC
+;
+; Pass (pas) specify password
+; (segment of command language interpreter)
+; (note - pass and pasv are context dependent)
+; Arg = password
+;
+PASS:	BIT	#PASBIT,FLAGS	;is login in progress
+	BEQ	1$		;branch if no
+	BIC	#PASBIT,FLAGS	;yes. do the right deed
+	GTARG	#PASSWD,2$	;get password
+	CALL	CONECT,#USERID,#PASSWD,#AF.FTP ;(ftp login)
+	ASL	R0
+	BEQ	30$		;branch if ok
+	FORMAT	USETXT(R0)	;display error message
+	RTS	PC
+;
+30$:	BIS	#LOGBIT,FLAGS	;ok. everything legal now
+	FORMAT	#USE00,#STOBGN	;smile when you say that
+	.MSG	<#^RLOG>	;tell log too
+	FORMAT	#USE99,#STOBGN
+	.MSG	<#^RTT >
+2$:	RTS	PC
+;
+1$:	JMP	PASV		;assume 'pasv' if not login
+	.PAGE
+	.SBTTL	.	COMMANDS TO STORE AND RETRIEVE FILES
+;
+; Stor (sto) store file on local host
+; (segment of command language interpreter)
+; Arg = file name
+;
+STOR:	GTARGL	#ARG,2$		;get file name
+	ENTER	#ARG,#FILNAM,#0
+	BCS	STO3		;branch if invalid file name
+	CLR	FILBLK		;initialize
+	CLR	FILBCT
+	CALL	CTRL,#CM.OPN,#OPNBLK+CONPAR,OPNBLK+CONPTR ;open connection
+	TST	R0
+	BEQ	1$		;branch if ok
+	JSR	PC,PRIDNT	;print reason for failure
+	BR	3$
+;
+1$:	BIS	#STOBIT,FLAGS	;mark stor active
+	.DSBCR			;disable net traps
+	FORMAT	#COM05,#STOBGN	;150 transfer begins [file]
+	.MSG	<#^RTT >	;flush output buffer
+	.ENBCR			;enable net traps
+2$:	RTS	PC
+;
+3$:	ABORT	#COM28		;425 unable to open connection
+	RTS	PC
+;
+STO3:	ABORT	#COM32		;553 invalid file name or size
+	RTS	PC
+;
+; Rnfr (rnf) rename from
+; (segment of command language interpreter)
+; Arg = old file name
+;
+RNFR:	GTARGL	#ARG,1$		;get file name
+	LOOK	#ARG,#RENNAM
+	BCS	STO3		;branch if invalid file name
+	BIS	#RENBIT,FLAGS
+	FORMAT	#COM37		;350 enter rnto command
+1$:	RTS	PC
+;
+; Rnto (rnt) rename to
+; (segment of command language interpreter)
+; Arg = new file name
+;
+RNTO:	BIT	#RENBIT,FLAGS	;was "rnfr" command given
+	BEQ	1$		;branch if no
+	BIC	#RENBIT,FLAGS	;yes. reset sequence indicator
+	GTARGL	#ARG,3$		;get file name
+	LOOK	#ARG,#RENNAM+10
+	BCS	STO3		;branch if invalid file name
+	CMP	RENNAM,RENNAM+10 ;are devices same
+	BNE	2$		;branch if no
+	TST	RENNAM+2	;is this file-structured
+	BEQ	2$		;branch if no
+	TST	RENNAM+12
+	BEQ	2$		;branch if no
+	.RENAM	#ARGBLK,#0,#RENNAM ;yes. do the rename thing
+	BCS	2$		;branch if error
+	ABORT	#COM48		;200 file [file] renamed [file]
+3$:	RTS	PC
+;
+1$:	FORMAT	#COM38		;503 invalid command sequence
+	RTS	PC
+;
+2$:	ABORT	#COM36		;553 invalid file rename
+	RTS	PC
+;
+; Cwd (cwd) change working directory
+; (segment of command language interpreter)
+; Arg = physical name (dev: or dev:file.ext)
+;
+CWD:	GTARG	#ARG,2$		;get file name
+	LOOK	#ARG,#FILNAM,#0
+	BCS	RTR4		;branch if not found
+	CALL	ASG,WRKVOL,#0	;assign work volume
+	ABORT	#COM04C		;200 directory assigned [file]
+2$:	RTS	PC
+;
+; Dele (del) delete file
+; (segment of command language interpreter)
+; Arg = file name
+;
+DELE:	GTARGL	#ARG,1$		;get file name
+	LOOK	#ARG,#FILNAM
+	BCS	RTR4		;branch if not found
+	.DELET	#ARGBLK,#0,#FILNAM ;yes. delete it
+	BCS	RTR4		;branch if not found
+	ABORT	#COM47		;200 file deleted [file]
+1$:	RTS	PC
+;
+; Retr (ret) retrieve file on local host
+; (segment of command language interpreter)
+; Arg = file name
+;
+RETR:	GTARGL	#ARG,2$		;get file name
+	LOOK	#ARG,#FILNAM,#0
+	BCS	RTR4		;branch if not found
+	CLR	FILBLK
+	CALL	CTRL,#CM.OPN,#OPNBLK+CONPAR,OPNBLK+CONPTR ;open connection
+	TST	R0
+	BEQ	1$		;branch if ok
+	JSR	PC,PRIDNT	;print reason for failure
+	BR	RTR1
+;
+1$:	BIS	#RTRBIT,FLAGS	;mark retr active
+	.DSBCR			;disable net traps
+	FORMAT	#COM05,#STOBGN	;150 transfer begins [file]
+	.MSG	<#^RTT >	;flush output buffer
+	.ENBCR			;enable net traps
+2$:	RTS	PC
+;
+RTR1:	ABORT	#COM28		;425 unable to open connection
+	RTS	PC
+;
+RTR4:	ABORT	#COM35		;550 file not found [file]
+	RTS	PC
+;
+; List (lis) list directory on data connection
+; (segment of command language interpreter)
+; Arg = device name
+;
+LIST:	GTARG	#ARG,NLS2	;get file name
+	BR	NLS1
+;
+; Nlst (lis) list directory on telnet connection
+; (segment of command language interpreter)
+; Arg = device name
+;
+NLST:	GTARG	#ARG,NLS2	;get file name
+	BIS	#NLSBIT,FLAGS
+NLS1:	LOOK	#ARG,#FILNAM
+	BCS	RTR4		;branch if error
+	TST	FILNAM		;is device specified
+	BNE	1$		;branch if yes
+	MOV	#^RDK ,FILNAM	;no. specify device name
+1$:	TST	FILNAM+2	;is file given
+	BNE	2$		;branch if yes
+	MOV	#WLDCRD,FILNAM+2 ;no. do the "*.*"
+	MOV	#WLDCRD,FILNAM+6
+2$:	MOV	#AREA,R0	;keep just the device name
+	MOV	FILNAM,(R0)+
+	CLR	(R0)+
+	CLR	(R0)+
+	CLR	(R0)+
+	.LOOKU	#ARGBLK,#0,#AREA ;find file
+	BCS	RTR4		;branch if not found
+	MOV	R0,FILMAX
+	MOV	#DIROFS,FILBLK	;rt-11 directory starts at block 6
+	BIT	#STABIT,FLAGS	;is this stat
+	BNE	3$		;branch if yes
+	CALL	CTRL,#CM.OPN,#OPNBLK+CONPAR,OPNBLK+CONPTR ;open connection
+	TST	R0
+	BEQ	4$		;branch if ok
+	JSR	PC,PRIDNT	;print reason for failure
+	BR	RTR1
+;
+3$:	BIS	#RTRBIT+LSTBIT,FLAGS ;mark dir active
+	FORMAT	#COM10,#STOBGN	;150 directory transfer begins [device]
+	JSR	PC,NETSNC
+	RTS	PC
+;
+4$:	BIS	#RTRBIT+LSTBIT,FLAGS ;mark dir active
+	.DSBCR			;disable net traps
+	FORMAT	#COM10,#STOBGN	;150 directory transfer begins [device]
+	.MSG	<#^RTT >	;flush output buffer
+	.ENBCR			;enable net traps
+NLS2:	RTS	PC
+;
+; Abor (abo) abort file transfer
+; (segment of command language interpreter)
+;
+ABOR:	BIT	#ACTIVE,FLAGS	;is operation in progress
+	BEQ	1$		;branch if no
+	BIT	#STABIT,FLAGS	;is connection open
+	BNE	2$		;branch if no
+	BIT	#STOBIT+RTRBIT+LSTBIT,FLAGS
+	BEQ	2$		;branch if no
+	FORMAT	#COM06		;426 transfer aborted
+2$:	ABORT	#COM04		;200 ok
+	RTS	PC
+;
+1$:	FORMAT	#COM04T		;200 no operation in progress
+	RTS	PC
+	.PAGE
+	.SBTTL	SUBROUTINES
+;
+; Subroutine to abort file transfer
+; R0 = reply pointer
+;
+ABRT:	MOV	R0,RPYPTR	;return reply
+	.PURGE	#0		;purge channel
+	BIT	#STABIT,FLAGS	;is connection open
+	BNE	2$		;branch if no
+	BIT	#STOBIT+RTRBIT+LSTBIT,FLAGS
+	BNE	1$		;branch if yes
+2$:	FORMAT	RPYPTR,#STOBGN	;no. grumble now
+	BIC	#ACTIVE,FLAGS
+	RTS	PC
+;
+1$:	CALL	CTRL,#CM.CLS,#0,OPNBLK+CONPTR ;ip close
+	RTS	PC		;grumble later
+;
+; Subroutine to test login/busy and get argument
+; R1 = string pointer
+;
+GETRG2:	BIT	#LOGBIT,FLAGS	;is user logged in
+	BNE	GETRG1		;branch if yes
+	FORMAT	#USE06		;530 not logged in
+	SEC
+	RTS	PC
+;
+GETRG1:	BIT	#ACTIVE,FLAGS	;is operation in progress
+	BNE	4$		;branch if yes
+1$:	JSR	PC,RDASC	;strip leading blanks
+	BEQ	3$
+	CMPB	R0,#<' >
+	BLOS	1$
+2$:	MOVB	R0,(R1)+	;store byte
+	JSR	PC,RDASC
+	BEQ	3$
+	CMPB	R0,#<' >
+	BHI	2$
+3$:	CLRB	@R1
+	CLC
+	RTS	PC
+;
+4$:	FORMAT	#COM38		;503 invalid command sequence
+	SEC
+	RTS	PC
+;
+	.PSECT	C$TEXT
+	.PAGE
+	.SBTTL	TABLES, TEXT STRINGS AND VARIABLES
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+; Command table for kwik
+;
+; Information, setup and status commands
+;
+KWKTBL:	.KWTAB	<NOO>,NOOP	;no-operation
+	.KWTAB	<STA>,STAT	;show ftp status
+	.KWTAB	<HEL>,HELP	;return help information
+	.KWTAB	<REI>,REIN	;reinitialize
+	.KWTAB	<QUI>,QUIT	;leave the game
+;
+; Connection establishment commands
+;
+	.KWTAB	<USE>,USEX	;specify user
+	.KWTAB	<PAS>,PASS	;specify password
+	.KWTAB	<POR>,PORT	;specify active data port
+	.KWTAB	<PAV>,PASV	;specify passive data port
+	.KWTAB	<TYP>,TYPE	;specify representation type
+	.KWTAB	<MOD>,MODE	;specify transfer mode
+	.KWTAB	<STR>,STRU	;specify file structure
+;
+; Data transmission commands
+;
+	.KWTAB	<CWD>,CWD	;change working directory
+	.KWTAB	<STO>,STOR	;store file on local host
+	.KWTAB	<RET>,RETR	;retrieve file on local host
+	.KWTAB	<LIS>,LIST	;list directory on data connection
+	.KWTAB	<NLS>,NLST	;list directory on telnet connection
+	.KWTAB	<RNF>,RNFR	;rename from
+	.KWTAB	<RNT>,RNTO	;rename to
+	.KWTAB	<ABO>,ABOR	;abort file transfer
+	.KWTAB	<DEL>,DELE	;delete file
+;
+; Unsupported commands
+;
+	.KWTAB	<ACC>,SPFCMD	;acct specify account
+	.KWTAB	<ALL>,SPFCMD	;allo specify file length
+	.KWTAB	<APP>,UNSCMD	;appe append file
+	.KWTAB	<RES>,UNSCMD	;rest restore marker
+	.KWTAB	<SIT>,UNSCMD	;site return site parameters
+;
+; Mail commands - refer to mtp mail
+;
+	.KWTAB	<MLF>,OBSCMD	;mlfl
+	.KWTAB	<MAI>,OBSCMD	;mail
+	.KWTAB	<MSN>,OBSCMD	;msnd
+	.KWTAB	<MSO>,OBSCMD	;msom
+	.KWTAB	<MSA>,OBSCMD	;msam
+	.KWTAB	<MRS>,OBSCMD	;mrsq
+	.KWTAB	<MRC>,OBSCMD	;mrcp
+;
+; Additional commands specific to this implementation
+;
+	.KWTAB	<VER>,VERB	;set error level
+	.KWTAB	<   >,NTFD	;end of table
+;
+; Miscellaneous tables and chairs
+;
+DEFTYP:	.RAD50	'            '	;default file extensions
+WRKVOL:	.RAD50	'DK '		;work volume name
+;
+; User subroutine error codes
+;
+USETXT:	.WORD	USE00		;0 user directory assigned
+	.WORD	USE02		;1 directory not found
+	.WORD	USE03		;2 login file error
+	.WORD	USE04		;3 login incorrect
+;
+; Text strings for ftp server protocol
+;
+HERALD:	.ASCIZ	'220 ^A'<LCLNAM+5>' FTP Service (26-Oct-88 Version) ^LD ^LT'
+COM00:	.ASCIZ	'?FTP-^+'
+COM02:	.ASCIZ	'331 Enter password'
+USE99:	.ASCII	'?FTPSRV-I-'
+USE00:	.ASCIZ	'230 User ^A'<USERID-STOBGN>' login complete'
+COM04:	.ASCIZ	'200 OK'
+COM04T:	.ASCIZ	'200 No operation in progress'
+COM04A:	.ASCIZ	'200 ASCII transfers'
+COM04B:	.ASCIZ	'200 Image transfers'
+COM04C:	.ASCIZ	'200 Directory assigned ^F'<FILNAM-STOBGN>
+COM22:	.ASCIZ	'202 No action required'
+COM27:	.ASCII	'227 Entering passive mode. ^BI'<CONLCL>',^BI'<CONLCL+1>
+	.ASCII	',^BI'<CONLCL+2>',^BI'<CONLCL+3>',^BI'<CONLCL+4>
+	.ASCIZ	',^BI'<CONLCL+5>
+COM40:	.ASCIZ	'221 ^A'<LCLNAM+5>' Closing'
+COM05:	.ASCIZ	'150 Transfer begins ^F'<FILNAM-STOBGN>'[^I'<FILMAX-STOBGN>']'
+COM10:	.ASCIZ	'150 Directory transfer begins ^F'<FILNAM-STOBGN>
+COM42:	.ASCIZ	'226 Transfer complete'
+COM47:	.ASCIZ	'200 File deleted ^F'<FILNAM-STOBGN>
+COM37:	.ASCIZ	'350 Enter RNTO command'
+COM08:	.ASCIZ	'^R'<2>'^R'<4>'.^R'<6>
+COM08A:	.ASCIZ	'^R'<2>'^R'<4>'.^R'<6>'[^I'<10>'];^D'<14>
+COM48:	.ASCIZ	'200 File ^F'<RENNAM-STOBGN>' renamed ^F'<RENNAM+10-STOBGN>
+COM24:	.ASCIZ	'111 Flags: ^K'<ARGBLK-STOBGN>'  host: ^+'
+COM25:	.ASCIZ	'(^R'<CONIDN>') ^C'<CONRMT>' ^XI'<CONRMT+4>'^+'
+COM26:	.ASCII	'  user: ^A'<USERID-STOBGN>'^/'
+	.ASCII	'211 File: ^F'<FILNAM-STOBGN>'[^I'<FILMAX-STOBGN>']'
+	.ASCIZ	' at ^I'<FILBLK-STOBGN>
+;
+; Text strings for error conditions
+;
+COM28:	.ASCIZ	'425 Unable to open connection'
+COM06:	.ASCIZ	'426 Transfer aborted'
+COM34:	.ASCIZ	'451 File write error ^F'<FILNAM-STOBGN>
+COM33:	.ASCIZ	'451 File read error ^F'<FILNAM-STOBGN>
+COM29:	.ASCIZ	'500 Unrecognized command'
+COM30:	.ASCIZ	'501 Invalid argument'
+COM31:	.ASCIZ	'502 Unsupported command'
+COM23:	.ASCIZ	'502 Obsolete command'
+COM38:	.ASCIZ	'503 Invalid command sequence'
+USE02:	.ASCIZ	'450 Directory not found'
+USE03:	.ASCIZ	'452 Login file error'
+USE04:	.ASCIZ	'530 Login incorrect'
+USE06:	.ASCIZ	'530 Not logged in'
+COM35:	.ASCIZ	'550 File not found ^F'<FILNAM-STOBGN>
+COM39:	.ASCIZ	'551 Null file ^F'<FILNAM-STOBGN>
+COM32:	.ASCIZ	'553 Invalid file name or size'
+COM36:	.ASCIZ	'553 Invalid file rename'
+	.EVEN
+;
+	.PSECT	C$DATA
+	.PSECT	$DATA,RW,I
+;
+; Ftpsrv connection data
+;
+OPNBLK:	OPNBLK	0,FTP,,OPNSIZ,NETSUB,P.TCP,44,,,,10 ;open block
+;
+	.PSECT	$ERAS,RW,I
+STOBGN	=	.		;beginning of erasable storage
+;
+; File control block
+;
+FILNAM:	.BLKW	4		;file name
+FILMAX:	.BLKW	1		;max blocks
+FILBUF:	.BLKW	1		;buffer pointer
+FILCNT:	.BLKW	1		;word count
+FILBLK:	.BLKW	1		;block number
+;
+FILOPT:	.BLKW	1		;options
+FILBCT:	.BLKW	1		;buffer byte count
+;
+; Variables
+;
+RPYPTR:	.BLKW	1		;reply string pointer
+RENNAM:	.BLKW	10		;used by rename
+USERID:	.BLKB	16.		;userid
+PASSWD:	.BLKB	8.		;password
+ARG:	.BLKB	40.		;argument
+ARGBLK:	.BLKW	5		;rt-11 argument block
+AREA:	.BLKW	39.		;scratch area
+;
+	.PSECT	$STOR,RW,I
+STOEND	=	.		;end of erasable storage
+;
+	.END
+                                                                                                                                                                                                                                                                                                                                                     

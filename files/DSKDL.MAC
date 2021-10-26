@@ -1,0 +1,336 @@
+	.TITLE	DSKDL	RL11/RL01/RL02 disk driver
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn rl11/rl01/rl02 disk driver
+; *** does not support bad-block replacement ***
+
+; This module is an extension of the disk driver process. it services
+; The dec rl11/rlv11/rlv21 disk controller with up to four rl01 or rl02
+; drives.
+;
+; Max blocks: 10210/20450, rt-11 directory segments: 31 (62 blocks), rt-11
+; id: 5. The last 20 tracks contain manufacturing bad-block info, the first
+; 10 tracks are used for bad-block replacement table. This driver does not
+; support bad-block replacement.
+;
+; Note: standard csr/vector addresses are 774400/160.
+;
+; Conditional assembly switches
+;
+.IIF NDF,CS.R22 CS.R22 == 0	;0: rlv11 1: rlv21 (22-bit)
+;
+; External symbols
+;
+	.GLOBL	DSKINI,.WAIT,.SKED
+;
+; Entry symbols
+;
+	.GLOBL	DLDPAT		;process control vector
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.PSA,.DFBLK,.DSK,.PAT ;dcnlib definitions
+	.COM			;define common data
+	.PSA			;define process save area
+	.DFBLK			;define message codes
+	.DSK			;define disk parameters
+;
+; Module definitions
+;
+; Note: the rl01 disk is formatted in 256 tracks of 40 sectors of 256
+; Bytes on two surfaces. the last track is written during manufacturing
+; With a bad-block replacement table. the 10 blocks immediately preceeding
+; This table contain the bad block replacements themselves. the rt-11
+; Dup utility constructs a bad-block replacement table at the beginning
+; Of block one on the disk.
+;
+RTYCNT	=	8.		;max error retry count
+MAXTRK	=	256.		;maximum tracks per disk
+SECTRK	=	40.		;sectors per track
+SECBLK	=	2.		;sectors per block
+SECLNG	=	256./SECBLK	;words per sector
+DLNBAD	=	10.		;number of replacement blocks
+DSKBAD	=	SECTRK/SECBLK	;manufacturing replacement table (blocks)
+MAXBLK	=	MAXTRK*SECTRK*2/SECBLK-DSKBAD-DLNBAD ;blocks per disk
+TRKLNG	=	256.*SECTRK/SECBLK ;words per track
+;
+; Control/status bits (rlcs)
+;
+DE	=	040000		;drive error
+NXM	=	020000		;non-existent memory
+DLT	=	010000		;data late
+DCK	=	004000		;data check
+OPI	=	002000		;operation incomplete
+DS1	=	001000		;drive-select bit 1
+DS0	=	000400		;drive-select bit 0
+;
+; Device commands (rlcs)
+;
+DRDY	=	1		;drive ready
+WRCHK	=	1*2		;write check
+GSTS	=	2*2		;get status
+SEEK	=	3*2		;seek
+RDH	=	4*2		;read header
+WRITE	=	5*2		;write
+READ	=	6*2		;read
+CRDY	=	200		;controller ready
+;
+; Multipurpose register bits (rlmp)
+;
+MRK	=	1		;mark
+STS	=	2		;status
+SN	=	4		;stc
+RST	=	10		;bh
+HS	=	20		;head select
+REV	=	200!MRK
+WDE	=	100000		;write data error
+CHE	=	040000		;head current error
+WLS	=	020000		;write-lock status
+SKTO	=	010000		;seek timeout
+SPD	=	004000		;spin error
+WGE	=	002000		;write gate error
+VC	=	001000		;volume check
+DSE	=	000400		;drive select error
+DT	=	000200		;(reserved)
+HSS	=	000100		;head select
+CO	=	000040		;cover open
+HH	=	000020		;heads out
+BH	=	000010		;brush home
+SLM	=	000005		;seek linear mode
+;
+; Process save area extension (dla)
+;
+.	=	DASEND
+DLACSR:	.BLKW	1		;ending status register
+DLATWC:	.BLKW	1		;current block word count
+DLAFUN:	.BLKW	1		;function
+DLSECT:	.BLKW	1		;current track/sector
+DLAUNT:	.BLKW	1		;drive number
+DLDA:	.BLKW	1		;disk address
+DLCC:	.BLKW	1		;current head
+	.BLKW	REGEND/2+DSKSTK	;process stack
+RLAEND	=	.		;end of psa extension
+;
+; Rl11/rlv11 device registers
+;
+.	=	0
+RLCS:	.BLKW	1		;control/status register
+RLBA:	.BLKW	1		;bus address register
+RLDA:	.BLKW	1		;disk address register
+RLMP:	.BLKW	1		;multipurpose register
+RLAE:	.BLKW	1		;address extension (rlv21 only)
+	.PAGE
+;
+; Procedure segment
+;
+; Supervisor-state procedure
+; Dsects: r2 = dev, r3 = par, r4 = reg, r5 = psa
+;
+	.PSECT	$KERI,RO,I
+;
+; Start i/o operation
+;
+DSKGO:	JSR	PC,.WAIT	;switch to wait state
+	MOVB	DASDRV(R5),R0	;extract drive number
+	SWAB	R0
+	MOV	R0,DLAUNT(R5)
+	MOV	RLCS(R2),R0	;is drive currently selected
+	BIC	#^C<DS0+DS1>,R0
+	CMP	R0,DLAUNT(R5)
+	BNE	1$		;branch if no
+	TST	DLAFUN(R5)	;yes. is this primordal seek
+	BNE	2$		;branch if no
+1$:	MOV	#-1,DLCC(R5)	;yes. force read header
+2$:	MOV	#SECTRK/SECBLK,DLSECT(R5) ;compute initial track/sector
+	CLR	R0
+	MOV	DASBLK(R5),R1
+	DIV	DLSECT(R5),R0
+	ASH	#6,R0
+	ASL	R1
+	BIS	R1,R0
+	ASR	R1
+	SUB	R1,DLSECT(R5)
+	SWAB	DLSECT(R5)
+	MOV	R0,DLDA(R5)
+	MOVB	#RTYCNT,DASERC(R5) ;set for hard error
+	JSR	PC,DLGST	;get drive status
+	BIT	#DRDY,RLCS(R2)	;is this hard error
+	BEQ	ERRJMP		;branch if yes
+	MOV	RLMP(R2),R1
+	BIC	#WLS!HSS!DT,R1
+	CMP	#HH!BH!SLM,R1
+	BNE	ERRJMP		;branch if yes
+	CLRB	DASERC(R5)	;no. set for soft error
+	MOV	DASRWC(R5),R0	;compute word count
+	CMP	R0,DLSECT(R5)	;does this overlap track
+	BLOS	3$		;branch if no
+	MOV	DLSECT(R5),R0	;yes. truncate it
+3$:	MOV	R0,DLATWC(R5)
+	MOV	#READ+100,R1	;decode operation
+	CMPB	#BC.WRT+CHNCTL,DASOPN(R5)
+	BNE	4$
+	ADD	#WRITE-READ,R1
+4$:	MOV	R1,DLAFUN(R5)
+;
+; Perform read-header if necessary
+;
+SEEKH:	CMP	#-1,DLCC(R5)
+	BNE	1$
+	MOV	#RDH+100,R1	;read head position
+	BR	DSKOP
+;
+; Perform seek if necessary
+;
+1$:	MOV	DLDA(R5),R0	;compare track numbers
+	BIC	#77,R0
+	MOV	DLCC(R5),R1
+	BIC	#77,R1
+	CMP	R0,R1
+	BEQ	3$		;branch if same
+	MOV	R0,-(SP)	;different. determine hs bit
+	BIC	#^C100,@SP
+	ASR	@SP
+	ASR	@SP
+	BIC	#100,R0		;compute increment
+	BIC	#100,R1
+	SUB	R0,R1
+	BCC	2$		;branch if positive (toward center)
+	NEG	R1		;negative (toward outside)
+	BIS	#SN,R1
+2$:	INC	R1		;assemble command word
+	BIS	(SP)+,R1
+	MOV	R1,RLDA(R2)
+	MOV	#SEEK+100,R1
+	BR	DSKOP	
+;
+; Perform read/write
+;
+3$:	MOV	DLATWC(R5),R1	;load word count
+	NEG	R1
+	MOV	R1,RLMP(R2)
+	MOV	DLDA(R5),RLDA(R2) ;load disk address
+	MOV	DASADR(R5),RLBA(R2) ;load bus address 0:15
+	MOVB	DASADX(R5),R1
+	.IF	NE,CS.R22	;inlcude for rlv21
+	MOVB	R1,RLAE(R2)	;load bus address 16:21
+	.ENDC
+	BIC	#^C3,R1		;insert bus address 16:17
+	ASH	#4,R1
+	BIS	DLAFUN(R5),R1	;load function
+DSKOP:	BIS	DLAUNT(R5),R1
+	MOV	R1,RLCS(R2)
+	RTS	PC
+;
+ERRJMP:	JMP	ERROR
+	.PAGE
+;
+; I/o interrupt service
+;
+DSKINT:	MOV	RLCS(R2),DLACSR(R5) ;save status
+	BMI	ERROR		;branch if error
+	CMP	#-1,DLCC(R5)	;is this read-neader complete
+	BNE	20$		;branch if no
+	MOV	RLMP(R2),DLCC(R5) ;yes. update head position and try again
+	BR	SEEKH
+;
+20$:	CMP	DLDA(R5),DLCC(R5) ;is this seek complete
+	BEQ	1$		;branch if no
+	MOV	DLDA(R5),DLCC(R5) ;yes. update head position and try again
+	BR	SEEKH
+;
+1$:	MOV	DLATWC(R5),R0	;read/write complete. update blocks
+	SWAB	R0
+	BIC	#^C377,R0
+	ADD	R0,DASBLK(R5)
+	MOV	DLATWC(R5),R0	;update pointers and counters
+	SUB	R0,DASRWC(R5)
+	ASL	R0
+	ADD	R0,DASADR(R5)
+	ADCB	DASADX(R5)
+	MOV	DASRWC(R5),R0	;determine next word count
+	BEQ	DONE		;branch if done
+	CMP	R0,#TRKLNG	;is it too long
+	BLOS	2$		;branch if no
+	MOV	#TRKLNG,R0	;yes. truncate
+2$:	MOV	R0,DLATWC(R5)
+	BIC	#77,DLDA(R5)	;bump to next track
+	ADD	#100,DLDA(R5)
+	JMP	SEEKH		;continue for next track
+;
+; Error processing
+;
+ERROR:	JSR	PC,DLRST	;reset drive and get status
+	MOV	DLACSR(R5),R0	;is drive ready
+	BIT	#DRDY,R0
+	BEQ	HRDERR		;hard error if so
+	BIT	#NXM,R0		;did we buy enough memory
+	BNE	HRDERR		;hard error if no
+	BIT	#DE,R0		;is this drive error
+	BEQ	2$		;retry if no
+	CMP	#WRITE+100,DLAFUN(R5) ;is this write operation
+	BNE	1$		;branch if no
+	MOV	RLMP(R2),R1	;yes. is it write-protected
+	BIT	#WLS,R1
+	BNE	HRDERR		;hard error if yes
+1$:	CMP	#-1,DLCC(R5)	;is this seek error
+	BNE	2$		;branch if no
+	MOV	#REV,RLDA(R2)	;yes. command seek inward
+	MOV	#SEEK+100,R1
+	BR	DSKOP		;and try again
+;
+2$:	TSTB	DASERC(R5)	;is this the first one
+	BNE	3$		;branch if no
+	INC	PARTRY(R3)	;yes. record total faults
+3$:	INCB	DASERC(R5)	;soft error. increment retry
+	CMPB	DASERC(R5),#RTYCNT ;is it too many
+	BHI	HRDERR		;hard error if yes
+	INC	PARCRC(R3)	;no. assume all errors are crc for now
+	JMP	SEEKH		;try again for soft error
+;
+HRDERR:	BIS	#1,REGPS(R4)	;record hard error
+	MOV	DLACSR(R5),@R4
+DONEW:	JMP	.SKED
+;
+; Operation complete
+;
+DONE:	CMP	#WRITE+100,DLAFUN(R5) ;is this write operation
+	BNE	DONEW		;branch if no
+	MOV	DLATWC(R5),R0	;yes. is this last sector
+	BIC	#^C377,R0
+	BEQ	DONEW		;branch if yes
+	CMP	R0,#SECLNG
+	BHI	DONEW		;branch if yes
+	CLR	DLATWC(R5)	;no. fill last sector
+	MOV	R5,R0
+	ADD	#DLATWC,R0
+	MOV	R0,RLBA(R2)
+	MOV	#-1,RLMP(R2)
+	MOV	DLAFUN(R5),R1	;(supervisor/kernel space)
+	JMP	DSKOP
+;
+; Subroutine to execute disk operation
+; R1 = operation, r2 = dev, returns cc = result
+;
+DLRST:	MOV	#RST!STS!MRK,RLDA(R2) ;reset entry
+	JSR	PC,DL16
+DLGST:	MOV	#STS!MRK,RLDA(R2) ;get-status entry
+DL16:	MOV	#GSTS,R1
+DLXCT:	BIS	DLAUNT(R5),R1	;execute-command entry
+	MOV	R1,@R2
+7$:	TSTB	@R2
+	BPL	7$
+	TST	@R2
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$KERD,RO,D
+;
+; Process header
+;
+DLDPAT:	.PAT	RLAEND,DSKINI,PRI2,<0,0,DSKGO,DSKINT>
+;
+	.END
+                                                                                                                                                                                                                                                                                                                                                                                                                                           

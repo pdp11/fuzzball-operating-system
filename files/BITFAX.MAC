@@ -1,0 +1,674 @@
+	.TITLE	BITFAX	Bitmap to facsimile conversion
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Bitmap to facsimile conversion
+;
+; This module converts image files from Sun bitmap to Dacom facsimile format.
+;
+; Dacom 450 frame format (all bits are inverted in file)
+;
+;  0                   1                   2                   3
+;  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |             Synchronization Code              |  Flags  |Seq|
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;  3                 4                   5                   6
+;  1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |     Samples       |      X Position       | M |  W  |  B  |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;
+; Synchronization Code	{000110,111001,111001,000110}
+; Flags			{Run,CFB,Rpt,Spr,SUB}
+; Seq			frame sequence (tumbled)
+; Samples		count of data bits (0-512)
+; X Position		current X position (0-1725)
+; M			current mode 0: w-w, 1: b-w, 2: w-b, 3: b-b
+; W			current white run length
+; B			current black run length
+;
+; All conversions assume page length of 11.5 in
+;
+; External symbols
+;
+	.GLOBL	BINP,BOUT	;word i/o
+;
+; Entry symbols
+;
+	.GLOBL	BITFAX		;bitmap to facsimile conversion
+;
+; Module definitions
+;
+	.ASECT
+;
+	.MACRO	.XMIT	CODE,LEN
+	MOV	CODE,R4
+	MOV	LEN,R5
+	JSR	PC,XMIT
+	.ENDM	.XMIT
+;
+; Assembly parameters
+;
+PXMAX	=	1726.		;max x pels
+PYMAX	=	2200.		;max y pels
+MXDATB	=	500.		;Maximum data bits per frame
+MXDATP	=	4800.		;Maximum pels coded per frame
+CRCGEN	=	4530		;CRC polynomial
+;
+; Error codes
+;
+ER.FMT	=	1		;format error
+ER.INP	=	2		;input error
+ER.OUT	=	3		;output error
+;
+; Dacom 450 facsimile frame format
+;
+.	=	0
+FM.CNT:	.BLKB	1		;frame count (octets)
+FM.COD:	.BLKB	1		;frame code
+FC.SET	=	070		;setup frame
+FC.DAT	=	071		;data frame
+FC.EOF	=	072		;eof frame
+FM.DAT:	.BLKB	74.		;data field (585 bits)
+SYCOD1	=	^B01000110	;sync codes (inverted)
+SYCOD2	=	^B10011110
+SYCOD3	=	^B00011011
+SSRCRF	=	^B00000100
+FM.LEN	=	.		;end of frame
+;
+; Sun image file header
+; (32-bit byte-swapped doublewords)
+;
+.	=	0
+RS.MAG:	.BLKW	2		;(ras_magic) magic number
+RS.WID:	.BLKW	2		;(ras_width) width (pels) of image
+RS.HGH:	.BLKW	2		;(ras_height) height (pels) of image
+RS.DPT:	.BLKW	2		;(ras_depth) depth (1,8,24 bits) of pel
+RS.IMG:	.BLKW	2		;(ras_length) length (bytes) of image
+RS.TYP:	.BLKW	2		;(ras_type) type of file
+RS.COL:	.BLKW	2		;(ras_maptype) type of colormap
+RS.MAP:	.BLKW	2		;(ras_maplength) length (bytes) of color map
+RS.LEN	=	.		;length of header
+;
+; Procedure segment
+;
+	.PSECT	$BOSI,RO,I
+;
+; Bitmap to facsimile conversion
+; code = bitfax( <resolution>, <invert switch>, <image mode>)
+;
+; Resolution		Invert switch		Image mode
+; 0	200 ppi		0	normal		0	undetermined
+; 1	100 ppi		1	inverted	1	landscape
+; 2	67 ppi					2	portrait
+;
+BITFAX:	MOV	2(SP),RESCOD	;save parameters
+	MOV	4(SP),XMODE
+	MOV	6(SP),LPMODE
+	CLR	CODE
+	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	MOV	R5,-(SP)
+	JSR	PC,DBLINP	;(ras_magic) magic number
+	CMP	R0,MAGIC	;is magic number correct
+	BNE	1$		;branch if no
+	CMP	R1,MAGIC+2
+	BEQ	2$		;branch if yes
+1$:	MOV	#ER.FMT,CODE	;no. format error
+2$:	JSR	PC,DBLINP	;(ras_width) get width (pels) of image
+	MOV	R1,XMAX
+	ADD	#17,R1		;convert to words
+	ASH	#-4,R1
+	MOV	R1,XCNT
+	JSR	PC,DBLINP	;(ras_height) get height (pels) of image
+	MOV	R1,YMAX
+	MOV	XMAX,PELLIN	;assume x modulus
+	CMPB	LPMODE,#1	;is this landscape mode
+	BEQ	4$		;branch if yes
+	CMPB	LPMODE,#2	;no. is this portrait mode
+	BEQ	3$		;branch if yes
+	MOV	XMAX,R0		;no. is x > y
+	MUL	#PYMAX,R0
+	DIV	#PXMAX,R0
+	CMP	R0,YMAX
+	BHIS	4$		;branch if yes
+3$:	MOV	PELLIN,R0	;no. assume y modulus
+	MUL	#PXMAX,R0
+	DIV	#PYMAX,R0
+	MOV	R0,PELLIN
+4$:	CLR	R0		;scale for y axis
+	MOV	PELLIN,R0
+	MOV	RESCOD,R2
+	MUL	SCLCOD(R2),R0
+	MOV	R1,PALLIN
+	MOV	LINCOD(R2),YCNT
+	ASR	YCNT
+	CLR	YPOSN
+	CLR	XPOSN
+	JSR	PC,DBLINP	;(ras_depth) depth (1,8,24 bits) of pel
+	JSR	PC,DBLINP	;(ras_length) length (bytes) of image
+	JSR	PC,DBLINP	;(ras_type) type of file
+	JSR	PC,DBLINP	;(ras_maptype) type of colormap
+	JSR	PC,DBLINP	;(ras_maplength) length (bytes) of color map
+	ASR	R1		;convert to words
+	BEQ	6$		;branch if none
+5$:	JSR	PC,BINP		;munch that bit
+	SOB	R1,5$
+6$:	MOV	#3,FRMSEQ	;initialize state variables
+	MOV	#7,BFLDLN
+	MOV	#177,BFLDMX
+	MOV	#7,WFLDLN
+	MOV	#177,WFLDMX
+	MOV	#SUPBLK,R1	;copy setup frame
+	MOV	#FRAME,R0
+	MOVB	@R1,R2
+7$:	MOVB	(R1)+,(R0)+
+	SOB	R2,7$
+	MOV	RESCOD,R2	;extract setup parameters
+	MOV	SPDCOD(R2),R0	;insert speed code
+	ASH	#6,R0
+	BICB	#300,FRAME+FM.DAT+7
+	BISB	R0,FRAME+FM.DAT+7
+	JSR	PC,SBOUT	;write setup frame
+	JSR	PC,ENCODE	;encode image
+	MOV	#EOFBLK,R1	;write eof frame
+	MOVB	@R1,R2
+	ASR	R2
+8$:	MOV	(R1)+,R0
+	JSR	PC,BOUT
+	BCS	9$		;branch if error
+	SOB	R2,8$
+	BR	10$
+;
+9$:	MOV	#ER.OUT,CODE	;output error
+10$:	MOV	(SP)+,R5	;evas
+	MOV	(SP)+,R4
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	MOV	CODE,R0
+	RTS	PC
+;
+; Main encoding procedure
+;
+; This routine simulates the FSA encoding algorithm. It interprets an array of
+; modes which represent the state of two raster lines - top and bottom.
+;
+; Mode	Top	Bottom
+; --------------------
+; 0	white	white
+; 2	black	white
+; 4	white	black
+; 6	black	black
+; 8	end of page
+; 10	end of line
+;
+; Variables
+; R3		pointer to next mode in MODE array.
+; R4		code to be generated
+; R5		length of code
+; DATBTS	count of data bits for current frame
+; DATPEL	MXDATP - count of X pels coded so far in current frame
+;
+ENCODE:	CLRB	STATE		;pretend we are at mode 0
+	CLRB	MODES
+	MOV	#MODES+1,R3
+	JSR	PC,HEADER	;create header for first frame
+	JSR	PC,GMODES	;get modes for 1st pair of lines
+	JMP	STAT0		;start in state 0
+;
+; State 1 (white-black)
+;
+STAT1:	CLR	R4		;code = 0
+	MOV	#1,R5		;len  = 1
+ST1:	MOVB	(R3)+,R0	;get next mode
+	DEC	DATPEL
+	ADD	R0,PC
+	BR	TR10		;0
+	BR	TR11		;1
+	BR	TR12		;2
+	BR	TR13		;3
+	BR	TR14		;4 end page
+	BR	TR15		;5 end line
+;
+TR11:	JSR	PC,XMIT		;1 encode 0
+	BR	ST1		;back to same state
+;
+TR15:	JSR	PC,GMODES	;5 end line. get next line pair
+	INC	DATPEL		;continue in state 1
+	BR	ST1
+;
+TR10:	.XMIT	#^B0010,#4	;0 encode 0010
+	JMP	STAT0
+;
+TR12:	.XMIT	#^B010,#3	;2 encode 010
+	JMP	STAT2
+;
+TR13:	.XMIT	#^B1110,#4	;3 encode 1110
+	JMP	STAT3
+;
+TR14:	.XMIT	#^B0010,#4	;4 end page. encode 0010
+	JMP	EOPAGE
+;
+; State 2 (black-white)
+;
+STAT2:	MOV	#1,R4		;code = 1
+	MOV	R4,R5		;length = 1
+ST2:	MOVB	(R3)+,R0	;get next mode
+	DEC	DATPEL
+	ADD	R0,PC
+	BR	TR20		;0
+	BR	TR21		;1
+	BR	TR22		;2
+	BR	TR23		;3
+	BR	TR24		;4 end page
+	BR	NEWBM2		;5 end line
+;
+TR22:	JSR	PC,XMIT		;2 encode 1
+	BR	ST2
+;
+NEWBM2:	JSR	PC,GMODES	;5 end line. get next line pair
+	INC	DATPEL		;continue in state 2
+	BR	ST2
+;
+TR20:	.XMIT	#^B0001,#4	;0 encode 0001
+	JMP	STAT0
+;
+TR21:	.XMIT	#^B101,#3	;1 encode 101	
+	JMP	STAT1
+;
+TR23:	.XMIT	#^B1101,#4	;3 encode 1101
+	JMP	STAT3
+;
+TR24:	.XMIT	#^B0001,#4	;4 end page. encode 0001
+	JMP	EOPAGE
+;
+; State 3 (black-black)
+;
+STAT3:	MOV	#BFLDLN,FLDLN	;set black parameters
+	MOV	#BFLDMX,FLDMX
+	BR	STAT03
+;
+; State 0 (white-white)
+;
+STAT0:	MOV	#WFLDLN,FLDLN	;set white parameters
+	MOV	#WFLDMX,FLDMX
+;
+; STAT03 processes states 0 and 3 (remembered in STATE)
+; NFLDS counts the # of fields needed to code the present runlength
+; which is needed for decrementing the field length.
+; FLDLN points to the variable that contains the field length
+; FLDMX points to the variable that contains the max. value for
+;	the field length.
+;
+STAT03:	MOVB	-1(R3),STATE	;remember this mode (0 or 3)
+	CLR	NFLDS
+NXTFLD:	MOV	@FLDMX,R5	;maximum runlength
+NXT03:	CMPB	(R3)+,STATE
+	BNE	NOT03
+	SOB	R5,NXT03	;same state
+	MOV	@FLDMX,R4	;found runlength = max. runlength
+	SUB	R4,DATPEL
+	MOV	@FLDLN,R5	;length of code
+	CMP	R5,#7
+	BGE	XMTCNT
+	INC	@FLDLN		;increase field length if < 7
+	ASL	@FLDMX
+	INC	@FLDMX		;get new max. runlength value
+XMTCNT:	INC	NFLDS
+	JSR	PC,XMIT		;NOW xmit
+	BR	NXTFLD
+;
+NOT03:	CMPB	-1(R3),#5*2	;is previous end line		
+	BNE	END03		;branch if no
+	JSR	PC,GMODES	;yes. get next line-pair
+	BR	NXT03
+;
+END03:	MOV	@FLDMX,R4	;compute runlength
+	SUB	R5,R4
+	SUB	R4,DATPEL
+	DEC	DATPEL		;R4 is actually 1 less than the
+	MOV	@FLDLN,R5	;real runlength
+	TST	NFLDS
+	BGT	1$		;no need if nflds > 0
+	CMP	R5,#3
+	BLT	1$		;cant decrease below 3
+	BGT	2$
+	BIT	#4,R4		;= 3 => check 3rd bit
+	BNE	1$
+	BR	3$
+;
+2$:	BITB	MASK2(R5),R4	;check top 2 bits
+	BNE	1$
+3$:	DEC	@FLDLN		;dec length
+	ASR	@FLDMX
+1$:	MOVB	-1(R3),R0	;check this mode
+	ADD	R0,PC
+	BR	TR030		;0
+	BR	TR031		;1
+	BR	TR032		;2
+	BR	TR033		;3
+	BR	TR034		;4 end page
+;
+TR031:	BISB	MASK1(R5),R4	;append transition bit 1
+	INC	R5
+	JSR	PC,XMIT
+	JMP	STAT1		;exit to state 1
+;
+TR032:	BISB	MASK1(R5),R4	;append transition bit 1
+	INC	R5
+	JSR	PC,XMIT
+	JMP	STAT2		;exit to state 2
+;
+TR030:	INC	R5		;append transition bit 0
+	JSR	PC,XMIT
+	JMP	STAT0		;exit to state 0
+;
+TR033:	INC	R5		;append transition bit 0
+	JSR	PC,XMIT
+	JMP	STAT3		;exit to state 3
+;
+TR034:	INC	R5		;append transition bit 0
+	JSR	PC,XMIT
+	JMP	EOPAGE		;exit to end page
+;
+; End of page
+;
+EOPAGE:	CMP	DATBTS,#MXDATB	;is this frame empty
+	BEQ	1$		;branch if yes
+	JSR	PC,FDOUT	;no. flush it out
+1$:	RTS	PC
+;
+; Subroutine to read two raster lines into modes array
+; Returns r3 = modes array pointer, with marker at end
+;
+GMODES:	MOV	R1,-(SP)	;save
+	MOV	R4,-(SP)
+	SUB	PALLIN,YPOSN	;read line
+	TST	YPOSN		;did we pass a y tick
+	BPL	4$		;branch if yes
+	MOV	#MODES,R3	;no. clear array
+2$:	CLRB	(R3)+
+	CMP	R3,#MODES+PXMAX
+	BLO	2$
+	MOVB	#5*2,@R3	;set end line
+1$:	ADD	#PXMAX/2,YPOSN	;increment y in screen space
+	TST	YPOSN		;did we pass a y tick
+	BMI	3$		;branch if no (read two lines)
+	MOV	#6,R4		;get two copies of line
+	JSR	PC,GTLIN
+	BR	4$
+;
+3$:	ADD	#PXMAX/2,YPOSN	;increment y in screen space
+	MOV	#2,R4		;get first line
+	JSR	PC,GTLIN
+	MOV	#4,R4		;get second line
+	JSR	PC,GTLIN
+	TST	YPOSN		;did we pass a y tick
+	BMI	1$		;branch if no
+4$:	MOV	#MODES,R3	;return r3 = modes array pointer
+	DEC	YCNT		;update residual line pairs
+	MOV	(SP)+,R4	;evas
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to get bits for one line
+; R4 = bits to set
+;
+GTLIN:	MOV	R2,-(SP)	;save
+	MOV	R5,-(SP)
+	MOV	#MODES,R3	;initialize
+	TST	CODE		;is error present
+	BNE	11$		;branch if yes
+	TST	YCNT		;no. is this end of raster
+	BEQ	11$		;branch if yes
+	CLR	XPOSN		;no. set to continue
+	MOV	XCNT,R2
+	TST	YMAX		;update bitmap line
+	BEQ	1$
+	DEC	YMAX
+1$:	CLR	R0		;fill with whiteout
+	TST	YMAX
+	BEQ	3$
+	JSR	PC,BINP		;get next word
+	BCC	3$		;branch if ok
+	MOV	#ER.FMT,CODE	;format error
+	BR	11$
+;
+3$:	SWAB	R0		;love a pdp11
+	TST	XMODE		;is inversion specified
+	BEQ	4$		;branch if no
+	COM	R0		;yes. complement bits
+4$:	MOV	#16.,R5		;unwrap 16 bits
+5$:	ADD	#PXMAX,XPOSN	;increment x in screen space
+	CLC			;get next bit
+	ROL	R0
+	BCC	7$		;branch if 0 bit
+6$:	CMP	R3,#MODES+PXMAX	;is this end of line
+	BHIS	9$		;branch if yes
+	BISB	R4,@R3		;no. set 1 bit
+	TST	XPOSN		;did we pass an x tick
+	BMI	8$		;branch if no
+	SUB	PELLIN,XPOSN	;yes. update pointers
+	INC	R3
+	BR	6$
+;
+7$:	CMP	R3,#MODES+PXMAX	;is this end of line
+	BHIS	9$		;branch if no
+	TST	XPOSN		;yes. did we pass an x tick
+	BMI	8$		;branch if no
+	SUB	PELLIN,XPOSN	;yes. update pointers
+	INC	R3
+	BR	7$
+;
+8$:	SOB	R5,5$		;continue for remaining bits
+9$:	SOB	R2,1$		;continue for remaining words
+10$:	CMP	R3,#MODES+PXMAX	;fill background
+	BHIS	12$
+	BISB	R4,(R3)+
+	BR	10$
+;
+11$:	MOVB	#4*2,(R3)+	;set end page
+12$:	MOV	(SP)+,R5	;evas
+	MOV	(SP)+,R2
+	RTS	PC
+;
+; Append R5 bits from R4 to frame
+; Write out frame when full, returns c(cc) = 1 if error
+;
+XMIT:	SUB	R5,DATBTS	;update bit count
+	MOV	R4,R1
+	CLR	R0
+	ASHC	NVBXMR,R0	;align code bits
+	BIS	R1,@R2
+	ADD	R5,NVBXMR
+	CMP	NVBXMR,#16.
+	BLT	1$
+	SUB	#16.,NVBXMR	;some bits overflowed into r0
+	TST	(R2)+		;point to next word
+	MOV	R0,@R2		;set bits, clear rest of the word
+1$:	TST	DATBTS		;is frame full?
+	BLE	2$		;branch if yes
+	TST	DATPEL
+	BGT	3$		;branch if no
+2$:	JSR	PC,FDOUT	;yes. write frame
+	JSR	PC,HEADER	;compute header for next frame
+3$:	RTS	PC
+;
+; Subroutine to construct frame header
+;
+HEADER:	MOV	#MXDATB,DATBTS	;initialize
+	CLR	NFLDS
+	MOV	#MXDATP,DATPEL
+	MOV	#FRAME,R2	;construct frame header
+	MOVB	#FM.LEN,(R2)+	;length byte
+	MOVB	#FC.DAT,(R2)+	;command byte
+	MOVB	#SYCOD1,(R2)+	;sync codes
+	MOVB	#SYCOD2,(R2)+
+	MOVB	#SYCOD3,(R2)+
+	INC	FRMSEQ		;sequence number (tumbled)
+	CMP	FRMSEQ,#3
+	BLE	1$
+	CLR	FRMSEQ
+1$:	MOV	FRMSEQ,R1
+	ASR	R1
+	BCC	2$
+	BIS	#2,R1
+2$:	BIS	#SSRCRF,R1	;flag bits
+	MOVB	R1,(R2)+
+	INC	R2		;data field count
+	MOV	R3,R1		;compute X position
+	SUB	#MODES+1,R1	;R3 points 1 position beyond current mode
+	ASL	R1		;align
+	MOVB	R1,(R2)+
+	SWAB	R1
+	MOV	BFLDLN,R0	;black field length
+	ASH	#5,R0
+	BIS	R0,R1
+	BIC	#177400,R1
+	MOVB	-1(R3),R0	;last mode (state)
+	ASH	#2,R0
+	ADD	WFLDLN,R0	;white field length
+	ASH	#8.,R0
+	ADD	R0,R1
+	MOV	R1,(R2)
+	MOV	#13.,NVBXMR	;13 bits in current frame
+	CLR	FRAME+72.	;clear checksum
+	CLR	FRAME+74.
+	RTS	PC
+;
+; Subroutine to write frame
+;
+FDOUT:	MOV	#MXDATB,R0	;compute length
+	SUB	DATBTS,R0
+	BIT	#1000,R0
+	BEQ	1$
+	BISB	#1,FRAME+7
+1$:	ASH	#7,R0
+	BISB	R0,FRAME+5
+	SWAB	R0
+	MOVB	R0,FRAME+6
+SBOUT:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	MOV	R5,-(SP)
+	MOV	#CRCGEN,R3	;compute checksum
+	MOV	#573.,R5	;585-12 bits
+	MOV	#FRAME+2,R2	;skip header octets
+	MOV	@R2,R1		;initialize checksum
+	COM	(R2)+
+1$:	MOV	#16.,R4
+	MOV	@R2,R0		;get next word
+	COM	(R2)+		;complement frame contents
+2$:	ROR	R0		;update checksum
+	ROR	R1
+	BCC	3$
+	XOR	R3,R1
+3$:	DEC	R5
+	BEQ	4$
+	SOB	R4,2$
+	BR	1$
+;
+4$:	COM	R1		;complement checksum
+	CLR	R0
+	ASHC	#13.,R0		;align and store
+	BIC	#160000,FRAME+72.
+	BIS	R1,FRAME+72.
+	MOV	R0,FRAME+74.
+	MOV	#FRAME,R1	;write frame
+	MOV	#FM.LEN/2,R2
+5$:	MOV	(R1)+,R0
+	JSR	PC,BOUT
+	BCS	6$		;branch if error
+	SOB	R2,5$
+	BR	7$
+;
+6$:	MOV	#ER.OUT,CODE	;output error
+7$:	MOV	(SP)+,R5	;evas
+	MOV	(SP)+,R4
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to get next doubleword
+; Returns r0-r1 = doubleword
+;
+DBLINP:	JSR	PC,BINP		;get high-order word
+	BCS	1$		;branch if error
+	MOV	R0,-(SP)
+	JSR	PC,BINP		;get low-order word
+	MOV	R0,R1
+	MOV	(SP)+,R0
+	BCS	1$		;branch if error
+	SWAB	R0		;love a pdp11
+	SWAB	R1
+	RTS	PC
+;
+1$:	MOV	#ER.INP,CODE	;input error
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+MAGIC:	.WORD	131*400+246,152*400+225	;sun image file magic identifier (?!)
+;
+; Resolution	200	100	67
+;		------------------
+SPDCOD:	.WORD	2,	0,	1	;speed code
+LINCOD:	.WORD	2200.,	1100.,	733.	;scan lines
+SCLCOD:	.WORD	1,	2,	3	;y-axis scale factor
+;
+; Setup block: speed 0, length 0, paper 1, multipage 0
+; Seq Run CFB Rpt Spr SUB	Sample	X pos	Code
+;  0   0   0   1   0   1	1023	4095	377
+;
+SUPBLK:	.BYTE	76.,FC.SET	;setup frame
+	.BYTE	106,236,033,320,377,377,377,037,324,001,000,240,252,252,252,252
+	.BYTE	252,252,252,252,252,252,252,252,252,252,252,252,252,252,252,252
+	.BYTE	252,252,252,252,252,252,252,252,252,252,252,252,252,252,252,252
+	.BYTE	252,252,252,252,252,252,252,252,252,252,252,252,252,252,252,252
+	.BYTE	252,252,252,252,252,252,252,012,000,000
+EOFBLK:	.BYTE	2,FC.EOF	;eof frame
+MASK1:	.BYTE	000,002,004,010,020,040,100,200
+MASK2:	.BYTE	000,000,000,006,014,030,060,140
+	.EVEN
+;
+; Variables
+;
+RESCOD:	.BLKW	1		;resolution
+XMODE:	.BLKW	1		;invert switch
+LPMODE:	.BLKW	1		;image mode
+CODE:	.BLKW	1		;return code
+;
+YCNT:	.BLKW	1		;sesidual count of line pairs
+PELLIN:	.BLKW	1		;x scale factor
+PALLIN:	.BLKW	1		;y scale factor
+XPOSN:	.BLKW	1		;x position in screen space
+YPOSN:	.BLKW	1		;y position in screen space
+BFLDLN:	.BLKW	1		;B field len
+WFLDLN:	.BLKW	1		;W field len
+BFLDMX:	.BLKW	1		;max value of B field
+WFLDMX:	.BLKW	1		;max value of W field
+FLDLN:	.BLKW	1		;pointer to B or W field len
+FLDMX:	.BLKW	1		;pointer to B or W field max. value
+NFLDS:	.BLKW	1		;# of fields to encode current runlength
+YMAX:	.BLKW	1		;max x pels
+XMAX:	.BLKW	1		;max y pels
+XCNT:	.BLKW	1		;bitmap words/line
+FRMSEQ:	.BLKW	1		;frame sequence number
+NVBXMR:	.BLKW	1		;# of valid bits in current frame word
+DATBTS:	.BLKW	1		;MXDATB - # of data bits in frame
+DATPEL:	.BLKW	1		;MXDATP - # of pels coded in frame
+FRAME:	.BLKW	FM.LEN/2	;frame buffer
+STATE:	.BLKB	1		;0 temp mode
+MODES:	.BLKB	PXMAX+3		;1 modes array
+	.EVEN
+;
+	.END
+                                                                                                                                                                                                

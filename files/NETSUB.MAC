@@ -1,0 +1,404 @@
+	.TITLE	NETSUB	Internet interface routines
+	.SBTTL	System and module definitions
+	.NLIST	BEX,CND
+	.ENABL	LC
+;
+; Pdp11/dcn internet interface routines
+;
+; This module contains a number of interface subroutines called both
+; by the internet process and its protocol modules and by user
+; programs (by means of the rt-11 emulator).
+;
+; External symbols
+;
+; Entry symbols
+;
+	.GLOBL	$CTRL		;control functions
+	.GLOBL	CTRL		;ulp/c control functions
+	.GLOBL	RECV		;ulp/c tcp receive data
+	.GLOBL	SEND		;ulp/c tcp send data
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.IOD,.CLP	;dcnlib definitions
+	.MCALL	.FPKT,.GPKT,.WIND,.GTAD,.UNIQ,$INT ;dcnlib macros
+	.MCALL	$RECV,$SEND
+	.MCALL	$DFTCB,$DFIH,$DFUH,$DFTIM,$DFSIG ;moslib definitions
+	.MCALL	$SGNLI		;moslib macros
+	.COM			;define common data
+	.IOD			;define emulator storage areas
+	.CLP			;define rt-11 emulator areas
+	$DFTCB			;define connection control block
+	$DFIH			;define internet header
+	$DFUH			;define user datagram header
+	$DFTIM			;define timeout values
+	$DFSIG			;define interprocess signals
+;
+; Module definitions
+;
+MAXPKT	=	10.		;max packets
+;
+; Interrupt codes
+;
+IPPID	=	2+EXTBAS	;get internet process pid
+NTPID	=	3+EXTBAS	;get net process pid
+	.PAGE
+	.SBTTL	Internet interface routines
+;
+; Procedure segment
+;
+; Process-state procedure
+;
+	.PSECT	$BOSI,RO,I
+;
+; Connection specification block (csb)
+;
+;	           1                   0
+;	 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
+;	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;	|          ccb length           |
+;	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;	|      completion routine       |
+;	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;	|      flags    |   protocol    |
+;	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;	|                               |
+;	+         local address         +
+;	|                               |
+;	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;	|           local port          |
+;	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;	|                               |
+;	+        foreign address        +
+;	|                               |
+;	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;	|          foreign port         |
+;	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;	|       max datagram size       |
+;	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;	| option length |     tos       |
+;	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;	|                               |
+;	...  options (20 words max)   ...
+;	|                               |
+;	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;
+; $ctrl (ctl) ip control function
+; R0 = code, r1 = csb/packet pointer, r2 = ccb pointer
+; Returns r0 = status, r1 depending on function
+;
+$CTRL:	MOV	R5,-(SP)	;save temporaries
+	MOV	R1,-(SP)
+	ASL	R0		;is this open
+	BNE	$CLOSE		;branch if no
+;
+; $open (opn) ip open function
+; R1 = csb pointer, r2 = ccb pointer
+; Returns r0 = status
+;
+	TST	INPCID(R2)	;yes. is connection open
+	BNE	CTL6		;branch if yes
+	MOV	R3,-(SP)
+	MOV	(R1)+,R3	;no. get ccb size
+	MOV	R2,R0		;adjust for block offset
+	BIC	#^C77,R0
+	ADD	R0,R3
+	CMP	R3,#20000	;trim to one segment
+	BLOS	1$
+	MOV	#20000,R3
+1$:	SUB	R0,R3
+	MOV	R2,R5		;clear ccb
+	MOV	R3,R0
+2$:	CLRB	(R5)+
+	SOB	R0,2$
+	MOV	R2,USECID(R2)	;set ccb pointer for virtual mappers
+	MOV	@#SYSPTR,R5	;set user proc pid
+	MOVB	IOHRPY(R5),USEPID(R2)
+3$:	EMT	IPPID		;set internet process pid
+	MOVB	R0,INPPID(R2)	;set internet proc pid
+	BEQ	3$		;branch if init not yet complete
+	MOV	R2,R5		;set ccb pointer
+	ADD	#OPNPAR,R5
+	MOV	R3,(R5)+	;insert adjusted ccb length
+	MOVB	OPTCNT-OPNPAR-2(R1),R0 ;copy csb parameters
+	ADD	#OPTION-OPNPAR-2,R0
+4$:	MOVB	(R1)+,(R5)+
+	SOB	R0,4$
+	$SGNLI	INPPID(R2),#SG.OPN,USEPID(R2),INPCID(R2),R2
+	MOV	(SP)+,R3
+	BR	CTL3
+;
+; $close (cls) ip close function
+; R2 = ccb pointer, returns r0 = status
+;
+$CLOSE:	TST	INPCID(R2)	;is connection id assigned
+	BEQ	CTL6		;branch if no
+	CMP	R0,#2		;yes. is this close
+	BNE	CTL2		;branch if no
+	$SGNLI	INPPID(R2),#SG.CLS,USEPID(R2),INPCID(R2),R1
+	BR	CTL3
+;
+; Remaining control functions
+;
+CTL2:	BIT	#ST.SS,STATE(R2) ;is net connection open
+	BEQ	CTL6		;branch if no
+	ADD	R0,PC		;branch to work
+	BR	.		;0 ip open function (error here)
+	BR	.		;1 ip close function (error here)
+	BR	$STAT		;2 ip status function
+	BR	$GTPKT		;3 allocate and init ip packet
+	BR	INPKT		;4 init ip packet
+	BR	$SNPKT		;5 send ip packet
+	BR	$FRPKT		;6 free ip packet
+	BR	$SNOPT		;7 set option
+	BR	$INT		;10 send tcp urgent
+	BR	UDPKT		;11 send udp packet
+	BR	$FLPKT		;12 allocate and init ip packet (flow)
+;
+CTL6:	MOV	#PK.OPN,R0	;connection open error
+	BR	CTL1
+;
+CTL7:	MOV	#PK.PAR,R0	;invalid parameter
+	BR	CTL1
+;
+CTL8:	MOV	#PK.RES,R0	;insufficient resources
+	BR	CTL1
+;
+; $int (int) send tcp urgent
+; R2 = ccb pointer, returns r0 = status
+;
+$INT:	$INT			;the official way
+	BR	CTL1
+;
+; $stat (sta) ip status function
+; R1 = buffer pointer, r2 = ccb pointer
+; Returns connection info in buffer, r0 = status
+;
+$STAT:	MOV	R2,R5		;set ccb pointer
+	ADD	#OPNPAR,R5
+	MOV	#OPNOPT-OPNPAR,R0
+1$:	MOVB	(R5)+,(R1)+	;copy connection data
+	SOB	R0,1$
+CTL3:	CLR	R0		;return innocuous status
+CTL1:	MOV	(SP)+,R1
+	MOV	(SP)+,R5
+	RTS	PC
+;
+; $snopt (sno) set ip options
+; R1 = option list pointer, R2 = ccb pointer, returns r0 = status
+;
+$SNOPT:	MOV	R2,R5		;set ccb pointer
+	ADD	#TYPSRV,R5
+	MOV	(R1)+,(R5)+	;copy tos, option count
+	MOVB	-1(R1),R0	;get option count
+	BEQ	CTL3
+1$:	MOVB	(R1)+,(R5)+	;copy options
+	SOB	R0,1$
+	BR	CTL3
+;
+; $frpkt (inp) free internet packet
+; R1 = packet pointer, R2 = ccb pointer
+;
+$FRPKT:	TSTB	SNDCNT(R2)	;balance books
+	BLE	CTL7		;branch if overdraft
+	DECB	SNDCNT(R2)	;regain credit
+	JSR	PC,NETMAP	;get real address
+	MOV	R1,R0		;release packet
+	.FPKT
+	BR	CTL3
+;
+; $flpkt (inp) allocate and initialize internet packet - flow control
+; r2 = ccb pointer, returns r0 = status, r1 = packet pointer
+;
+$FLPKT:	TST	RTXTMO(R2)	;is packet queued
+	BNE	CTL8		;branch if yes
+;
+; $gtpkt (inp) allocate and initialize internet packet
+; r2 = ccb pointer, returns r0 = status, r1 = packet pointer
+;
+$GTPKT:	MOVB	SNDCNT(R2),R1	;is packet quota exceeded
+	CMPB	R1,#MAXPKT
+	BHIS	CTL8		;branch if yes
+	MOV	MAXSIZ(R2),R0	;no. allocate packet buffer
+	MUL	R0,R1
+	.GPKT
+	BEQ	CTL8		;branch if cant
+	MOV	R0,R1		;map into window
+	CLR	R0
+	.WIND
+	MOV	R1,@SP		;slip under the covers
+	INCB	SNDCNT(R2)	;charge packet
+INPKT:	BR	$INPKT		;initialize packet
+;
+; $snpkt (inp) send internet packet
+; udpkt (inp) send user datagram protocol packet
+; R1 = packet pointer, r2 = ccb pointer, returns r0 = status
+;
+UDPKT:	JSR	PC,UDPSUM	;compute udp checksum
+$SNPKT:	JSR	PC,NETMAP	;get real address
+	$SGNLI	INPPID(R2),#SG.WRK,USEPID(R2),INPCID(R2),R1 ;to net
+	BR	CTL3
+;
+; $inpkt (inp) initialize internet packet
+; R1 = packet pointer, R2 = ccb pointer, returns r0 = status
+;
+$INPKT:	MOV	R1,-(SP)	;save packet pointer
+	MOV	R1,R5		;initialize leader
+	.UNIQ
+	MOV	R0,PH.TIM(R5)
+	MOV	R1,PH.TIM+2(R5)
+	MOV	R1,R0
+	CLR	PH.LNK(R5)
+	ADD	#BUFLDR,R5
+	MOV	R2,R1		;get options pointer
+	ADD	#TYPSRV,R1
+	MOVB	#<P.IP*20>,(R5)+ ;0 ih.ver
+	MOVB	(R1)+,(R5)+	;1 ih.tos
+	CLR	(R5)+		;2 ih.fl
+	MOV	R0,(R5)+	;4 ih.id
+	CLR	(R5)+		;6 ih.frg
+	MOVB	#TM.TTL/1000.,(R5)+ ;10 ih.ttl
+	MOVB	PROTCL(R2),(R5)+ ;11 ih.pro
+	CLR	(R5)+		;12 ih.chk
+	MOV	LSOCK(R2),(R5)+	;14 ih.src
+	MOV	LSOCK+2(R2),(R5)+
+	MOV	FSOCK(R2),(R5)+	;20 ih.dst
+	MOV	FSOCK+2(R2),(R5)+
+	MOVB	(R1)+,R0	;copy options
+	BEQ	2$
+1$:	MOVB	(R1)+,(R5)+
+	SOB	R0,1$
+2$:	MOV	(SP)+,R1	;restore packet pointer
+3$:	MOV	R5,R0		;pad to big-endian boundary
+	SUB	R1,R0
+	SUB	#BUFLDR,R0
+	BIT	#3,R0
+	BEQ	4$
+	CLRB	(R5)+
+	BR	3$
+;
+4$:	MOV	LPORT(R2),(R5)+	;gratuitous ports
+	MOV	FPORT(R2),(R5)+
+	CMP	-(R5),-(R5)
+	SUB	R1,R5		;save data offset
+	MOV	R5,PH.OFS(R1)
+	ASR	R0		;compute header length
+	ASR	R0
+	BISB	R0,IH.VER(R1)
+	MOV	MAXSIZ(R2),R0	;compute data length
+	SUB	PH.OFS(R1),R0
+	ADD	#BUFLDR,R0
+	BPL	5$
+	CLR	R0
+5$:	MOV	R0,PH.LNG(R1)	;save data length
+	JMP	CTL3
+;
+; Udpsum (chk) compute udp checksum
+; R1 = packet pointer
+;
+UDPSUM:	MOV	R2,-(SP)	;save
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	CLR	R0
+	MOV	PH.LNG(R1),R3	;get pointers
+	MOV	PH.OFS(R1),R4
+	MOV	R4,R2
+	ADD	R1,R2
+	MOV	R3,UH.LNG(R2)	;initialize remaining fields
+	SWAB	UH.LNG(R2)
+	CLR	UH.CHK(R2)
+	JSR	PC,SUMCHK	;checksum data block
+	MOV	PH.LNG(R1),IH.CHK(R1)
+	SWAB	IH.CHK(R1)
+	MOVB	IH.TTL(R1),-(SP)
+	CLRB	IH.TTL(R1)
+	MOV	#IH.LEN-IH.TTL,R3 ;checksum pseudo-header
+	MOV	#IH.TTL,R4
+	JSR	PC,SUMCHK
+	MOVB	(SP)+,IH.TTL(R1)
+	TST	R0		;finish complement
+	BEQ	1$
+2$:	COM	R0
+1$:	MOV	R0,UH.CHK(R2)
+	MOV	(SP)+,R4	;evas
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	RTS	PC
+;
+; Subroutine to checksum block
+; R1 = packet pointer, r3 = block byte count, r4 = block offset,
+; returns r0 = updated checksum
+;
+SUMCHK:	CLR	-(SP)		;initialize
+	TST	R3		;is block empty
+	BEQ	4$		;branch if yes
+	ASR	R3		;comvert to word count
+	ADC	@SP		;save odd-count switch
+	ADD	R1,R4
+2$:	ADD	(R4)+,R0	;compute block checksum
+	ADC	R0
+	DEC	R3
+	BNE	2$
+	TST	@SP		;is odd-count switch set
+	BEQ	4$		;branch if no
+	MOVB	(R4)+,@SP	;yes. include odd byte in checksum
+4$:	ADD	(SP)+,R0
+	ADC	R0
+	RTS	PC
+;
+; Subroutine to map user virtual address into real address
+; R1 = virtual address, returns r1 = real address
+;
+NETMAP:	MOV	#100000,R0	;get real address
+	BISB	USEPID(R2),R0
+	.GTAD
+	RTS	PC
+	.PAGE
+	.SBTTL	Ulp/c interface
+;
+; Execute ip control function
+; Ulp/c calling sequence: code = ctrl(opcode,data,conid),
+; returns data = return value ($gtpkt only)
+;
+CTRL:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	MOV	6(SP),R0	;get opcode
+	MOV	10(SP),R1	;get data
+	MOV	12(SP),R2	;get conid (ccb pointer)
+	JSR	PC,$CTRL	;call $ctrl module
+	TST	R0		;is this valid return value
+	BNE	CTL4		;branch if no
+	CMP	6(SP),#CM.GET
+	BEQ	1$		;branch if yes
+	CMP	6(SP),#CM.FLO
+	BNE	CTL4		;branch if no
+1$:	MOV	R1,@10(SP)	;yes. stash packet pointer
+CTL4:	MOV	(SP)+,R2	;restore registers
+	MOV	(SP)+,R1
+	RTS	PC		;return r0 = code
+;
+; Execute tcp receive function
+; Ulp/c calling sequence: bufcnt = recv(maxcnt,bufptr,conid)
+;
+RECV:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	MOV	6(SP),R0	;get maxcnt
+	MOV	10(SP),R1	;get bufptr
+	MOV	12(SP),R2	;get conid (ccb pointer)
+	$RECV			;call ip
+	BR	CTL4
+;
+; Execute tcp send function
+; Ulp/c calling sequence: code = send(bufcnt,bufptr,conid)
+;
+SEND:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	MOV	6(SP),R0	;get bufcnt
+	MOV	10(SP),R1	;get bufptr
+	MOV	12(SP),R2	;get conid (ccb pointer)
+	$SEND			;call ip
+	BR	CTL4
+;
+	.END
+                                                                                                                                                                                                                  

@@ -1,0 +1,506 @@
+	.TITLE	FTP	DCN/FTP USER PROCESS
+	.SBTTL	SYSTEM AND MODULE DEFINITONS
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn basic operating system - dcn/ftp user process
+;
+; External symbols
+;
+	.GLOBL	RDLIN,RDASC,RDOCT,RDDEC,GETARG
+	.GLOBL	PRBYT,PRD50
+	.GLOBL	HELP,ERRLVL
+	.GLOBL	FLAGS,PRIDNT,TTOBUF,PRTPTR
+	.GLOBL	CTRL
+	.GLOBL	RNAME,GTHOST,ASG
+	.GLOBL	NETSTR,NETRST,SNDCMD,NETAST,ABRT
+;
+; Entry symbols
+;
+	.GLOBL	INIT,KWKTBL,COM00
+	.GLOBL	OPNBLK,TELBLK
+	.GLOBL	STATE,FILFCB,RPYBUF
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.CHN	;dcnlib definitions
+	.MCALL	.KWTAB		;dcnlib macros
+	.MCALL	.EXIT,.CSISP,.LOOKU,.ENTER,.PURGE,.SERR,.HERR ;rt-11 macros
+	.MCALL	$DFSIG		;moslib macros
+	.MCALL	DFCON,DFFCB,OPNBLK,ADDR,CALL,GETARG,DFSRV ;netlib macros
+	.MCALL	ENTER,LOOK,FORMAT
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.CHN			;define argument area
+	$DFSIG			;define interprocess signals
+	DFCON			;define connection block
+	DFFCB			;define file control block
+	DFSRV			;define service bits
+;
+; Module definitions
+;
+	.MACRO	CMMD X,Y	;send command and set state
+	MOV	Y,STATE
+	MOV	X,R0
+	MOV	#ARG2,R1
+	JSR	PC,NETSTR
+	.ENDM	CMMD
+;
+	.MACRO	GTARG LAB	;get arguments
+	JSR	PC,GETRG2
+	BCS	LAB
+	.ENDM	GTARG
+;
+; Assembly parameters
+;
+BINBIT	=	000200		;image mode bit
+P.TCP	=	6		;tcp-4 protocol number
+FTPPRT	=	21.		;ftpsrv control port
+DATPRT	=	FTPPRT-1	;ftpsrv data port
+RPYSIZ	=	128.		;max reply string length
+;
+; Status bits (flags)
+;
+OPXBIT	=	100000		;control connection open
+OPDBIT	=	040000		;data connection open
+GETBIT	=	020000		;get active
+SNDBIT	=	010000		;send active
+	.PAGE
+	.SBTTL	COMMAND INTERPRETATION
+;
+	.PSECT	$BOSI,RO,I
+;
+; Net completion routine
+;
+NETSUB:	JSR	PC,NETAST
+	RTS	PC
+;
+; Initialization
+;
+INIT:	CALL	GTHOST,#AREA,#0,#0 ;get host name
+	MOV	#1,ERRLVL
+	JSR	PC,NETRST	;reset overlay
+	BIT	#CHNBIT,FLAGS	;is argument in chain area
+	BNE	1$		;branch if yes
+	FORMAT	#HERALD,#AREA	;no. display herald
+	RTS	PC
+;
+1$:	JSR	PC,CONN		;default connect command
+	RTS	PC
+;
+; Unrecognized command
+;
+NTFD:	FORMAT	#COM29		;unrecognized command
+	RTS	PC
+;
+; Show (sho) show ftp status
+; (segment of command language interpreter)
+; (no arguments)
+;
+SHOW:	MOV	FLAGS,STATE+2	;move under umbrella
+	FORMAT	#COM24,#STATE
+	FORMAT	#COM20,#TELBLK
+	FORMAT	#COM45,#FILFCB
+	FORMAT	#COM46,#RPYBUF
+	RTS	PC
+;
+; Quit (qui) leave the game
+; (segment of command language interpreter)
+; (no arguments)
+;
+QUIT:	TST	STATE		;is operation in progress
+	BNE	RIN3		;branch if yes
+	BIT	#OPXBIT,FLAGS	;no. is control connection open
+	BEQ	1$		;branch if no
+	CMMD	#QUI01,#2	;yes. send "quit"
+	RTS	PC
+;
+1$:	.EXIT			;scram uncomplicatedly
+;
+RIN3:	FORMAT	#COM38		;invalid command sequence
+	RTS	PC
+;
+; Connect (log) open control connection
+; (segment of command language interpreter)
+; Arg = host name, assume listening if missing
+;
+CONN:	TST	STATE		;is operation in progress
+	BNE	RIN3		;branch if yes
+	BIT	#OPXBIT,FLAGS	;no. is control connection open
+	BNE	RIN3		;branch if yes
+	BIC	#BINBIT,FLAGS	;no. clean default
+	BISB	#300,TELBLK+CONFLG ;default passive
+	MOV	#TELBLK+CONLCL+4,R1
+	MOV	#FTPPRT*400,(R1)+ ;local port
+	CLR	(R1)+		;remote socket
+	CLR	(R1)+
+	CLR	(R1)+
+	CLR	TELBLK+CONSIZ
+	GETARG	#ARG1		;get host name
+	TSTB	ARG1		;is argument missing
+	BEQ	2$		;branch if yes
+	CALL	RNAME,#ARG1,#TELBLK+CONRMT,#TEMP ;get address
+	TST	R0
+	BEQ	1$		;branch if found
+	JSR	PC,PRIDNT	;print reason for failure
+	JSR	PC,NETRST	;reset overlay
+	RTS	PC
+;
+1$:	JSR	PC,NETRST	;reset overlay
+	BICB	#300,TELBLK+CONFLG ;set active
+	CLR	TELBLK+CONLCL+4
+	MOV	#FTPPRT*400,TELBLK+CONRMT+4
+	BITB	#FTP,TEMP	;is host ftp-competent
+	BNE	2$		;branch if yes
+	FORMAT	#COMYY		;telnet service unsupported
+2$:	CALL	CTRL,#CM.OPN,#TELBLK+CONPAR,TELBLK+CONPTR ;open connection
+	TST	R0
+	BEQ	3$		;branch if ok
+	JSR	PC,PRIDNT	;print reason for failure
+	RTS	PC
+;
+3$:	BIS	#OPXBIT,FLAGS	;mark connection open
+	BISB	#300,OPNBLK+CONFLG ;listen on data connection
+	MOV	#OPNBLK+CONLCL,R1
+	MOV	TELBLK+CONLCL,(R1)+ ;local socket
+	MOV	TELBLK+CONLCL+2,(R1)+
+	MOV	TELBLK+CONLCL+4,(R1)+
+	MOV	TELBLK+CONRMT,(R1)+ ;remote socket
+	MOV	TELBLK+CONRMT+2,(R1)+
+	MOV	#DATPRT*400,(R1)+
+	MOV	#1,STATE
+4$:	RTS	PC
+;
+; Local (con) set local address for multiply-homed hosts
+; (segment of command language interpreter)
+; Arg1 = host name (default primary address)
+;
+LOCL:	TST	STATE		;is operation in progress
+	BNE	RIN3		;branch if yes
+	CLR	TELBLK+CONLCL	;no. clean slate
+	CLR	TELBLK+CONLCL+2
+	GETARG	#ARG1		;get host name
+	TSTB	ARG1		;is argument missing
+	BEQ	1$		;branch if yes
+	CALL	RNAME,#ARG1,#TELBLK+CONLCL,#TEMP ;no. get address
+	TST	R0
+	BEQ	1$		;branch if found
+	JSR	PC,PRIDNT	;print reason for failure
+1$:	RTS	PC
+;
+; Disconnect (dis) close control connection
+; (segment of command language interpreter)
+; (no arguments) returns r1 = control connection block pointer
+;
+DISC:	TST	STATE		;is operation in progress
+	BNE	DSC1		;branch if yes
+	BIT	#OPXBIT,FLAGS	;no. is control connection open
+	BEQ	1$		;branch if no
+	CMMD	#QUI01,#3	;yes. send "quit"
+1$:	RTS	PC
+;
+DSC1:	JMP	RIN3
+;
+; TOS (opt) set type-of-service internet option on data connection
+; (segment of command language interpreter)
+; Arg1 = type-of-service
+;
+STOS:	JSR	PC,RDOCT	;get type-of-service
+	MOVB	R0,OPNBLK+CONOPT
+	RTS	PC
+;
+; Route (opt) set source-route internet option on data connection
+; (segment of command language interpreter)
+; Arg1 ... = host names
+;
+ROUT:	TST	STATE		;is connection open
+	BNE	DSC1		;branch if yes
+	MOV	#OPNBLK+CONOPT+1,R2 ;get options pointer
+	CLRB	(R2)+		;reset total option length
+	MOVB	#203,(R2)+	;option code (loose source route)
+	CLRB	(R2)+		;length
+	MOVB	#4,(R2)+	;route pointer
+1$:	GETARG	#ARG1		;get host name
+	TSTB	ARG1
+	BEQ	3$		;branch if missing
+	CALL	RNAME,#ARG1,R2,#TEMP ;get host address
+	TST	R0
+	BEQ	2$		;branch if found
+	JSR	PC,PRIDNT	;print reason for failure
+	BR	1$
+;
+2$:	ADD	#4,R2		;advance to next field
+	BR	1$
+;
+3$:	SUB	#OPNBLK+CONOPT+2,R2 ;compute length
+	CMP	R2,#3
+	BLOS	4$		;branch if null route
+	MOVB	R2,OPNBLK+CONOPT+1
+	MOVB	R2,OPNBLK+CONOPT+3
+	MOV	#OPNBLK+CONOPT+1,R0 ;copy options for control conntection
+	MOV	#TELBLK+CONOPT+1,R1
+	INC	R2
+5$:	MOVB	(R0)+,(R1)+
+	SOB	R2,5$
+4$:	RTS	PC
+;
+; Verbose (ver) be very noisy
+; (segment of command language interpreter)
+; arg = error level
+;
+VERB:	JSR	PC,RDDEC	;set error level
+	MOV	R0,ERRLVL
+	RTS	PC
+;
+; Quote (quo) send control message
+; (segment of command language interpreter)
+; Arg = command line
+;
+QUOT:	MOV	#TTOBUF,PRTPTR
+1$:	JSR	PC,RDASC	;copy line to buffer
+	BEQ	2$
+	JSR	PC,PRBYT
+	BR	1$
+;
+2$:	MOV	#CRLF,R0
+	JMP	SNDCMD		;send to other end
+	.PAGE
+	.SBTTL	.	COMMANDS TO STORE AND RETRIEVE FILES
+;
+; Login (log) login control connection
+; (segment of command language intepreter)
+; Arg1 = user, arg2 = password
+;
+LOGI:	GTARG	1$		;parse arguments
+	CMMD	#LOG01,#7	;'user [userid]'
+1$:	RTS	PC
+;
+; Asg (cwd) specify local work volume
+; (segment of command language interpreter)
+; Arg = physical name (dev: or dev:file.ext)
+;
+ASGX:	GTARG	2$		;parse arguments
+	LOOK	#ARG1,#FILFCB,#0
+	BCS	3$		;branch if not found
+	CALL	ASG,WRKVOL,#0	;assign work volume
+2$:	RTS	PC
+;
+3$:	FORMAT	#COM35,#STOBGN	;file not found [file]
+	RTS	PC
+;
+; Cwd (cwd) specify remote work volume
+; (segment of command language interpreter)
+; Arg = physical name (dev: or dev:file.ext)
+;
+CWD:	GTARG	2$		;get file name
+	CMMD	#CWD01,#14	;'cwd [file]"
+2$:	RTS	PC
+;
+; Ascii (mod) specify ascii mode
+; (segment of command language interpreter)
+;
+ASCI:	GTARG	1$		;parse argument
+	BIC	#BINBIT,FLAGS	;set ascii mode
+	CMMD	#TYP01,#14	;'type a'
+1$:	RTS	PC
+;
+; Image (mod) specify image mode
+; (segment of command language interpreter)
+; Arg = byte size
+;
+IMAG:	GTARG	1$		;parse argument
+	BIS	#BINBIT,FLAGS	;set image mode
+	TSTB	ARG2		;is argument present
+	BNE	2$		;branch if yes
+	CMMD	#TYP02,#14	;no. 'type i'
+1$:	RTS	PC
+;
+2$:	CMMD	#TYP03,#14	;'type l <arg2>'
+	RTS	PC
+;
+; Directory (dir) move directory to local host
+; (segment of command language interpreter)
+; Arg1 = remote directory name, arg2 = local file name
+;
+DIRE:	GTARG	GET2		;parse arguments
+	MOV	#DIR01,TEMP	;'list [file]'
+	BR	GET1
+;
+; Get (get) move file to local host
+; (segment of command language interpreter)
+; Arg1 = remote file name, arg2 = local file name
+;
+GET:	GTARG	GET2		;parse arguments
+	MOV	#GET01,TEMP	;'retr [file]'
+GET1:	.SERR
+	ENTER	#ARG2,#FILFCB,#0
+	BCS	2$		;branch if error
+	.HERR
+	CALL	CTRL,#CM.OPN,#OPNBLK+CONPAR,OPNBLK+CONPTR ;open connection
+	TST	R0
+	BEQ	1$		;branch if ok
+	JSR	PC,PRIDNT	;error message
+	.PURGE	#0
+	RTS	PC
+;
+1$:	BIS	#OPDBIT+GETBIT,FLAGS ;mark active
+	CMMD	TEMP,#5		;send server command
+	RTS	PC
+;
+2$:	.HERR
+	FORMAT	#COM32,#STOBGN	;invalid file name
+GET2:	RTS	PC
+;
+; Send (rtr) move file to remote host
+; (segment of command language interpreter)
+; Arg1 = local file name, arg2 = remote file name
+;
+SEN:	GTARG	1$		;parse arguments
+	.SERR
+	LOOK	#ARG1,#FILFCB,#0
+	BCS	3$		;branch if not found
+	.HERR
+	CALL	CTRL,#CM.OPN,#OPNBLK+CONPAR,OPNBLK+CONPTR ;open connection
+	TST	R0
+	BEQ	2$		;branch if ok
+	JSR	PC,PRIDNT	;error message
+	.PURGE	#0
+1$:	RTS	PC
+;
+2$:	BIS	#OPDBIT+SNDBIT,FLAGS ;mark active
+	CMMD	#SEN01,#6	;send "stor [file]"
+	RTS	PC
+;
+3$:	.HERR
+	FORMAT	#COM35,#STOBGN	;file not found [file]
+	RTS	PC
+;
+; Delete (del) delete remote file
+; (segment of command language interpreter)
+; Arg = file name
+;
+DELE:	GTARG	1$		;parse arguments
+	CMMD	#DEL01,#14	;send "dele [file]"
+1$:	RTS	PC
+;
+; Rename (ren) rename remote file
+; (segment of command language interpreter)
+; Arg1 = old file name, arg2 = new file name
+;
+RENA:	GTARG	1$		;parse arguments
+	CMMD	#REN01,#15	;send "rnfr [file]"
+1$:	RTS	PC
+;
+; Abort (abo) abort file transfer
+; (segment of command language interpreter)
+; (no arguments)
+;
+ABOR:	JSR	PC,ABRT		;in the tracks
+	RTS	PC
+	.PAGE
+	.SBTTL	SUBROUTINES
+;
+; Subroutine to get arguments
+;
+GETRG2:	TST	STATE		;is something already going on
+	BNE	1$		;branch if yes
+	GETARG	#ARG1,#ARG2	;no. parse arguments
+	CLC
+	RTS	PC
+;
+1$:	FORMAT	#COM38		;invalid command sequence
+	SEC
+	RTS	PC
+	.PAGE
+	.SBTTL	TABLES, TEXT STRINGS AND VARIABLES
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+; Command table for kwik
+;
+KWKTBL:	.KWTAB	<HEL>,HELP	;send help information
+	.KWTAB	<SHO>,SHOW	;show ftp status
+	.KWTAB	<QUI>,QUIT	;leave the game
+	.KWTAB	<CON>,CONN	;open control connection
+	.KWTAB	<LOC>,LOCL	;set local address
+	.KWTAB	<DIS>,DISC	;close control connection
+	.KWTAB	<ABO>,ABOR	;abort file transfer
+	.KWTAB	<TOS>,STOS	;set type-of-service
+	.KWTAB	<ROU>,ROUT	;set source route
+	.KWTAB	<VER>,VERB	;set error level
+;
+	.KWTAB	<LOG>,LOGI	;login control connection
+	.KWTAB	<ASG>,ASGX	;reset local work volume
+	.KWTAB	<CWD>,CWD	;reset remote work volume
+	.KWTAB	<ASC>,ASCI	;specify ascii mode
+	.KWTAB	<IMA>,IMAG	;specify image mode
+	.KWTAB	<QUO>,QUOT	;send control message
+	.KWTAB	<GET>,GET	;move file to local host
+	.KWTAB	<SEN>,SEN	;move file to remote host
+	.KWTAB	<DEL>,DELE	;delete remote file
+	.KWTAB	<REN>,RENA	;rename remote file
+	.KWTAB	<DIR>,DIRE	;move directory to local host
+	.KWTAB	<   >,NTFD	;end of table
+;
+; Miscellaneous tables and chairs
+;
+DEFTYP:	.RAD50	'            '	;default file extensions
+WRKVOL:	.RAD50	'DK '		;work volume name
+;
+; Text strings for ftp user protocol
+;
+HERALD:	.ASCIZ	'^A'<0>' FTP User Process (07-May-87 Version) ^LD ^LT'
+CRLF:	.BYTE	0
+QUI01:	.ASCIZ	'QUIT'
+LOG01:	.ASCIZ	'USER ^A'<ARG1-ARG2>
+CWD01:	.ASCIZ	'CWD ^A'<ARG1-ARG2>
+TYP01:	.ASCIZ	'TYPE A'
+TYP02:	.ASCIZ	'TYPE I'
+TYP03:	.ASCIZ	'TYPE L ^A'<0>
+GET01:	.ASCIZ	'RETR ^A'<ARG1-ARG2>
+DIR01:	.ASCIZ	'LIST ^A'<ARG1-ARG2>
+SEN01:	.ASCIZ	'STOR ^A'<0>
+DEL01:	.ASCIZ	'DELE ^A'<ARG1-ARG2>
+REN01:	.ASCIZ	'RNFR ^A'<ARG1-ARG2>
+COM24:	.ASCIZ	'State: ^I'<0>' ^K'<2>'  host: ^+'
+COM20:	.ASCIZ	'(^R'<CONIDN>') ^C'<CONRMT>' ^XI'<CONRMT+4>'^+'
+COM45:	.ASCIZ	'  file: ^F'<FCBNAM>'[^I'<FCBMAX>'] at ^I'<FCBBLK>
+COM46:	.ASCIZ	'Reply: ^A'<0>
+;
+; Text strings for error conditions
+;
+COM00:	.ASCIZ	'?FTP-^+'
+COM29:	.ASCIZ	'?FTP-F-Unrecognized command'
+COM38:	.ASCIZ	'?FTP-F-Invalid command sequence'
+COM32:	.ASCIZ	'?FTP-F-Invalid file name'
+COM35:	.ASCIZ	'?FTP-F-File not found ^F'<FILFCB+FCBNAM-STOBGN>
+COMYY:	.ASCIZ	'?FTP-W-FTP service unsupported'
+	.EVEN
+;
+	.PSECT	$DATA,RW,I
+;
+; Ftp connection data
+;
+OPNBLK:	OPNBLK	TELBLK,DAT,,,NETSUB,P.TCP,344,,,,10 ;data csb
+TELBLK:	OPNBLK	0,CTL,,,NETSUB,P.TCP,341,,,,20 ;control csb
+;
+	.PSECT	$ERAS,RW,I
+STOBGN	=	.		;format offset
+;
+; Variables
+;
+TEMP:	.BLKW	1		;temporary
+STATE:	.BLKW	2		;fsa state/flags
+ARGBLK:	.BLKW	5		;rt-11 argument block
+AREA:	.BLKW	39.		;scratch area
+FILFCB:	.BLKW	8.		;file control block
+ARG2:	.BLKB	80.		;argument 2
+ARG1:	.BLKB	80.		;argument 1
+RPYBUF:	.BLKB	RPYSIZ		;reply buffer
+	.EVEN
+;
+	.END
+                                                                                                                                                                                                                                                                                       

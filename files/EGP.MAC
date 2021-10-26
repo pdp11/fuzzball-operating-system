@@ -1,0 +1,1840 @@
+	.TITLE	EGP	EGP internet gateway
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn - EGP internet gateway
+;
+; This module supports the Exterior Gateway Protocol (EGP)
+;
+; External symbols
+;
+	.GLOBL	RDOCT,RDDEC,HASH,GETARG,PRIDNT
+	.GLOBL	CHAIN,ERRLVL
+	.GLOBL	FLAGS,OPNBLK,CTRL,HELP,NETAST
+	.GLOBL	NGBTAB,SYSN
+;
+; Entry symbols
+;
+	.GLOBL	NETDAT,NETSIG,INIT,KWKTBL,COM00
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHN,.PSA,.SUP,.SMF ;dcnlib definitions
+	.MCALL	.KWTAB,.MSG,.PSEM,.VSEM,.WIND ;dcnlib macros
+	.MCALL	$DFIH,$DFTIM,$DFSIG,$DFTBL ;moslib definitions
+	.MCALL	DFCON,OPNBLK,ADDR,CALL,GETARG,DFSRV,FORMAT ;netlib macros
+	.MCALL	.GTJB,.DSTAT,.SETTO,.EXIT,.MRKT,.CMKT,.SPND,.RSUM ;rt-11 macros
+	.COM			;define common data
+	.CHN			;define argument
+	.PSA			;define process storage area
+	.SUP			;define host parameter area
+	.SMF			;define semaphore ids
+	$DFIH			;define internet header
+	$DFTIM			;define timer values
+	$DFSIG			;define interprocess signals
+	$DFTBL			;define host/gateway table formats
+	DFCON			;define connection block
+	DFSRV			;define service bits
+;
+; Module definitions
+;
+	.MACRO	FSA	ARG	;tickle finite-state automaton
+	MOVB	ARG,R0
+	JSR	PC,FSA
+	.ENDM	FSA
+;
+; Assembly parameters
+;
+RTPSIZ	=	256.		;rtp control block size
+DIAMTR	=	3		;maximum internet diameter (hops)
+;
+; Options word bits
+;
+X.DFLT	=	000004		;disable default
+X.ROUT	=	000010		;disable nonzero nets
+;
+; Interrupt codes
+;
+IPPID	=	2+EXTBAS	;get internet process pid
+NTPID	=	3+EXTBAS	;get net process pid
+;
+; Fixed parameters
+;
+PAR.P1	=	45.		;minimum interval between hello commands
+PAR.P2	=	120.		;minimum interval between poll commands
+PAR.P3	=	45.		;request/cease retransmission timeout
+PAR.P4	=	3600.		;long abort timeout
+PAR.P5	=	180.		;short abort timeout
+PAR.J	=	3		;up threshold (active mode)
+PAR.K	=	1		;down threshold (all modes)
+;
+; Event codes
+;
+EV.UP	=	0		;Up reachability indication
+EV.DWN	=	1		;Down reachability indication
+EV.REQ	=	2		;Request command
+EV.CFM	=	3		;Confirm response
+EV.REF	=	4		;Refuse response
+EV.CEA	=	5		;Cease command
+EV.CAK	=	6		;Cease-ack response
+EV.HLO	=	7		;Hello command
+EV.IHU	=	8.		;I-H-U response
+EV.POL	=	9.		;Poll command
+EV.UPD	=	10.		;Update response
+EV.STR	=	11.		;Start request
+EV.STP	=	12.		;Stop request or timer t3 underflow
+EV.T1	=	13.		;timer t1 underflow
+EV.T2	=	14.		;timer t2 underflow
+;
+; Exterior gateway protocol (egp) header
+;
+.	=	0
+EH.VER:	.BLKB	1		;version number
+VRSN	=	2		;egp version number
+EH.TYP:	.BLKB	1		;message type
+EC.UPD	=	1		;update
+EC.POL	=	2		;poll
+EC.ACQ	=	3		;neighbor acquisition
+EC.HLO	=	5		;neighbor reachability
+EC.ERR	=	10		;error
+EH.COD:	.BLKB	1		;message code
+EH.STA:	.BLKB	1		;status
+EH.CHK:	.BLKW	1		;checksum
+EH.SYS:	.BLKW	1		;system number
+EH.SEQ:	.BLKW	1		;sequence number
+EH.LEN	=	.		;end of egp header
+;
+; Neighbor acquisition messages
+;
+; Stat	Reason			Scenarios
+; ---------------------------------------------------------
+; 0	unspecified		when nothing else fits
+;
+; 1	active mode		request/confirm only
+;
+; 2	passive mode		request/confirm only	
+;
+; 3	insufficient resources	1. out of table space
+;				2. out of system resources
+;
+; 4	administratively	1. unknown autonomous system #
+;	prohibited		2. use another gateway
+;
+; 5	going down		1. operator initiated
+;				2. abort timeout
+;
+; 6	parameter problem	1. nonsense polling parameters
+;				2. unable to assume compatible mode
+;
+; Header extension
+;
+.	=	EH.LEN
+EH.POL:	.BLKW	2		;min poll intervals (request/confirm only)
+;
+; Code field
+;
+CD.REQ	=	0		;request
+CD.CFM	=	1		;confirm
+CD.REF	=	2		;refuse
+CD.CEA	=	3		;cease
+CD.CAK	=	4		;cease-ack
+;
+; Status field
+;
+SF.USP	=	0		;unspecified
+SF.ACT	=	1		;active mode
+SF.PAS	=	2		;passive mode	
+SF.FUL	=	3		;insufficient resources
+SF.ADP	=	4		;administratively prohibited
+SF.STP	=	5		;going down
+SF.PAR	=	6		;parameter problem
+SF.PRO	=	7		;protocol violation
+;
+; Neighbor reachability messages
+;
+; Code field
+;
+CD.HLO	=	0		;hello
+CD.IHU	=	1		;i heard you
+;
+; Status field
+;
+SF.IND	=	0		;indeterminate
+SF.UP	=	1		;up state
+SF.DWN	=	2		;down state
+SF.UNS	=	200		;unsolicited (update only)
+;
+; Update/poll messages
+; Code field (not used)
+; Status field (see neighbor reachability messages)
+;
+; Header extension
+;
+.	=	EH.LEN
+EH.IGW:	.BLKB	1		;number of interior gateways
+EH.EGW:	.BLKB	1		;number of exterior gateways
+EH.NET:	.BLKW	2		;ip source net
+EH.DAT	=	.		;beginning of data area (update only)
+;
+; Error message
+; Code field (not used)
+; Status field (see neighbor reachability messages)
+;
+; Code	Reason			Scenarios
+; -----------------------------------------------------------------------
+; 0	unspecified		when nothing else fits
+;
+; 1	bad EGP header format	1. bad message length
+;				2. invalid Type, Code or Status fields
+;
+; 2	bad EGP data field	1. nonsense polling rates (Request/Confirm)
+;	format			2. invalid Update message format
+;				3. response IP Net Address field does not
+;				   match command (Update)
+;
+; 3	reachability info	1. no info available on net specified in
+;	unavailable		   IP Net Address field (Poll)
+;
+; 4	excessive polling rate	1. two or more Hello commands received within
+;				   min specified polling interval
+;				2. two or more Poll commands received within
+;				   min specified polling interval
+;				3. two or more Request commands received
+;				   within some (reasonably short) interval
+;
+; 5	no response		1. no Update received for Poll within some
+;				   (reasonably long) interval
+;
+; Header extension
+;
+.	=	EH.LEN
+EH.ERR:	.BLKW	1		;reason for error
+ER.UNS	=	0		;unspecified
+ER.HDR	=	1		;bad EGP header field format
+ER.DAT	=	2		;bad EGP data field format
+ER.NET	=	3		;net-reachability information not available
+ER.POL	=	4		;excessive polling rate
+ER.RSP	=	5		;no response
+EH.HDR	=	.		;header of bad message
+;
+; Neighbor table entry format
+;
+.	=	0
+NG.ADR:	.BLKW	2		;neighbor ip address
+NG.GAT:	.BLKW	2		;gateway ip address
+NG.SYS:	.BLKW	1		;egp system number
+NG.FLG:	.BLKW	1		;status flags
+ST.DMP	=	100000		;formatted packet dump (debug)
+ST.ORG	=	040000		;active acquisition mode
+ST.ONL	=	020000		;online
+ST.ACT	=	010000		;active reachability mode
+ST.RCH	=	004000		;reachability indication
+ST.HLO	=	002000		;hello request
+ST.UNS	=	001000		;unsolicited update
+ST.ZER	=	000400		;force zero receive distance
+ST.DFT	=	000200		;default gateway
+NG.CMD:	.BLKB	1		;egp command
+NG.STA:	.BLKB	1		;protocol state
+NG.RCH:	.BLKB	1		;reachability state
+	.EVEN
+NG.SND:	.BLKW	1		;send sequence number
+NG.RCV:	.BLKW	1		;receive sequence number
+;
+NG.P1:	.BLKW	1		;minimum interval between hello commands
+NG.P2:	.BLKW	1		;minimum interval between poll commands
+NG.T1P:	.BLKW	1		;timer t1 preset
+NG.T2P:	.BLKW	1		;timer t2 preset
+NG.T1:	.BLKW	1		;timer t1
+NG.T2:	.BLKW	1		;timer t2
+NG.T3:	.BLKW	1		;timer t3
+;
+NG.TIM:	.BLKW	2		;last timestamp
+NG.RXS:	.BLKB	1		;receive status
+NG.TXS:	.BLKB	1		;send status
+	.EVEN
+;
+NG.BAD:	.BLKW	1		;bad format
+NG.CHK:	.BLKW	1		;bad checksum
+NG.DRP:	.BLKW	1		;dropped
+NG.UNR:	.BLKW	1		;unreachable
+NG.RES:	.BLKW	1		;no buffer
+;
+; Event log
+;
+NG.EVN:	.BLKW	1		;0 Up reachability indication
+	.BLKW	1		;1 Down reachability indication
+	.BLKW	1		;2 Request command
+	.BLKW	1		;3 Confirm response
+	.BLKW	1		;4 Refuse response
+	.BLKW	1		;5 Cease command
+	.BLKW	1		;6 Cease-ack response
+	.BLKW	1		;7 Hello command
+	.BLKW	1		;8 I-H-U response
+	.BLKW	1		;9 Poll command
+	.BLKW	1		;10 Update response
+	.BLKW	1		;11 Start request
+	.BLKW	1		;12 Stop request or timer t3 underflow
+	.BLKW	1		;13 timer t1 underflow
+	.BLKW	1		;14 timer t2 underflow
+;
+; Action log
+;
+NG.ACT:	.BLKW	1		;0 Up reachability indication
+	.BLKW	1		;1 Down reachability indication
+	.BLKW	1		;2 Request command
+	.BLKW	1		;3 Confirm response
+	.BLKW	1		;4 Refuse response
+	.BLKW	1		;5 Cease command
+	.BLKW	1		;6 Cease-ack response
+	.BLKW	1		;7 Hello command
+	.BLKW	1		;8 I-H-U response
+	.BLKW	1		;9 Poll command
+	.BLKW	1		;10 Update response
+	.BLKW	1		;11 Start request
+	.BLKW	1		;12 Stop request or timer t3 underflow
+	.BLKW	1		;13 timer t1 underflow
+	.BLKW	1		;14 timer t2 underflow
+NG.LEN	=	.		;length of table entry
+	.PAGE
+	.SBTTL	Process net packets
+;
+	.PSECT	$BOSI,RO,I
+;
+; Net completion routine
+;
+NETSUB:	JSR	PC,NETAST
+	RTS	PC
+;
+; Process net signals
+; r0 = code, r1 = open block pointer
+;
+NETSIG:	CMPB	#SG.CC,R0	;is this close complete
+	BNE	1$		;branch if no
+	.RSUM			;proceed with main routine
+1$:	RTS	PC
+;
+; Process net packets
+; r0 = packet pointer
+;
+NETDAT:	MOV	R0,R1		;align packet pointers
+	ADD	PH.OFS(R1),R0
+	MOV	R0,R2		;(start)
+	ADD	PH.LNG(R1),R0	;(end)
+	MOV	RSMPTR,R3	;(buffer)
+	BIT	#IH.OFF,IH.FRG(R1) ;is this first fragment
+	BNE	1$		;branch if no
+	MOV	R1,R2		;yes. reset pointers
+	MOV	#EGPRSM,R3
+1$:	CMP	R3,@#50		;(upper storage limit)
+	BHIS	2$
+	MOVB	(R2)+,(R3)+	;copy fragment
+	CMP	R2,R0
+	BLO	1$
+2$:	MOV	R3,RSMPTR	;save for next fragment
+	MOV	IH.FRG(R1),-(SP)
+	CALL	CTRL,#CM.FRE,R1,OPNBLK+CONPTR ;discard packet
+	BIT	#IH.MF,(SP)+	;is this last fragment
+	BNE	5$		;branch if no
+	MOV	#EGPRSM,R1	;yes. process reassembled packet
+	SUB	R1,R3		;recompute length
+	SUB	PH.OFS(R1),R3
+	MOV	R3,PH.LNG(R1)
+	MOV	R1,R2		;set pointers
+	ADD	PH.OFS(R1),R2
+	MOV	#NGBTAB,R4	;initialize table scan
+	MOVB	NGBTAB-2,NGBID
+3$:	DECB	NGBID		;is table full
+	BEQ	5$		;branch if yes
+	TST	NG.ADR(R4)	;yes. is this end of table
+	BNE	4$		;branch if no
+	JSR	PC,NGBINI	;yes. initialize new neighbor
+	MOV	IH.SRC(R1),NG.ADR(R4)
+	MOV	IH.SRC+2(R1),NG.ADR+2(R4)
+	MOV	IH.DST(R1),NG.GAT(R4)
+	MOV	IH.DST+2(R1),NG.GAT+2(R4)
+	MOV	#ST.ONL,NG.FLG(R4)
+	CLRB	NG.CMD(R4)
+	MOV	#PAR.P1,NG.P1(R4)
+	MOV	#PAR.P2,NG.P2(R4)
+	FORMAT	#COM40,R4	;new neighbor
+4$:	CMP	NG.ADR(R4),IH.SRC(R1) ;does packet match entry
+	BNE	6$		;branch if no
+	CMP	NG.ADR+2(R4),IH.SRC+2(R1)
+	BNE	6$		;branch if no
+	JSR	PC,EGPPKT	;yes. process packet
+5$:	RTS	PC
+;
+6$:	ADD	#NG.LEN,R4	;advance to next entry
+	BR	3$
+;
+; Process timer calls once per second
+;
+GATICK:	MOV	#NGBTAB,R4	;initialize table scan
+1$:	TST	NG.ADR(R4)	;is this end of table
+	BEQ	5$		;branch if yes
+	TST	NG.T1(R4)	;no. update timer t1
+	BEQ	2$
+	DEC	NG.T1(R4)
+	BNE	2$		;branch if no overflow
+	FSA	#EV.T1		;signal overflow
+2$:	TST	NG.T2(R4)	;update timer t2
+	BEQ	3$
+	DEC	NG.T2(R4)
+	BNE	3$		;branch if no overflow
+	FSA	#EV.T2		;signal overflow
+3$:	TST	NG.T3(R4)	;update timer t3
+	BEQ	4$
+	DEC	NG.T3(R4)
+	BNE	4$		;branch if no overflow
+	MOVB	#SF.STP,NG.TXS(R4)
+	FSA	#EV.STP		;signal overflow
+4$:	JSR	PC,EGPOUT	;complete business
+	ADD	#NG.LEN,R4	;advance to next entry
+	BR	1$
+;
+5$:	.MRKT	#ARGBLK,#TIME,#GATICK,#1 ;restart the bubble machine
+	RTS	PC
+	.PAGE
+	.SBTTL	Egp processing
+;
+; Process egp packet
+; R1 = packet pointer, r2 = egp header pointer
+;
+EGPPKT:	MOV	R1,-(SP)	;save packet pointer
+	MOV	PH.TIM(R1),NG.TIM(R4) ;update timestamp
+	MOV	PH.TIM+2(R1),NG.TIM+2(R4)
+	JSR	PC,DUMP		;optional dump
+	CMP	PH.LNG(R1),#EH.LEN ;is format valid
+	BLO	3$		;branch if no
+	JSR	PC,CHKSUM	;yes. compute egp checksum
+	TST	R0
+	BEQ	1$		;branch if ok
+	INC	NG.CHK(R4)	;bad checksum
+	BR	7$
+;
+1$:	SWAB	EH.SYS(R2)	;onward pdp11
+	SWAB	EH.SEQ(R2)
+	CMPB	EH.VER(R2),#VRSN ;is header valid
+	BNE	3$		;branch if no
+	MOV	#DECODE,R0	;decode type field
+	MOVB	EH.TYP(R2),R1
+	CMP	R1,(R0)+
+	BHIS	3$		;branch if invalid
+	ASL	R1
+	ADD	R1,R0
+	MOV	@R0,R0
+	BEQ	3$		;branch if invalid
+	CMP	R0,#400
+	BLO	2$		;branch if complete
+	MOVB	EH.COD(R2),R1	;decode code field
+	CMP	R1,(R0)+
+	BHIS	3$		;branch if invalid
+	ASL	R1
+	ADD	R1,R0
+	MOV	@R0,R0
+	BNE	2$		;branch if valid
+3$:	INC	NG.BAD(R4)	;bad version, type or code
+	BR	7$
+;
+2$:	TSTB	R0		;is this response
+	BMI	4$		;branch if no
+	CMP	EH.SEQ(R2),NG.SND(R4) ;yes. is sequence number correct
+	BEQ	6$		;branch if yes
+	INC	NG.DRP(R4)	;bad sequence number
+	BR	7$
+;
+4$:	MOV	EH.SEQ(R2),NG.RCV(R4) ;command. save sequence number
+6$:	MOVB	EH.STA(R2),NG.RXS(R4) ;save status info
+	FSA	R0		;evoke event
+7$:	MOV	(SP)+,R1	;restore packet pointer
+	RTS	PC
+;
+; Fsa (fsa) finite-state automaton
+; R0 = event code, r2 = header pointer, r4 = neighbor pointer
+;
+FSA:	BIC	#^C17,R0	;safety first
+	ASL	R0		;update event tallies
+	MOV	R0,-(SP)	;save event code
+	ADD	R4,R0
+	INC	NG.EVN(R0)
+	ASL	@SP		;compute table address
+	MOVB	NG.STA(R4),R0
+	ASL	R0
+	MOV	STATE(R0),R0
+	ADD	(SP)+,R0
+	MOVB	(R0)+,NG.STA(R4)
+	TSTB	(R0)+
+	JSR	PC,@(R0)+
+	RTS	PC
+;
+; Summary of state transitions
+;
+;		Next	Message
+; Event		State	Sent		Actions
+; --------------------------------------------------------------------------
+;
+; Idle State (0)
+;
+; Request	2	Confirm		Initialize state variables and
+;			Hello		reset timer t1 to T1 seconds and
+;					reset timer t3 to P5 seconds.
+;  or	***	0	Refuse		Return resources.
+; Cease		0	Cease-ack	Return resources.
+; Start		1	Request		Reset timer t1 to P3 seconds and
+;					reset timer t3 to P5 seconds.
+; Stop	***	1	Request		Reset timer t1 to P3 seconds and
+;					reset timer t3 to P5 seconds.
+;
+; Acquisition State (1)
+;
+; Request	2	Confirm		Initialize state variables and
+;			Hello		reset timer t1 to T1 seconds and
+;					reset timer t3 to P5 seconds.
+; Confirm	2	Hello		Initialize state variables and
+;					reset timer t1 to T1 seconds and
+;					reset timer t3 to P5 seconds.
+; Refuse	0			Stop timers and return resources.
+; Cease		0	Cease-ack	Stop timers and return resources.
+; Start		1	Request		Reset timer t1 to P3 seconds and
+;					reset timer t3 to P5 seconds.
+; Stop/t3	0			Stop timers and return resources.
+; t1		1	Request		Reset timer t1 to P3 seconds.
+;
+; Down State (2)
+; Note: Reset timer t3 to P4 seconds on receipt of reachability indication
+;
+; Up		3	Poll		Reset timer t2 to T2 seconds.
+; Request	2	Confirm		Reinitialize state variables and
+;					reset timer t1 to T1 seconds and
+;					reset timer t3 to P5 seconds.
+; Cease		0	Cease-ack	Stop timers and return resources.
+; Hello		2	I-H-U
+; I-H-U		2			Process neighbor-reachability info.
+; Start		1	Request		Reset timer t1 to P3 seconds and
+;					reset timer t3 to P5 seconds.
+; Stop/t3	4	Cease		Reset timer t1 to P3 seconds and
+;					reset timer t3 to P5 seconds.
+; t1		2	Hello		Reset timer t1 to T1 seconds.
+;
+; Up State (3)
+; Note: Reset timer t3 to P4 seconds on receipt of reachability indication
+;
+; Down		2			Stop timer t2.
+; Request	2	Confirm		Reinitialize state variables and
+;			Hello		reset timer t1 to T1 seconds and
+;					reset timer t3 to P5 seconds.
+; Cease		0	Cease-ack	Stop timers and return resources.
+; Hello		3	I-H-U
+; I-H-U		3			Process neighbor-reachability info.
+; Poll		3	Update
+; Update	3			Process net-reachability info.
+; Start		1	Request		Reset timer t1 to P3 seconds and
+;					reset timer t3 to P5 seconds.
+; Stop/t3	4	Cease		Reset timer t1 to P3 seconds and
+;					reset timer t3 to P5 seconds.
+; t1		3	Hello		Reset timer t1 to T1 seconds.
+; t2		3	Poll		Reset timer t2 to T2 seconds.
+;
+; Cease State (4)
+;
+; Request	4	Cease
+; Cease		0	Cease-ack	Stop timers and return resources.
+; Cease-ack	0			Stop timers and return resources.
+; Stop/t3	0			Stop timers and return resources.
+; t1		4	Cease		Reset timer t1 to P3 seconds.
+;
+; System control messages
+;
+START:	FORMAT	#COM42J,R4	;start request
+	JSR	PC,NGBRST	;reset neighbor
+RSTRT:	MOVB	#EV.REQ,NG.CMD(R4) ;send request
+	MOV	#PAR.P3,NG.T1(R4) ;restart timer t1
+	RTS	PC
+;
+STOP:	FORMAT	#COM42G,R4	;stop request
+	JSR	PC,NGBRST	;reset neighbor
+RSTOP:	MOVB	#EV.CEA,NG.CMD(R4) ;send cease
+	MOV	#PAR.P3,NG.T1(R4) ;restart timer t1
+	RTS	PC
+;
+TIMOT:	FORMAT	#COM42G,R4	;stop request
+	JSR	PC,NGBINI	;reinitialize neighbor
+	RTS	PC
+;
+; Neighbor acquisition messages
+;
+; Status	Receiver capabilites
+; field		0	1	2
+; -------------------------------------
+; 0		*	active	passive	
+; 1		passive	active	passive
+; 2		active	active	**
+;
+REQST1:	FORMAT	#COM43,R4	;neighbor request
+REQST:	JSR	PC,NGBRST	;reset neighbor
+	MOVB	#EV.CFM,NG.CMD(R4) ;presume send confirm
+	BIT	#ST.ONL,NG.FLG(R4) ;is gateway online
+	BNE	REQ1		;branch if yes
+	JSR	PC,NGBINI	;no. reinitialize neighbor
+	MOVB	#EV.REF,NG.CMD(R4)
+	MOVB	#SF.STP,NG.TXS(R4)
+	RTS	PC
+;
+CNFRM:	FORMAT	#COM42C,R4	;neighbor confirm
+	JSR	PC,NGBRST	;reset neighbor
+REQ1:	MOV	EH.SYS(R2),NG.SYS(R4) ;record egp system number
+	BIC	#ST.ACT,NG.FLG(R4) ;determine polling bit
+	CMPB	EH.STA(R2),#SF.ACT
+	BEQ	2$		;branch if neighbor active
+	CMPB	EH.STA(R2),#SF.PAS
+	BEQ	1$		;branch if neighbor passive
+	CMP	NG.SYS(R4),#SYSN ;neighbor default. compare system numbers
+	BLO	2$		;branch if default active
+	BHI	1$		;branch if default passive
+	BIT	#ST.ORG,NG.FLG(R4) ;same system. did this neighbor start
+	BEQ	2$		;branch if no (passive)
+1$:	BIS	#ST.ACT,NG.FLG(R4) ;active	
+	BR	3$
+;
+2$:	ADD	NG.T2P(R4),NG.T3(R4) ;passive. increase timer r3
+3$:	MOV	EH.POL(R2),R0	;compute hello interval
+	SWAB	R0
+	CMP	R0,NG.P1(R4)
+	BHIS	4$
+	MOV	NG.P1(R4),R0
+4$:	MOV	R0,NG.T1P(R4)
+	MOV	EH.POL+2(R2),R0	;compute poll interval
+	SWAB	R0
+	CMP	R0,NG.P2(R4)
+	BHIS	5$
+	MOV	NG.P2(R4),R0
+5$:	MOV	R0,NG.T2P(R4)
+	CMP	R0,#256.*64.	;are intervals reasonable
+	BHIS	6$		;branch if no
+	CMP	R0,NG.T1P(R4)
+	BHIS	TIMR3		;branch if yes
+6$:	JSR	PC,NGBINI	;no. reinitialize neighbor
+	MOVB	#EV.REF,NG.CMD(R4)
+	MOVB	#SF.PAR,NG.TXS(R4)
+	RTS	PC
+;
+TIMR1:	BIT	#ST.RCH,NG.FLG(R4) ;is reachability indicated
+	BNE	1$		;branch if yes
+	CLC			;no. update state
+	ROLB	NG.RCH(R4)
+	MOVB	NG.RCH(R4),R0	;is neighbor down
+	BIC	#^C17,R0
+	CMPB	BITPOP(R0),#PAR.K
+	BHI	1$		;branch if no
+	FSA	#EV.DWN		;yes. signal down
+1$:	BIC	#ST.RCH,NG.FLG(R4) ;reset reachability indication
+TIMR3:	MOV	NG.T1P(R4),NG.T1(R4) ;restart timer t1
+	BIT	#ST.ACT,NG.FLG(R4) ;is this active
+	BEQ	2$		;branch if no
+	BIS	#ST.HLO,NG.FLG(R4) ;yes. send hello
+2$:	RTS	PC
+;
+RFUSE:	FORMAT	#COM42D,R4	;neighbor refuse
+	JSR	PC,NGBINI	;reinitialize neighbor
+NOOP:	RTS	PC
+;
+CEASE:	FORMAT	#COM42E,R4	;neighbor cease
+CEASE1:	JSR	PC,NGBINI	;reinitialize neighbor
+	MOVB	#EV.CAK,NG.CMD(R4) ;send cease-ack
+	RTS	PC
+;
+CEASE2:	FORMAT	#COM42F,R4	;neighbor cease-ack
+	JSR	PC,NGBINI	;reinitialize neighbor
+	RTS	PC
+;
+CEASE3:	MOVB	#EV.CEA,NG.CMD(R4) ;send cease
+	MOVB	#SF.PRO,NG.TXS(R4)
+	RTS	PC
+;
+; Neighbor reachability messages
+;
+UPITY1:	FORMAT	#COM41,R4	;neighbor up
+	BIS	#ST.UNS,NG.FLG(R4) ;send unsolicited update
+TIMR2:	MOVB	#EV.POL,NG.CMD(R4) ;send poll
+	MOV	NG.T2P(R4),NG.T2(R4) ;restart timer t2	
+	RTS	PC
+;
+UPITY2:	FORMAT	#COM42B,R4	;neighbor down
+	CLR	NG.T2(R4)	;stop timer t2
+	RTS	PC
+;
+HELLO:	MOVB	#EV.IHU,NG.CMD(R4) ;hello. send ihu
+HLO1:	BIT	#ST.ACT,NG.FLG(R4) ;is this passive
+	BEQ	HLO2		;branch if yes
+	RTS	PC		;active. quietly withdraw
+;
+HEARD:	BIT	#ST.ACT,NG.FLG(R4) ;is this passive
+	BEQ	HLO2		;branch if yes
+	BIT	#ST.RCH,NG.FLG(R4) ;active. has it hit before
+	BNE	1$		;branch if yes
+	BIS	#ST.RCH,NG.FLG(R4) ;no. record a hit
+	MOV	#PAR.P4,NG.T3(R4) ;reset timer t3
+	SEC			;update state
+	ROLB	NG.RCH(R4)
+	JSR	PC,UPDATE	;update local routing
+	MOVB	NG.RCH(R4),R0	;is neighbor up
+	BIC	#^C17,R0
+	CMPB	BITPOP(R0),#PAR.J
+	BLO	1$		;branch if no
+	FSA	#EV.UP		;declare up
+1$:	RTS	PC
+;
+HLO2:	MOVB	EH.STA(R2),R0	;passive. is this reachability indication
+	BIC	#^C17,R0
+	CMPB	R0,#SF.UP
+	BNE	1$		;branch if no
+	BIT	#ST.RCH,NG.FLG(R4) ;yes. has it hit before
+	BNE	1$		;branch if yes
+	BIS	#ST.RCH,NG.FLG(R4) ;no. record a hit
+	MOV	#PAR.P4,NG.T3(R4) ;reset timer t3
+	SEC			;update state
+	ROLB	NG.RCH(R4)
+	JSR	PC,UPDATE	;update local routing
+	FSA	#EV.UP		;declare up
+1$:	RTS	PC
+;
+; Net reachability messages
+;
+POLL:	MOVB	#EV.UPD,NG.CMD(R4) ;send update
+	BR	HLO1
+;
+UPDAT:	MOV	R2,R3		;initialize for packet scan
+	ADD	#EH.DAT,R2
+1$:	TSTB	EH.IGW(R3)	;are there more internal gateways
+	BLE	2$		;branch if no
+	DECB	EH.IGW(R3)	;yes. process update
+	BR	3$
+;
+2$:	TSTB	EH.EGW(R3)	;are there more external gateways
+	BLE	HEARD		;branch if no
+	DECB	EH.EGW(R3)	;yes. process update
+3$:	MOV	R3,R0		;assemble gateway address
+	ADD	#EH.NET,R0
+	JSR	PC,NTCLAS
+	BR	4$		;class a
+	BR	5$		;class b
+	BR	6$		;class c
+;
+4$:	MOVB	(R2)+,EH.NET+1(R3) ;class a
+5$:	MOVB	(R2)+,EH.NET+2(R3) ;class b
+6$:	MOVB	(R2)+,EH.NET+3(R3) ;class c
+	MOV	R3,R1		;find hid
+	ADD	#EH.NET,R1
+	JSR	PC,ADRMAP
+	BCS	HEARD		;branch if cant
+	BITB	#GT.END,GATFLG(R0)
+	BNE	HEARD		;branch if default
+	MOVB	GATHID(R0),EGPHIX	
+	JSR	PC,DECUPD	;decode gateway block
+	BCC	1$
+	FORMAT	#COM42X,R4	;format error
+	BR	1$
+;
+; Send egp packet
+; R4 = neighbor pointer
+;
+EGPOUT:	TSTB	NG.CMD(R4)	;is command pending
+	BNE	2$		;branch if yes
+	BIT	#ST.UNS,NG.FLG(R4) ;no. is unsolicited update pending
+	BEQ	1$		;branch if no
+	BIC	#ST.UNS,NG.FLG(R4) ;yes. send it
+	MOVB	#EV.UPD+200,NG.CMD(R4)
+	BR	2$
+;
+1$:	BIT	#ST.HLO,NG.FLG(R4) ;is hello pending
+	BEQ	3$		;branch if no
+	BIC	#ST.HLO,NG.FLG(R4) ;yes. send it
+	MOVB	#EV.HLO,NG.CMD(R4)
+2$:	CALL	CTRL,#CM.GET,#PKTPTR,OPNBLK+CONPTR ;yes. allocate packet
+	MOV	R0,R2
+	ASL	R2		;decode return
+	ADD	R2,PC
+	BR	5$		;0 accepted
+	BR	4$		;1 connection open error
+	BR	4$		;2 invalid parameters
+	INC	NG.RES(R4)	;3 insufficient resources
+3$:	RTS	PC
+;
+4$:	JSR	PC,PRIDNT	;fatal error
+	.EXIT
+;
+5$:	MOV	PKTPTR,R2	;initialize ip header
+	MOV	#IH.LEN,PH.OFS(R2)
+	ADD	#BUFLDR,R2
+	MOV	#<P.IP*20+5>,(R2)+ ;(ih.ver,ih.tos)
+	CLR	(R2)+		;(ih.fl)
+	CLR	(R2)+		;(ih.id)
+	CLR	(R2)+		;(ih.frg)
+	MOV	#<P.EGP*400>+<TM.TTL/1000.>,(R2)+ ;(ih.ttl,ih.pro)
+	CLR	(R2)+		;(ih.chk)
+	MOV	NG.GAT(R4),(R2)+ ;(ih.src)
+	MOV	NG.GAT+2(R4),(R2)+
+	MOV	NG.ADR(R4),(R2)+ ;(ih.dst)
+	MOV	NG.ADR+2(R4),(R2)+
+	MOV	R2,HEDPTR	;save header pointer
+	MOVB	#VRSN,(R2)+	;(eh.ver) complete egp header
+	CLRB	(R2)+		;(eh.typ)
+	CLRB	(R2)+		;(eh.cod)
+	CLRB	(R2)+		;(eh.sta)
+	CLR	(R2)+		;(eh.cks)
+	MOV	#SYSN,(R2)+	;(eh.sys)
+	MOV	NG.RCV(R4),(R2)+ ;(eh.seq) (assume receive)
+	MOV	HEDPTR,R1	;restore header pointer
+;
+; Construct data portion
+;
+	MOVB	NG.CMD(R4),R0	;log events
+	BIC	#^C17,R0
+	ASL	R0
+	MOV	R0,-(SP)
+	ADD	R4,R0
+	INC	NG.ACT(R0)
+	ADD	(SP)+,PC	;branch to process
+	BR	.		;0 Up reachability indication
+	BR	.		;1 Down reachability indication
+	BR	OUTREQ		;2 Request command
+	BR	OUTCFM		;3 Confirm response
+	BR	OUTREF		;4 Refuse response
+	BR	OUTCEA		;5 Cease command
+	BR	OUTCAK		;6 Cease-ack response
+	BR	OUTHLO		;7 Hello command
+	BR	OUTIHU		;8 I-H-U response
+	BR	OUTPOL		;9 Poll command
+	BR	OUTUPD		;10 Update response
+;
+OUTREQ:	MOVB	#CD.REQ,EH.COD(R1) ;send request command
+	MOV	NG.SND(R4),EH.SEQ(R1)
+	BR	OUT11
+;
+OUTCFM:	MOVB	#CD.CFM,EH.COD(R1) ;send confirm response
+	BR	OUT11
+;
+OUTREF:	MOVB	#CD.REF,EH.COD(R1) ;send refuse response
+	BR	OUT12
+;
+OUTCEA:	MOVB	#CD.CEA,EH.COD(R1) ;send cease command
+	MOV	NG.SND(R4),EH.SEQ(R1)
+	BR	OUT12
+;
+OUTCAK:	MOVB	#CD.CAK,EH.COD(R1) ;send cease-ack response
+OUT12:	BISB	NG.TXS(R4),EH.STA(R1) ;complete status field
+OUT11:	MOVB	#EC.ACQ,EH.TYP(R1)
+	MOV	NG.P1(R4),@R2	;(eh.pol) insert polling intervals
+	SWAB	(R2)+
+	MOV	NG.P2(R4),@R2
+	SWAB	(R2)+
+	BR	EGPSND
+;
+OUTPOL:	MOVB	#EC.POL,EH.TYP(R1) ;send poll command
+	INC	NG.SND(R4)	;increment send sequence
+	MOV	NG.SND(R4),EH.SEQ(R1)
+	CLR	(R2)+		;(reserved)
+	MOV	R4,R0		;determine net class
+	ADD	#NG.GAT,R0
+	JSR	PC,NTCLAS
+	BR	2$		;class a
+	BR	1$		;class b
+	MOV	NG.GAT(R4),(R2)+ ;(eh.net) class c
+	MOVB	NG.GAT+2(R4),(R2)+
+	CLRB	(R2)+
+	BR	OUT22
+;
+1$:	MOV	NG.GAT(R4),(R2)+ ;(eh.net) class b
+	CLR	(R2)+
+	BR	OUT22
+;
+2$:	MOVB	NG.GAT(R4),(R2)+ ;(eh.net) class a
+	CLRB	(R2)+
+	CLR	(R2)+
+	BR	OUT22
+;
+OUTUPD:	MOVB	#EC.UPD,EH.TYP(R1) ;send update response
+	TSTB	NG.CMD(R4)	;is this solicited
+	BPL	1$		;branch if yes
+	BISB	#SF.UNS,EH.STA(R1) ;no. so mark
+1$:	MOVB	#1,(R2)+	;(eh.igw)
+	CLRB	(R2)+		;(eh.egw)
+	MOV	R4,R0		;determine net class
+	ADD	#NG.GAT,R0
+	JSR	PC,NTCLAS
+	BR	4$		;class a
+	BR	3$		;class b
+2$:	MOV	NG.GAT(R4),(R2)+ ;(eh.net) class c
+	MOVB	NG.GAT+2(R4),(R2)+
+	CLRB	(R2)+
+	BR	6$
+;
+3$:	MOV	NG.GAT(R4),(R2)+ ;(eh.net) class b
+	CLR	(R2)+
+	BR	5$
+;
+4$:	MOVB	NG.GAT(R4),(R2)+ ;(eh.net) class a
+	CLRB	(R2)+
+	CLR	(R2)+
+	MOVB	NG.GAT+1(R4),(R2)+ ;(eh.dat)
+5$:	MOVB	NG.GAT+2(R4),(R2)+
+6$:	MOVB	NG.GAT+3(R4),(R2)+
+	JSR	PC,ENCUPD	;encode update data
+	BR	OUT22
+;
+OUTHLO:	MOVB	#CD.HLO,EH.COD(R1) ;send hello command
+	MOV	NG.SND(R4),EH.SEQ(R1)
+	BR	OUT20
+;
+OUTIHU:	MOVB	#CD.IHU,EH.COD(R1) ;send i-h-u response
+OUT20:	MOVB	#EC.HLO,EH.TYP(R1)
+OUT22:	CMPB	NG.STA(R4),#2	;complete status field
+	BNE	1$
+	BISB	#SF.DWN,EH.STA(R1)
+1$:	CMPB	NG.STA(R4),#3
+	BNE	EGPSND
+	BISB	#SF.UP,EH.STA(R1)
+;
+; Complete packet and send
+;
+EGPSND:	CLRB	NG.CMD(R4)	;reset for next time
+	MOV	PKTPTR,R1	;compute length
+	SUB	R1,R2
+	SUB	PH.OFS(R1),R2
+	MOV	R2,PH.LNG(R1)
+	MOV	HEDPTR,R2	;complete egp header
+	SWAB	EH.SYS(R2)	;onward pdp11
+	SWAB	EH.SEQ(R2)
+	JSR	PC,CHKSUM	;compute checksum
+	MOV	R0,EH.CHK(R2)
+	JSR	PC,DUMP
+	CALL	CTRL,#CM.SND,R1,OPNBLK+CONPTR ;send ip packet
+	MOV	R0,R2
+	ASL	R2		;decode return
+	ADD	R2,PC
+	BR	3$		;0 accepted
+	BR	12$		;1 connection open error
+	BR	12$		;2 invalid parameters
+	BR	12$		;3 insufficient resources
+	NOP			;4 local host unreachable
+	INC	NG.UNR(R4)	;5 foreign net unreachable
+3$:	RTS	PC
+;
+12$:	JSR	PC,PRIDNT	;fatal error
+	.EXIT
+	.PAGE
+	.SBTTL	Subroutines
+;
+; Subroutine to initialize neighbor
+;
+NGBINI:	JSR	PC,NGBRST	;reset neighbor
+	BIT	#ST.ORG,NG.FLG(R4) ;is this operator-initiated
+	BNE	1$		;branch if yes
+	CLR	NG.T3(R4)	;no. stop timer t3
+1$:	CLRB	NG.STA(R4)	;initialize protocol state
+	RTS	PC
+;
+; Subroutine to reset neighbor
+;
+NGBRST:	CLR	NG.T1(R4)	;reset timers
+	CLR	NG.T2(R4)
+	MOV	#PAR.P5,NG.T3(R4)
+	BIC	#ST.ACT+ST.RCH+ST.HLO+ST.UNS,NG.FLG(R4)
+	CLRB	NG.RCH(R4)	;initialize reachability state
+	CLRB	NG.CMD(R4)
+	CLRB	NG.TXS(R4)
+	RTS	PC
+;
+; Encupd (enc) encode update
+; r2 = data area pointer, r4 = gateway pointer,
+; Returns r2 = updated data area pointer
+;
+ENCUPD:	MOV	R1,-(SP)	;save goodies
+	MOV	R3,-(SP)
+	MOV	R2,R3
+	CLRB	(R2)+		;insert dist-count
+	CLR	R0		;dist
+1$:	MOV	R3,-(SP)	;save pointer
+	MOV	R2,R3
+	MOVB	R0,(R2)+	;insert dist, net-count
+	CLRB	(R2)+
+	MOV	$GATAD,R1	;scan for this dist
+2$:	BITB	#GT.END,GATFLG(R1) ;is this end of table
+	BNE	7$		;branch if yes
+	CMPB	@R3,GATHOP(R1)	;no. does dist match entry
+	BNE	6$		;branch if no
+	BITB	#GT.HLO,GATFLG(R1) ;*** yes. is net directly reachable
+	BEQ	6$		;*** branch if no
+	MOV	R1,-(SP)	;yes. is it up
+	MOVB	GATHID(R1),R1
+	BIC	#^C377,R1
+	MUL	#HOSLEN,R1
+	ADD	$HOSAD,R1
+	MOV	R1,R0
+	MOV	(SP)+,R1
+	CMP	HOSDLY(R0),#TM.TTL
+	BHIS	6$		;branch if no
+	MOV	R1,R0		;yes. determine net class
+	ADD	#GATNET,R0
+	JSR	PC,NTCLAS
+	BR	4$		;class a
+	BR	3$		;class b
+	MOVB	GATNET(R1),(R2)+ ;class c. send it
+	MOVB	GATNET+1(R1),(R2)+
+	MOVB	GATNET+2(R1),(R2)+
+	BR	5$
+;
+3$:	MOVB	GATNET(R1),(R2)+ ;class b. send it
+	MOVB	GATNET+1(R1),(R2)+
+	BR	5$
+;
+4$:	MOVB	GATNET(R1),(R2)+ ;class a. send it
+5$:	INCB	1(R3)
+6$:	ADD	#GATLEN,R1	;advance to next entry
+	BR	2$
+;
+7$:	MOV	R3,R0		;restore pointer
+	MOV	(SP)+,R3
+	TSTB	1(R0)		;were there any nets
+	BNE	8$		;branch if yes
+	MOV	R0,R2		;no. back up
+	BR	9$
+;
+8$:	INCB	@R3		;increment dist-count
+9$:	MOVB	@R0,R0		;bump dist
+	INC	R0
+	BIT	#X.ROUT,@PARPTR	;is dist in bounds
+	BNE	10$		;branch if no
+	CMPB	R0,#DIAMTR
+	BLOS	1$		;branch if yes	
+10$:	MOV	(SP)+,R3	;restore goodies
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Decupd (dec) decode gateway block
+; r2 = data area pointer, r3 = egp header pointer, r4 = gateway pointer,
+; Returns r2 = updated data area pointer
+;
+DECUPD:	MOV	R2,R1		;point to dist count
+	TSTB	(R2)+
+1$:	TSTB	@R1		;is dist count zero
+	BEQ	5$		;branch if yes
+	MOV	R1,-(SP)	;no. save pointer
+	MOV	R2,R1
+	CMPB	(R2)+,(R2)+
+2$:	TSTB	1(R1)		;is net count zero
+	BEQ	3$		;branch if yes
+	CMP	R2,RSMPTR	;no. is address in bounds
+	BHIS	4$		;branch if no
+	JSR	PC,NTINSR	;yes. update net
+	DECB	1(R1)		;advance to next net
+	BR	2$
+;
+3$:	MOV	(SP)+,R1	;advance to next dist
+	DECB	@R1
+	BR	1$
+;
+4$:	MOV	(SP)+,R1	;format error
+	SEC
+5$:	RTS	PC
+;
+; Ntinsr (nti) insert new entry into net table
+; R1 = distance pointer, r2 = data area pointer, r3 = egp header pointer,
+; R4 = gateway pointer, returns r2 = updated data area pointer
+;
+NTINSR:	MOV	R1,-(SP)	;preserve registers
+	CLRB	EGPHOP		;fiddle distance for protobum routers
+	BIT	#ST.ZER,NG.FLG(R4)
+	BNE	1$
+	MOVB	@R1,EGPHOP
+1$:	CLR	-(SP)		;make some room
+	CLR	-(SP)
+	MOV	R2,R0		;copy address and update pointer
+	MOV	SP,R1
+	JSR	PC,NTCLAS
+	BR	3$		;class a
+	BR	2$		;class b
+	MOVB	(R2)+,(R1)+	;class c
+2$:	MOVB	(R2)+,(R1)+	;class b
+3$:	MOVB	(R2)+,(R1)+	;class a
+	CMPB	EGPHOP,#DIAMTR	;no. is distance too far
+	BHI	8$		;branch if yes
+	INCB	EGPHOP		;no. update distance
+	CMP	NG.GAT(R4),EH.NET(R3) ;is the enemy us
+	BNE	4$		;branch if no
+	CMP	NG.GAT+2(R4),EH.NET+2(R3)
+	BEQ	8$		;branch if yes
+4$:	MOV	SP,R1		;find net table entry
+	JSR	PC,NTSRCH
+	BCS	8$		;branch if cant
+;	CMP	EH.NET(R3),GATLDR(R0) ;yes. is this same gateway
+;	BNE	5$		;branch if no
+;	CMP	EH.NET+2(R3),GATLDR+2(R0)
+;	BEQ	6$		;branch if yes
+5$:	CMPB	EGPHOP,GATHOP(R0) ;no. is this way longer
+	BHI	8$		;branch if yes
+6$:	MOVB	EGPHOP,GATHOP(R0) ;no. update net table
+	MOVB	EGPHIX,GATHID(R0)
+	MOV	NG.T2P(R4),R1
+	ASH	#-2,R1
+	CMPB	R1,GATTTL(R0)
+	BLOS	7$
+	MOVB	R1,GATTTL(R0)
+7$:	MOV	EH.NET(R3),GATLDR(R0)
+	MOV	EH.NET+2(R3),GATLDR+2(R0)
+8$:	CMP	(SP)+,(SP)+	;recapture stack
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Ntsrch (nts) search leader table
+; R1 = internet address (word) pointer, returns r0 = net table pointer,
+; Cc(c) = 1 if table full
+;
+NTSRCH:	MOV	R1,-(SP)	;save
+	.PSEM	#SF.RUT		;lock routing tables
+	MOV	@SP,R1
+	TSTB	@R1		;find net table entry
+	BEQ	5$		;branch if bad format
+	JSR	PC,ADRMAP
+	BCS	5$		;branch if cant
+	BITB	#GT.END,GATFLG(R0)
+	BNE	2$		;branch if default
+	BITB	#GT.EGP,GATFLG(R0) ;is this egp entry
+	BEQ	5$		;branch if no
+	BR	4$
+;
+2$:	JSR	PC,GTCAC	;find free cache entry
+	BCS	5$		;branch if cant
+	MOV	@SP,R1		;found. update entry
+	MOV	(R1)+,GATNET(R0)
+	MOV	(R1)+,GATNET+2(R0)
+	MOV	#377*400,GATMSK(R0)
+	MOV	#377*400+377,GATMSK+2(R0)
+	CMPB	GATNET(R0),#128. ;edit mask
+	BLO	3$		;branch if class a
+	CLRB	GATMSK+1(R0)
+	CMPB	GATNET(R0),#192.
+	BLO	3$		;branch if class b	
+	CLRB	GATMSK+2(R0)	;class c
+3$:	BIC	GATMSK(R0),GATNET(R0)
+	BIC	GATMSK+2(R0),GATNET+2(R0)
+	MOVB	#GT.EGP+GT.CAC,GATFLG(R0)
+	MOVB	#255.,GATHOP(R0)
+4$:	.VSEM	#SF.RUT		;unlock routing tables
+	CLC			;normal exit
+	BR	6$
+;
+5$:	.VSEM	#SF.RUT		;unlock routing tables
+	SEC			;error exit
+6$:	MOV	(SP)+,R1
+	RTS	PC
+;
+; Adrmap (rut) find net entry
+; R1 = internet address (word) pointer, returns r0 = gateway table pointer,
+; r1 = host table pointer, c(cc) = 1 if not found
+;
+ADRMAP:	MOV	R2,-(SP)	;save
+	MOV	$GATAD,R0	;initialize pointer
+1$:	BITB	#GT.ERR+GT.HOL,GATFLG(R0)
+	BEQ	2$		;branch if okay
+	BITB	#GT.END,GATFLG(R0)
+	BEQ	4$		;branch if not last
+2$:	BITB	#GT.CAC,GATFLG(R0)
+	BEQ	3$		;branch if permanent
+	TSTB	GATTTL(R0)
+	BEQ	4$		;branch if inactive cache
+3$:	MOV	@R1,R2		;mask address
+	BIC	GATMSK(R0),R2
+	CMP	GATNET(R0),R2	;does entry match
+	BNE	4$		;branch if no
+	MOV	2(R1),R2
+	BIC	GATMSK+2(R0),R2
+	CMP	GATNET+2(R0),R2
+	BNE	4$		;branch if no
+	CLR	R1		;yes. is hid in range
+	BISB	GATHID(R0),R1
+	CMPB	R1,$HOSCT
+	BHIS	5$		;branch if no
+	MUL	#HOSLEN,R1	;yes. get host table pointer
+	ADD	$HOSAD,R1
+	CLC			;normal return
+	BR	6$
+;
+4$:	BITB	#GT.END,GATFLG(R0) ;is there another entry
+	BNE	5$		;branch if no
+	ADD	#GATLEN,R0	;yes. advance to next entry
+	BR	1$
+;
+5$:	SEC			;error return
+6$:	MOV	(SP)+,R2	;evas
+	RTS	PC
+;
+; GTCAC (rut) find an empty cache entry
+; Returns r0 = gateway table pointer, c(cc) = 1 if cant
+;
+GTCAC:	MOV	$GATAD,R0	;initialize pointer
+1$:	BITB	#GT.END,GATFLG(R0) ;is there another entry
+	BNE	3$		;branch if no
+	BITB	#GT.CAC,GATFLG(R0) ;yes. is this empty cache entry
+	BEQ	2$		;branch if no
+	TSTB	GATTTL(R0)
+	BEQ	4$		;branch if yes
+2$:	ADD	#GATLEN,R0	;no. advance to next entry
+	BR	1$
+
+3$:	SEC			;error exit
+	RTS	PC
+;
+4$:	CLC			;normal exit
+	RTS	PC
+;
+; Ntclas (ntc) determine entry format
+; R0 = net pointer, returns +0 (class a), +2 (class b), +3 (class c)
+;
+NTCLAS:	CMPB	@R0,#128.	;determine class
+	BLO	3$		;branch if class a
+	CMPB	@R0,#192.
+	BLO	2$		;branch if class b
+	ADD	#2,@SP		;class c. exit +4
+2$:	ADD	#2,@SP		;class b. exit +2
+3$:	RTS	PC		;class a. exit +0
+;
+; Subroutine to update host table entry
+; r4 = gateway pointer
+;
+UPDATE:	BIT	#X.DFLT,@PARPTR	;is this default gateway
+	BNE	9$		;branch if no
+	BIT	#ST.DFT,NG.FLG(R4)
+	BEQ	9$		;branch if no
+	MOV	R1,-(SP)	;yes. save
+	MOV	R2,-(SP)
+	.PSEM	#SF.RUT		;lock routing tables
+	MOV	#ZERO,R1	;find entry
+	JSR	PC,ADRMAP
+	BCC	4$		;branch if found
+	CLR	R1		;not found. find free hid
+	BISB	$HOSCT+1,R1
+	MOVB	R1,-(SP)
+	MUL	#HOSLEN,R1
+	ADD	$HOSAD,R1
+1$:	CMPB	@SP,$HOSCT	;is hid available
+	BHIS	2$		;branch if no
+	TSTB	HOSPID(R1)	;yes. is it free
+	BEQ	3$		;branch if yes
+	ADD	#HOSLEN,R1	;no. advance to next one
+	INCB	@SP
+	BR	1$
+;
+2$:	TSTB	(SP)+		;no hid available
+	BR	8$
+;
+3$:	MOVB	(SP)+,GATHID(R0) ;found free hid. initialize net entry
+4$:	CLR	GATNET(R0)
+	CLR	GATNET+2(R0)
+	MOV	#-1,GATMSK(R0)
+	MOV	#-1,GATMSK+2(R0)
+	MOV	NG.ADR(R4),GATLDR(R0) ;yes. so specify
+	MOV	NG.ADR+2(R4),GATLDR+2(R0)
+	CLRB	GATHOP(R0)
+	MOVB	#GT.CAC+GT.HLO+GT.END,GATFLG(R0)
+	MOV	NG.T1P(R4),R2	;update ttl
+	ASR	R2
+	CMPB	R2,GATTTL(R0)
+	BLOS	5$
+	MOVB	R2,GATTTL(R0)
+5$:	MOV	R1,-(SP)
+	MOV	R4,R1		;find gateway hid
+	ADD	#NG.ADR,R1
+	JSR	PC,ADRMAP
+	MOVB	HOSPID(R1),R0
+	MOV	(SP)+,R1
+	BCS	8$		;branch if cant
+	MOVB	R0,HOSPID(R1)	;update entry
+	MOV	NG.T1P(R4),R2	;allow four hello intervals
+	ASH	#2,R2
+	CMP	R2,#255.	;clamp to eight bits
+	BLOS	6$
+	MOV	#255.,R2
+6$:	CMPB	R2,HOSTTL(R1)	;is it less than running timeout
+	BLOS	7$		;branch if yes
+	MOVB	R2,HOSTTL(R1)	;no. reset timeout
+7$:	MOV	NG.TIM(R4),HOSTIM(R1)
+	MOV	NG.TIM+2(R4),HOSTIM+2(R1)
+	MOV	#TM.MIN,HOSDLY(R1)
+	CLR	HOSOFS(R1)
+8$:	.VSEM	#SF.RUT		;unlock routing tables
+	MOV	(SP)+,R2	;evas
+	MOV	(SP)+,R1
+9$:	RTS	PC
+;
+; Subroutine to compute egp checksum
+; R1 = packet pointer
+;
+CHKSUM:	MOV	R1,-(SP)	;save few
+	MOV	R2,-(SP)
+	CLR	R0
+	MOV	PH.LNG(R1),R2	;get data pointers
+	ADD	PH.OFS(R1),R1
+	CLR	-(SP)		;checksum block
+	ASR	R2
+	ROL	@SP
+1$:	ADD	(R1)+,R0	;accumulate checksum
+	ADC	R0
+	DEC	R2
+	BNE	1$
+	TST	@SP
+	BEQ	4$
+	MOVB	(R1)+,@SP
+4$:	ADD	(SP)+,R0
+	ADC	R0
+	TST	R0		;clean up complement
+	BEQ	2$
+3$:	COM	R0
+2$:	MOV	(SP)+,R2	;restore few
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to dump egp datagram
+; R1 = packet pointer, r4 = gateway pointer
+;
+DUMP:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	BIT	#ST.DMP,NG.FLG(R4) ;is trace bit set
+	BEQ	20$		;branch if no
+	MOV	PH.OFS(R1),R2	;yes. compute total packet length
+	ADD	PH.LNG(R1),R2
+	SUB	#BUFLDR-1,R2
+	ASR	R2
+	ADD	#BUFLDR,R1	;point to ip header
+	MOV	R1,TEMP		;display current address
+	FORMAT	#DMP00,#TEMP
+4$:	MOV	#8.,R3		;set loop count
+2$:	FORMAT	#DMP01		;display current word
+	TST	(R1)+
+	DEC	R2
+	BLE	3$		;branch if done
+	SOB	R3,2$		;loop until end line
+	FORMAT	#DMP02		;end line
+	BR	4$
+;
+3$:	FORMAT	#DMP03		;end line
+20$:	MOV	(SP)+,R3	;restore registers
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+	.PAGE
+	.SBTTL	COMMAND INTERPRETATION
+;
+; Initialization
+;
+INIT:	MOV	#-1,R0		;find highest usable address
+	.SETTO
+	CMP	#STOEND,R0	;will we fit
+	BLOS	1$		;branch if yes
+	FORMAT	#COM42		;no. insufficient storage
+	.EXIT
+;
+1$:	MOV	R0,@#50		;reset upper limit
+	MOV	#STOBGN,R0	;clear storage
+2$:	CLR	(R0)+
+	CMP	R0,#STOEND
+	BLO	2$
+	.GTJB	#ARGBLK,#AREA,#-1 ;get process parameters
+	MOV	AREA+16,PARPTR
+	ADD	#PAROPT,PARPTR
+	.DSTAT	#ARGBLK,#HOSPTR	;get table pointers
+	BCC	4$
+3$:	FORMAT	#COM42A		;broken configuration
+	.EXIT
+;
+4$:	.MSG	<#^RLOG>	;switch to log process
+	MOV	#2,ERRLVL
+	MOV	ARGBLK+4,R3	;set par pointer
+	MOV	R3,R0		;fetch ip address
+	ADD	#PARIDS,R0
+	ADD	@R0,R0
+	MOV	(R0)+,$NETID
+	MOV	(R0)+,$NETID+2
+	MOV	AREA+2,R2	;find free segment
+	ADD	#17777,R2
+	ASH	#-5,R2
+	BIC	#^C<7*400>,R2
+	MOV	PARHOS(R3),R0	;map to host table
+	MOV	PARHOS+2(R3),R1
+	SUB	#2,R1
+	SBC	R0
+	BIS	R2,R0
+	.WIND
+	MOV	(R1)+,$HOSCT	;save header info
+	MOV	R1,$HOSAD
+	ADD	#400,R2		;next free sedgment
+	MOV	PARNET(R3),R0	;map to net table
+	MOV	PARNET+2(R3),R1
+	BIS	R2,R0
+	.WIND
+	MOV	R1,$GATAD
+	CALL	CTRL,#CM.OPN,#OPNBLK+CONPAR,OPNBLK+CONPTR ;open egp connection
+	TST	R0
+	BEQ	5$		;branch if ok
+	JSR	PC,PRIDNT	;print reason for failure
+	.EXIT
+;
+5$:	.MRKT	#ARGBLK,#TIME,#GATICK,#1 ;start the bubble machine
+	FORMAT	#HERALD,CHAIN	;from the top
+	RTS	PC
+;
+; Unrecognized command
+;
+NTFD:	FORMAT	#COM29		;unrecognized command
+	RTS	PC
+;
+; Show (sho) display neighbor table
+; (segment of command language interpreter)
+; Arg = gateway id
+;
+SHOW:	CLR	-(SP)		;initialize
+	JSR	PC,GTID		;get gateway id
+	BNE	2$		;branch if present
+	FORMAT	#COM2		;invalid or missing. display header
+	MOV	#NGBTAB,R4
+1$:	TST	NG.ADR(R4)	;is this end of table
+	BEQ	3$		;branch if yes
+	MOV	SP,R1		;no. display gateway id
+	FORMAT	#COM8A
+	FORMAT	#COM8,R4	;display entry
+	ADD	#NG.LEN,R4	;advance to next entry
+	INC	@SP	
+	BR	1$
+;
+2$:	FORMAT	#COM20,R4	;display detail
+3$:	TST	(SP)+		;recover stack
+	RTS	PC
+;
+; Gateway (gat) create neighbor table entry
+; (segment of command language interpreter)
+; Arg1 = gateway number, arg2-5 = gateway address
+;
+GATE:	JSR	PC,GTID		;get gateway id
+	BEQ	3$		;branch if invalid or missing
+	MOV	R4,R2		;numeric. stash address
+	MOV	$NETID,(R2)+
+	MOV	$NETID+2,(R2)+
+	MOV	$NETID,(R2)+
+	MOV	$NETID+2,(R2)+
+	MOV	R4,R2
+	MOV	#8.,R3
+1$:	JSR	PC,RDDEC	;(arg3-arg5)
+	BEQ	2$
+	MOVB	R0,(R2)+
+	SOB	R3,1$
+2$:	JSR	PC,NGBINI	;initialize neighbor
+	MOV	#ST.ORG+ST.ONL,NG.FLG(R4)
+	MOV	#PAR.P1,NG.P1(R4)
+	MOV	#PAR.P2,NG.P2(R4)
+3$:	RTS	PC
+;
+; Quit (qui) leave the game
+; (segment of command language interpreter)
+; (no arguments)
+;
+QUIT:	.CMKT	#ARGBLK,#1,#0	;turn off the bubble machine
+	CALL	CTRL,#CM.CLS,#0,OPNBLK+CONPTR ;close connection
+	.SPND			;wait for connection to die
+	.EXIT			;return to cli
+;
+; Verbose (ver) be very noisy
+; (segment of command language interpreter)
+; arg = error levle
+;
+VERB:	JSR	PC,RDDEC	;set error level
+	MOV	R0,ERRLVL
+	RTS	PC
+;
+; Output (cmd) change console device output
+; (segment of command language interpreter)
+; Arg = output device name
+;
+OUTP:	JSR	PC,HASH		;get new name
+	BEQ	1$		;branch if missing
+	.MSG
+	RTS	PC
+;
+1$:	.MSG	<#^RTT >	;default to "tt"
+	RTS	PC
+;
+; Start (cmd) start protocol
+; (segment of command language interpreter)
+; Arg1 = gateway id, arg2 = hello interval, arg3 = poll interval
+;
+STRT:	JSR	PC,GTID		;get gateway id
+	BEQ	3$		;branch if invalid or missing
+	JSR	PC,RDDEC	;(arg2) get hello interval
+	BNE	1$		;branch if given
+	MOV	#PAR.P1,R0	;missing. assume default
+1$:	MOV	R0,NG.P1(R4)	
+	JSR	PC,RDDEC	;(arg3) get poll interval
+	BNE	2$		;branch if given
+	MOV	#PAR.P2,R0	;missing. assume default
+2$:	MOV	R0,NG.P2(R4)	
+	FSA	#EV.STR		;start protocol
+3$:	RTS	PC
+;
+; Stop (cmd) stop protocol
+; (segment of command language interpreter)
+; Arg1 = gateway id, arg2 = stop code
+;
+STOX:	JSR	PC,GTID		;get gateway id
+	BEQ	1$		;branch if invalid or missing
+	JSR	PC,RDDEC	;(arg2) get stop code
+	BNE	2$		;branch if given
+	MOV	#SF.STP,R0	;missing. assume operator initiated
+2$:	MOVB	R0,NG.TXS(R4)	
+	FSA	#EV.STP		;stop protocol
+1$:	RTS	PC
+;
+; On (on) set options on
+; Arg1 = gateway id, arg2 = "trace", "active" or "line"
+;
+ONSW:	JSR	PC,GTID		;get gateway id
+	BEQ	5$		;branch if invalid or missing
+1$:	JSR	PC,HASH		;get argument
+	BEQ	5$		;branch if end
+	MOV	#OPTABL,R1	;search for match
+2$:	TST	@R1
+	BEQ	4$		;branch if not found
+	CMP	R0,(R1)+
+	BEQ	3$		;branch if found
+	TST	(R1)+
+	BR	2$
+;
+3$:	BIS	@R1,NG.FLG(R4)	;update flags
+	BR	1$
+;
+4$:	FORMAT	#COM28		;invalid argument
+5$:	RTS	PC
+;
+; Off (off) set options off
+; Arg1 = gateway id, arg2 = "trace", "active" or "line"
+;
+OFSW:	JSR	PC,GTID		;get gateway id
+	BEQ	5$		;branch if invalid or missing
+1$:	JSR	PC,HASH		;get argument
+	BEQ	5$		;branch if end
+	MOV	#OPTABL,R1	;search for match
+2$:	TST	@R1
+	BEQ	4$		;branch if not found
+	CMP	R0,(R1)+
+	BEQ	3$		;branch if found
+	TST	(R1)+
+	BR	2$
+;
+3$:	BIC	@R1,NG.FLG(R4)	;update flags
+	BR	1$
+;
+4$:	FORMAT	#COM28		;invalid argument
+5$:	RTS	PC
+;
+; Subroutine to get gateway id
+; Returns r4 = neighbor table pointer, cc(z) = 1 if invalid or missing
+;
+GTID:	JSR	PC,RDDEC	;(arg) get geteway id
+	BEQ	1$		;branch if missing
+	CMP	R0,NGBTAB-2	;present. is it in range
+	BHIS	2$		;branch if no
+	MUL	#NG.LEN,R0	;compute entry pointer
+	MOV	R1,R4
+	ADD	#NGBTAB,R4
+	RTS	PC
+;
+2$:	FORMAT	#COM28		;invalid argument
+1$:	SEZ			;invalid or missing
+	RTS	PC
+	.PAGE
+	.SBTTL	TABLES, TEXT STRINGS AND VARIABLES
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+; Command table for kwik
+;
+KWKTBL:	.KWTAB	<HEL>,HELP	;send help information
+	.KWTAB	<SHO>,SHOW	;show gate status
+	.KWTAB	<GAT>,GATE	;show gateway status
+	.KWTAB	<QUI>,QUIT	;leave the game
+	.KWTAB	<VER>,VERB	;set error level
+	.KWTAB	<OUT>,OUTP	;select log device
+	.KWTAB	<STA>,STRT	;start protocol
+	.KWTAB	<STO>,STOX	;stop protocol
+	.KWTAB	<ON>,ONSW	;enable options
+	.KWTAB	<OFF>,OFSW	;disable options
+	.KWTAB	<   >,NTFD	;end of table
+;
+; Option table for "on"/"off"
+;
+OPTABL:	.WORD	<^RTRA>,ST.DMP	;formatted packet dump (debug)
+	.WORD	<^RACT>,ST.ORG	;active acquisition mode
+	.WORD	<^RLIN>,ST.ONL	;online
+	.WORD	<^RZER>,ST.ZER	;zero
+	.WORD	0		;end of table
+;
+; Event decoding
+;
+DECODE:	.WORD	6
+	.WORD	0		;0 invalid
+	.WORD	EV.UPD		;1 update
+	.WORD	EV.POL+200	;2 poll
+	.WORD	DECACQ		;3 neighbor acquisition
+	.WORD	0		;4 invalid
+	.WORD	DECRCH		;5 neighbor reachability
+ENDODE	=	.		;end of table
+;
+DECACQ:	.WORD	5
+	.WORD	EV.REQ+200	;0 request
+	.WORD	EV.CFM		;1 confirm
+	.WORD	EV.REF		;2 refuse
+	.WORD	EV.CEA+200	;3 cease
+	.WORD	EV.CAK		;4 cease-ack
+ENDACQ	=	.		;end of table
+;
+DECRCH:	.WORD	2
+	.WORD	EV.HLO+200	;0 hello
+	.WORD	EV.IHU		;1 i heard you
+ENDRCH	=	.		;end of table
+;
+; State transition table
+;
+;              0 Idle      1 Aqsn      2 Down       3 Up       4 Cease
+;           +-----------+-----------+-----------+-----------+-----------+
+; Up        |0          |1          |3/Poll     |3          |4          |
+; Down      |0          |1          |2          |2          |4          |
+; Request   |2/Confirm  |2/Confirm  |2/Confirm  |2/Confirm  |4/Cease    |
+; Confirm   |0/Cease    |2          |2          |3          |4          |
+; Refuse    |0/Cease    |0          |2          |3          |4          |
+; Cease     |0/Cease-ack|0/Cease-ack|0/Cease-ack|0/Cease-ack|0/Cease-ack|
+; Cease-ack |0          |1          |2          |3          |0          |
+; Hello     |0/Cease    |1          |2/I-H-U    |3/I-H-U    |4          |
+; I-H-U     |0/Cease    |1          |2/Process  |3/Process  |4          |
+; Poll      |0/Cease    |1          |2          |3/Update   |4          |
+; Update    |0/Cease    |1          |2          |3/Process  |4          |
+; Start     |1/Request  |1/Request  |1/Request  |1/Request  |4          |
+; Stop/t3   |1/Request  |0          |4/Cease    |4/Cease    |0          |
+; t1        |0          |1/Request  |2/Hello    |3/Hello    |4/Cease    |
+; t2        |0          |1          |2          |3/Poll     |4          |
+;           +-----------+-----------+-----------+-----------+-----------+
+;
+STATE:	.WORD	STAT00,STAT01,STAT02,STAT03,STAT04 ;state index table
+;
+; Idle State (0)
+;
+STAT00:	.WORD	0,NOOP		;0 Up reachability indication
+	.WORD	0,NOOP		;1 Down reachability indication
+	.WORD	2,REQST1	;2 Request command
+	.WORD	0,CEASE3	;3 Confirm response
+	.WORD	0,CEASE3	;4 Refuse response
+	.WORD	0,CEASE1	;5 Cease command
+	.WORD	0,NOOP		;6 Cease-ack response
+	.WORD	0,CEASE3	;7 Hello command
+	.WORD	0,CEASE3	;8 I-H-U response
+	.WORD	0,CEASE3	;9 Poll command
+	.WORD	0,CEASE3	;10 Update response
+	.WORD	1,START		;11 Start request
+	.WORD	1,START		;12 * Stop request or timer t3 underflow
+	.WORD	0,NOOP		;13 timer t1 underflow
+	.WORD	0,NOOP		;14 timer t2 underflow
+;
+; Acquisition State (1)
+;
+STAT01:	.WORD	1,NOOP		;0 Up reachability indication
+	.WORD	1,NOOP		;1 Down reachability indication
+	.WORD	2,REQST1	;2 Request command
+	.WORD	2,CNFRM		;3 Confirm response
+	.WORD	0,RFUSE		;4 Refuse response
+	.WORD	0,CEASE		;5 Cease command
+	.WORD	1,NOOP		;6 Cease-ack response
+	.WORD	1,NOOP		;7 Hello command
+	.WORD	1,NOOP		;8 I-H-U response
+	.WORD	1,NOOP		;9 Poll command
+	.WORD	1,NOOP		;10 Update response
+	.WORD	1,START		;11 Start request
+	.WORD	0,TIMOT		;12 Stop request or timer t3 underflow
+	.WORD	1,RSTRT		;13 timer t1 underflow
+	.WORD	1,NOOP		;14 timer t2 underflow
+;
+; Down State (2)
+;
+STAT02:	.WORD	3,UPITY1	;0 Up reachability indication
+	.WORD	2,NOOP		;1 Down reachability indication
+	.WORD	2,REQST		;2 Request command
+	.WORD	2,NOOP		;3 Confirm response
+	.WORD	2,NOOP		;4 Refuse response
+	.WORD	0,CEASE		;5 Cease command
+	.WORD	2,NOOP		;6 Cease-ack response
+	.WORD	2,HELLO		;7 Hello command
+	.WORD	2,HEARD		;8 I-H-U response
+	.WORD	2,NOOP		;9 Poll command
+	.WORD	2,NOOP		;10 Update response
+	.WORD	1,START		;11 Start request
+	.WORD	4,STOP		;12 Stop request or timer t3 underflow
+	.WORD	2,TIMR1		;13 timer t1 underflow
+	.WORD	2,NOOP		;14 timer t2 underflow
+;
+; Up State (3)
+;
+STAT03:	.WORD	3,NOOP		;0 Up reachability indication
+	.WORD	2,UPITY2	;1 Down reachability indication
+	.WORD	2,REQST1	;2 Request command
+	.WORD	3,NOOP		;3 Confirm response
+	.WORD	3,NOOP		;4 Refuse response
+	.WORD	0,CEASE		;5 Cease command
+	.WORD	3,NOOP		;6 Cease-ack response
+	.WORD	3,HELLO		;7 Hello command
+	.WORD	3,HEARD		;8 I-H-U response
+	.WORD	3,POLL		;9 Poll command
+	.WORD	3,UPDAT		;10 Update response
+	.WORD	1,START		;11 Start request
+	.WORD	4,STOP		;12 Stop request or timer t3 underflow
+	.WORD	3,TIMR1		;13 timer t1 underflow
+	.WORD	3,TIMR2		;14 timer t2 underflow
+;
+; Cease State (4)
+;
+STAT04:	.WORD	4,NOOP		;0 Up reachability indication
+	.WORD	4,NOOP		;1 Down reachability indication
+	.WORD	4,CEASE3	;2 Request command
+	.WORD	4,NOOP		;3 Confirm response
+	.WORD	4,NOOP		;4 Refuse response
+	.WORD	0,CEASE		;5 Cease command
+	.WORD	0,CEASE2	;6 Cease-ack response
+	.WORD	4,NOOP		;7 Hello command
+	.WORD	4,NOOP		;8 I-H-U response
+	.WORD	4,NOOP		;9 Poll command
+	.WORD	4,NOOP		;10 Update response
+	.WORD	4,NOOP		;11 Start request
+	.WORD	0,TIMOT		;12 Stop request or timer t3 underflow
+	.WORD	4,RSTOP		;13 timer t1 underflow
+	.WORD	4,NOOP		;14 timer t2 underflow
+;
+ZERO:	.WORD	0,0		;innocent zeros
+TIME:	.WORD	0,60.		;one-second timeout
+HOSPTR:	.RAD50	/HOS/		;name of host process
+;
+; Bit population count
+;
+BITPOP:	.BYTE	0		;0000
+	.BYTE	1		;0001
+	.BYTE	1		;0010
+	.BYTE	2		;0011
+	.BYTE	1		;0100
+	.BYTE	2		;0101
+	.BYTE	2		;0110
+	.BYTE	3		;0111
+	.BYTE	1		;1000
+	.BYTE	2		;1001
+	.BYTE	2		;1010
+	.BYTE	3		;1011
+	.BYTE	2		;1100
+	.BYTE	3		;1101
+	.BYTE	3		;1110
+	.BYTE	4		;1111
+;
+; Text strings for gate protocol
+;
+HERALD:	.ASCIZ	'?EGP-I-Gateway Process (25-Mar-86 Version) ^LD'
+COM00:	.ASCIZ	'?EGP-^+'
+COM2:	.ASCII	'GateID	Gateway		State	Reach	Hello	Poll	SndSeq	RcvSeq	Update^/'
+	.ASCIZ	'--------------------------------------------------------------------------------'
+;
+COM8:	.ASCII	'^C'<NG.ADR>'	^BI'<NG.STA>'	^BK'<NG.RCH>
+	.ASCII	'	^I'<NG.T1>'	^I'<NG.T2>
+	.ASCIZ	'	^I'<NG.SND>'	^I'<NG.RCV>'	^+T'<NG.TIM>
+COM8A:	.ASCIZ	'^I'<0>'	^+'
+COM20:	.ASCII	'Tally		Event	Action^/'
+	.ASCII	'------------------------------^/'
+	.ASCII	'Request		^I'<NG.EVN+4>'	^I'<NG.ACT+4>'	'
+	.ASCII	'	Neighbor	^C'<NG.ADR>'^/'
+	.ASCII	'Confirm		^I'<NG.EVN+6>'	^I'<NG.ACT+6>'	'
+	.ASCII	'	Gateway		^C'<NG.GAT>'^/'
+	.ASCII	'Refuse		^I'<NG.EVN+10>'	^I'<NG.ACT+10>'	'
+	.ASCII	'	Flags		^K'<NG.FLG>'^/'
+	.ASCII	'Cease		^I'<NG.EVN+12>'	^I'<NG.ACT+12>'	'
+	.ASCII	'	System		^I'<NG.SYS>'^/'
+	.ASCII	'Cease-ack	^I'<NG.EVN+14>'	^I'<NG.ACT+14>'	'
+	.ASCII	'	Hello interval	^I'<NG.T1P>'^/'
+	.ASCII	'Hello		^I'<NG.EVN+16>'	^I'<NG.ACT+16>'	'
+	.ASCII	'	Poll interval	^I'<NG.T2P>'^/'
+	.ASCII	'I-H-U		^I'<NG.EVN+20>'	^I'<NG.ACT+20>'	'
+	.ASCII	'	Status		^BI'<NG.TXS>'^/'
+	.ASCII	'Poll		^I'<NG.EVN+22>'	^I'<NG.ACT+22>'	'
+	.ASCII	'	Bad format	^I'<NG.BAD>'^/'
+	.ASCII	'Update		^I'<NG.EVN+24>'	^I'<NG.ACT+24>'	'
+	.ASCII	'	Bad checksum	^I'<NG.CHK>'^/'
+	.ASCII	'Start		^I'<NG.EVN+26>'	^I'<NG.ACT+26>'	'
+	.ASCII	'	Dropped		^I'<NG.DRP>'^/'
+	.ASCII	'Stop		^I'<NG.EVN+30>'	^I'<NG.ACT+30>'	'
+	.ASCII	'	Unreachable	^I'<NG.UNR>'^/'
+	.ASCII	'Up		^I'<NG.EVN+0>'		'
+	.ASCII	'	No buffer	^I'<NG.RES>'^/'
+	.ASCII	'Down		^I'<NG.EVN+2>'^/'
+	.ASCII	'Timer 1		^I'<NG.EVN+32>'^/'
+	.ASCIZ	'Timer 2		^I'<NG.EVN+34>
+DMP00:	.ASCIZ	'^K'<0>' ^+'
+DMP01:	.ASCIZ	' ^K'<0>'^+'
+DMP02:	.ASCIZ	'^/       ^+'
+DMP03:	.BYTE	0
+;
+; Text strings for error conditions
+;
+COM42:	.ASCIZ	'?EGP-F-Insufficient storage'
+COM42A:	.ASCIZ	'?EGP-F-Broken configuration'
+COM29:	.ASCIZ	'?EGP-F-Unrecognized command'
+COM28:	.ASCIZ	'?EGP-F-Invalid argument'
+COM40:	.ASCIZ	'?EGP-I-New neighbor ^C'<NG.ADR>
+COM41:	.ASCIZ	'?EGP-I-Neighbor ^C'<NG.ADR>' up ^BK'<NG.RXS>
+COM42B:	.ASCIZ	'?EGP-I-Neighbor ^C'<NG.ADR>' down ^BK'<NG.RXS>
+COM43:	.ASCIZ	'?EGP-I-Neighbor ^C'<NG.ADR>' request ^BK'<NG.RXS>
+COM42C:	.ASCIZ	'?EGP-I-Neighbor ^C'<NG.ADR>' confirm ^BK'<NG.RXS>
+COM42D:	.ASCIZ	'?EGP-I-Neighbor ^C'<NG.ADR>' refuse ^BK'<NG.RXS>
+COM42E:	.ASCIZ	'?EGP-I-Neighbor ^C'<NG.ADR>' cease ^BK'<NG.RXS>
+COM42F:	.ASCIZ	'?EGP-I-Neighbor ^C'<NG.ADR>' cease-ack ^BK'<NG.RXS>
+COM42X:	.ASCIZ	'?EGP-I-Neighbor ^C'<NG.ADR>' format error'
+COM42J:	.ASCIZ	'?EGP-I-Start request ^C'<NG.ADR>
+COM42G:	.ASCIZ	'?EGP-I-Stop request ^C'<NG.ADR>
+	.EVEN
+;
+	.PSECT	$DATA,RW,I
+;
+; Gate connection data
+;
+OPNBLK:	OPNBLK	0,EGP,EGPBLK,RTPSIZ,NETSUB,P.EGP,300 ;egp block
+$NETID:	.WORD	0,0		;internet address
+$HOSCT:	.BYTE	0,0		;host table header
+$HOSAD:	.WORD	0		;host table pointer
+$GATAD:	.WORD	0		;net table pointer
+$NTSEQ:	.WORD	1		;update sequence number
+;
+	.PSECT	$ERAS,RW,I
+STOBGN	=	.		;beginning of erasable storage
+;
+; Variables
+;
+EGPHIX:	.BLKB	1		;gateway host id
+EGPHOP:	.BLKB	1		;distance
+NGBID:	.BLKB	1		;gateway id
+	.EVEN
+TEMP:	.BLKW	1		;busy little temporary
+PARPTR:	.BLKW	1		;options-word pointer
+PKTPTR:	.BLKW	1		;packet pointer
+HEDPTR:	.BLKW	1		;header pointer
+RSMPTR:	.BLKW	1		;reassembly pointer
+ARGBLK:	.BLKW	5		;rt-11 argument block
+AREA:	.BLKW	39.		;scratch area
+EGPBLK:	.BLKW	RTPSIZ/2	;connection block
+EGPRSM:	.BLKB	1000.		;reassembly buffer (min size)
+STOEND	=	.
+	.EVEN
+;
+	.END
+         

@@ -1,0 +1,688 @@
+	.TITLE	SMPSRV	DCN/SMTP Service
+	.SBTTL	System and module definitions
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn basic operating system - dcn/rt-11 smpt service
+;
+; This is a server for the simple mail transport protocol described
+; in rfc-821.
+;
+; External symbols
+;
+	.GLOBL	RDLIN,RDBYT,RDASC,RDDEC
+	.GLOBL	FLAGS,OPNBLK,HELP,ERRLVL
+	.GLOBL	TTOBUF,CHAIN,PRTPTR
+	.GLOBL	RNAME,CONECT
+;
+; Entry symbols
+;
+	.GLOBL	NETSIG,NETDAT,INIT,KWKTBL,COM00
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.CHN,.SMF,.TRDEF,.LGD ;dcnlib definitions
+	.MCALL	.KWTAB,.MSG,.PSEM,.TSEM,.VSEM,.TRAP ;dcnlib macros
+	.MCALL	DFCON		;moslib macros
+	.MCALL	FORMAT,DFSRV,CALL ;netlib macros
+	.MCALL	.EXIT,.DATE	 ;rt-11 macros
+	.MCALL	.LOOKU,.ENTER,.READW,.WRITW,.CLOSE,.PURGE
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.CHN			;define argument area
+	.SMF			;define semaphore codes
+	.TRDEF			;define trap codes
+	DFCON			;define connection block
+	DFSRV			;define service bits
+	.LGD			;define login file entry
+;
+; Module definitions
+;
+; Assembly parameters
+;
+BUFSIZ	=	512.		;buffer size (words) (>= 2 blocks)
+USESIZ	=	64.		;max user string length
+HSTSIZ	=	64.		;max domain string length
+RUTSIZ	=	256.		;max route string length
+;
+; Status flags (flags)
+;
+FWDBIT	=	020000		;mrcp forwarding bit
+MLFBIT	=	010000		;file open bit
+EOFBIT	=	004000		;end of message bit
+ERRBIT	=	002000		;read/write error bit
+SMPBIT	=	001000		;forward bit
+
+	.PAGE
+	.SBTTL	DATA TRANSFER ROUTINES
+;
+	.PSECT	$BOSI,RO,I
+;
+; Handrails for swingers
+;
+OPNBLK	=	.		;not used
+NETSIG	=	.		;not used
+NETDAT	=	.		;not used
+	RTS	PC
+;
+; Subroutine to stash bytes in mail buffer
+; R0 = byte
+;
+MALBYT:	MOV	R1,-(SP)	;is this thing still ticking
+	MOV	R2,-(SP)
+	BIT	#ERRBIT,FLAGS
+	BNE	2$		;branch if no
+	MOVB	R0,@TMPPTR	;yes. stash byte
+	INC	TMPPTR
+	BIT	#EOFBIT,FLAGS	;is this end of message
+	BNE	3$		;branch if yes
+	INC	SAVCNT		;no. will message overflow
+	BNE	1$		;branch if no
+	JMP	11$		;yes. declare error
+;
+1$:	CMP	TMPPTR,#TMPBUF+512. ;is buffer full
+	BHIS	3$		;branch if yes
+2$:	JMP	13$		;no. saunter on out
+;
+3$:	.PSEM	#SF.UPD		;lock opdate
+	SUB	#TMPBUF,TMPPTR	;compute bytes to copy
+	.READW	#ARGBLK,#0,#FILBUF,#2*256.,FILBLK
+	BCS	10$		;branch if error
+	MOV	R0,FILCNT
+	ASL	R0		;is temporary buffer too large
+	CMP	TMPPTR,R0
+	BLOS	4$		;branch if no
+	CLR	SAVCNT		;yes. mark for error later
+	BR	10$
+;
+4$:	MOV	TMPPTR,R0	;no. copy temporary buffer to file buffer
+	MOV	#FILBUF,R2
+	ADD	FILBCT,R2
+	MOV	#TMPBUF,R1
+5$:	MOVB	(R1)+,(R2)+
+	SOB	R0,5$
+	.WRITW	#ARGBLK,#0,#FILBUF,FILCNT,FILBLK ;re-write file buffer
+	BCS	10$		;branch if error
+	ADD	TMPPTR,FILBCT	;update current position
+6$:	CMP	FILBCT,#512.
+	BLO	7$
+	SUB	#512.,FILBCT
+	INC	FILBLK
+	BR	6$
+;
+7$:	MOV	#TMPBUF,TMPPTR	;reset buffer pointer
+	BIT	#EOFBIT,FLAGS	;is this eof
+	BEQ	12$		;branch if no
+	.READW	#ARGBLK,#0,#FILBUF,#2*256.,SAVBLK ;yes. read file header block
+	BCS	10$		;branch if error
+	MOV	R0,FILCNT
+	MOV	#FILBUF,PRTPTR	;edit in header
+	ADD	SAVBCT,PRTPTR
+	.DATE			;fiddle for leading zero
+	ASH	#-5,R0		;extract day (bits 5-9)
+	BIC	#^C37,R0
+	CMP	R0,#10.
+	BHIS	8$
+	MOV	#MALBUG,R0	;construct header with leading zero
+	BR	9$
+;
+8$:	MOV	#MALFMT,R0	;construct header
+9$:	MOV	#STOBGN,R1
+	JSR	PC,FORMAT
+	MOVB	#' ,@PRTPTR
+	CLR	PRTPTR
+	.WRITW	#ARGBLK,#0,#FILBUF,FILCNT,SAVBLK
+	BCC	12$		;branch if no error
+10$:	.VSEM	#SF.UPD		;unlock update
+11$:	BIS	#ERRBIT,FLAGS	;error. set indicator
+	BR	13$
+;
+12$:	.VSEM	#SF.UPD		;unlock update
+13$:	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+	.PAGE
+	.SBTTL	COMMAND INTERPRETATION
+;
+; Initialization
+;
+INIT:	FORMAT	#HERALD,CHAIN	;from the top
+	MOV	#1,ERRLVL
+	MOV	#STOBGN,R0	;clear storage
+2$:	CLR	(R0)+
+	CMP	R0,#STOEND
+	BLO	2$
+	MOV	MALNAM,FILNAM
+	MOV	MALNAM+2,FILNAM+2
+	MOV	MALNAM+4,FILNAM+4
+	MOV	MALNAM+6,FILNAM+6
+	MOV	CHAIN,R1	;copy host name string
+	ADD	#RMTNAM+5,R1
+	MOV	#HSTADR,R0
+10$:	MOVB	(R1)+,(R0)+
+	BNE	10$
+	RTS	PC
+;
+; Unrecognized command
+;
+NTFD:	FORMAT	#COM29		;500 unrecognized command
+	RTS	PC
+;
+; Unimplemented command
+;
+UIMP:	FORMAT	#COM28		;502 command not implemented
+	RTS	PC
+;
+; Show (sho) show smpsrv status
+; (segment of command language interpreter)
+; (no arguments)
+;
+SHOW:	MOV	FLAGS,ARGBLK	;move under umbrella
+	FORMAT	#COM24,#STOBGN	;211 ...
+	RTS	PC
+;
+; Quit (qui) leave the game
+; (segment of command language interpreter)
+; (no arguments)
+;
+QUIT:	BIT	#MLFBIT,FLAGS	;is mail file open
+	BEQ	20$		;branch if no
+	.VSEM	#SF.APN		;yes. unlock it
+20$:	BIT	#SMPBIT,FLAGS	;is forwarding indicated
+	BEQ	21$		;branch if no
+	.MSG	<#^RTT >	;yes. flush output buffer
+	.TRAP	#TR.SMP,<#^RSMP>,#1 ;flag for mail file scan
+21$:	FORMAT	#COM09,CHAIN	;221 closing
+	.EXIT
+;
+; Verbose (ver) be very noisy
+; (segment of command language interpreter)
+; arg = error level
+;
+VERB:	JSR	PC,RDDEC	;set error level
+	MOV	R0,ERRLVL
+	RTS	PC
+	.PAGE
+	.SBTTL	.	COMMANDS TO STORE AND RETRIEVE FILES
+;
+; Noop (noo) no-operation
+; (segment of command language interpreter)
+; (no arguments)
+;
+NOOP:	FORMAT	#COM04		;250 ok
+	RTS	PC
+;
+; Helo (hel) reply host name
+; (segment of command language interpreter)
+; Arg = remote host name
+;
+HELO:	MOV	#HSTADR,R1	;copy host name string
+	JSR	PC,CPYSTR
+	FORMAT	#COM27,CHAIN	;250 <host>
+	RTS	PC
+;
+; Rset (rst) reset buffers
+; (segment of command language interpreter)
+; (no arguments)
+;
+RSET:	.PURGE	#0		;reset state
+	BIT	#MLFBIT,FLAGS	;is mail file open
+	BEQ	2$		;branch if no
+	.VSEM	#SF.APN		;yes. unlock it
+2$:	BIC	#MLFBIT+EOFBIT+ERRBIT,FLAGS
+	CLRB	SRCADR
+	FORMAT	#COM04		;250 ok
+	RTS	PC
+;
+; Mail (mai) mail mail
+; (segment of command language interpreter)
+; Arg = "from:<mailbox>"
+;
+MAIL:	JSR	PC,SKPSTR	;skip noise
+	MOV	#SRCADR,R1	;edit "from" field
+3$:	JSR	PC,CPYSTR	;copy next field
+	BEQ	2$
+	MOVB	R0,(R1)+
+	BR	3$
+;
+2$:	FORMAT	#COM04		;250 ok
+	RTS	PC
+;
+; Rcpt (mrc) insert recipient
+; (segment of command language interpreter)
+; Arg = "to:<mailbox>"
+;
+RCPT:	BIC	#FWDBIT,FLAGS	;assume not forwarding
+	JSR	PC,SKPSTR	;skip noise
+	MOV	#DSTADR,R1	;edit "to" field
+1$:	JSR	PC,CPYSTR	;copy next field
+	BEQ	MLF2
+	CMPB	R0,#'@
+	BEQ	2$		;branch if host
+	MOVB	R0,(R1)+
+	BR	1$
+;
+2$:	MOV	R1,R2		;host. save pointer
+	MOVB	R0,(R1)+
+	JSR	PC,CPYSTR	;copy next field
+	TSTB	1(R2)		;is string null
+	BNE	3$		;branch if no
+	FORMAT	#COM38		;553 invalid syntax
+	RTS	PC
+;
+3$:	MOV	R0,-(SP)	;save scan status
+	MOV	R1,-(SP)
+	MOV	R2,R0		;look up in host table
+	INC	R0
+	CALL	RNAME,R0,#TEMP,#COUNT ;get address
+	ASL	R0
+	BEQ	5$		;branch if found
+	FORMAT	OPNTXT(R0),#DSTADR ;reveal status
+	BR	17$
+;
+5$:	BITB	#SMTP,COUNT	;can that host handle this
+	BNE	6$		;branch if yes
+	FORMAT	#COM37,#DSTADR	;550 invalid mail host [host]
+17$:	MOV	(SP)+,R1	;restore scan status
+	MOV	(SP)+,R0
+	RTS	PC
+;
+6$:	MOV	(SP)+,R1	;restore scan status
+	MOV	(SP)+,R0
+	MOV	CHAIN,R3	;is destination host us
+	CMP	TEMP,LCLNAM(R3)
+	BNE	7$		;branch if no
+	CMP	TEMP+2,LCLNAM+2(R3)
+	BNE	7$		;branch if no
+	MOV	R2,R1		;yes. amputate field
+	CLRB	@R1
+	CMPB	R0,#'>
+	BEQ	MLF2
+	CMPB	R0,#'@
+	BEQ	2$
+	CMP	R1,#DSTADR
+	BLOS	1$
+	MOVB	R0,(R1)+
+	BR	1$
+;
+7$:	BIS	#FWDBIT+SMPBIT,FLAGS ;destination is not us
+	CMPB	R0,#'>		;plant break char
+	BEQ	MLF2
+8$:	MOVB	R0,(R1)+
+	JSR	PC,CPYSTR	;copy remainder of route
+	BNE	8$
+;
+; Open mail file
+;
+MLF2:	TSTB	DSTADR		;is recipient specified
+	BNE	1$		;branch if yes
+	FORMAT	#COM36		;550 null recipient
+	RTS	PC
+;
+1$:	BIT	#MLFBIT,FLAGS	;is file open
+	BEQ	2$		;branch if no
+	JMP	MLF20
+;
+2$:	.TSEM	#SF.APN		;lock file
+	BCC	3$		;branch if ok
+	FORMAT	#COM50,#STOBGN	;450 busy mail file [file]
+	RTS	PC
+;
+3$:	BIS	#MLFBIT,FLAGS	;indicate locked
+	.PURGE	#0		;just in case
+	.LOOKU	#ARGBLK,#0,#FILNAM ;try to open mail file
+	BCS	11$		;branch if cant
+	MOV	R0,FILMAX
+	CLR	FILBLK
+	CLR	FILBCT
+4$:	.READW	#ARGBLK,#0,#FILBUF,#BUFSIZ,FILBLK ;get next block
+	BCS	10$		;branch if nono
+5$:	MOV	FILBCT,R1
+	ADD	#FILBUF,R1
+	MOV	#TMPBUF,R2
+6$:	CMP	R2,#TMPBUF+512.	;is it too long
+	BHIS	10$		;branch if yes
+	MOVB	(R1)+,R0	;get next char
+	BIC	#^C177,R0
+	MOVB	R0,(R2)+
+	CMPB	R0,#SUB		;is this end of mailbag
+	BEQ	12$		;branch if yes
+	CMPB	R0,#LF
+	BNE	6$
+	CLRB	-(R2)
+	SUB	#FILBUF,R1	;compute present position
+	MOV	#TMPBUF,R0
+	JSR	PC,RDLIN
+7$:	JSR	PC,RDASC
+	BEQ	10$
+	CMPB	R0,#',
+	BNE	7$
+	JSR	PC,RDDEC	;advance for message length
+	BEQ	10$		;branch if can't
+	MOV	R0,-(SP)
+8$:	JSR	PC,RDASC	;get next char
+	BNE	8$		;branch if no
+	CLR	R0		;advance for header length
+	ADD	(SP)+,R1	;compute new offset
+	ADC	R0
+	MOV	R1,FILBCT
+	TST	R0		;is it safely inside buffer
+	BNE	9$		;branch if no
+	CMP	R1,#BUFSIZ*2-100.
+	BLO	5$		;branch if yes
+9$:	DIV	#512.,R0	;unscramble
+	ADD	R0,FILBLK
+	MOV	R1,FILBCT
+	BR	4$
+;
+10$:	FORMAT	#COM35,#STOBGN	;451 unable to open mail file [file]
+	.VSEM	#SF.APN
+	RTS	PC
+;
+11$:	.ENTER	#ARGBLK,#0,#FILNAM ;no. try to allocate one
+	BCS	10$		;branch if error
+	MOV	R0,FILMAX
+	CLR	FILBLK
+	CLR	FILBCT
+12$:	CMP	FILBCT,#512.	;rationalize pointers
+	BLO	13$
+	SUB	#512.,FILBCT
+	INC	FILBLK
+	BR	12$
+;
+13$:	MOV	FILBLK,SAVBLK	;save current position
+	MOV	FILBCT,SAVBCT
+	CLR	RCPCNT
+	MOV	#TMPBUF,TMPPTR
+	MOV	#MALHDR,R1	;insert dummy header
+14$:	MOVB	(R1)+,R0
+	BEQ	15$
+	JSR	PC,MALBYT
+	BR	14$
+;
+15$:	CLR	SAVCNT		;initialize byte count
+;
+; Insert rcpt line
+;
+MLF20:	MOV	#TTOBUF,PRTPTR	;build headers
+	INC	RCPCNT
+	MOV	#MAL01,R0	;"rcpt to:"
+	BIT	#FWDBIT,FLAGS	;is this for us
+	BNE	1$		;branch if no
+	MOV	#MAL00,R0	;yes. "dlvd to:"
+1$:	MOV	#DSTADR,R1
+	JSR	PC,FORMAT
+	CLRB	@PRTPTR
+	CLR	PRTPTR
+	MOV	#TTOBUF,R1	;copy header to buffer
+2$:	MOVB	(R1)+,R0
+	BEQ	3$
+	JSR	PC,MALBYT
+	BR	2$
+3$:	BIT	#FWDBIT,FLAGS	;is this for us
+	BNE	5$		;branch if no
+	CALL	CONECT,#DSTADR,#0,#AF.MSG ;yes. do we know the user
+	ASL	R0
+	BEQ	4$		;branch if ok
+	FORMAT	USETXT(R0),#DSTADR ;reveal status
+	RTS	PC
+;
+4$:	FORMAT	#USE00,#DSTADR	;250 delivering to <[user]>
+	.MSG	<#^RLOG>	;tell log too
+	FORMAT	#COM06B,#DSTADR
+	.MSG	<#^RTT >
+	RTS	PC
+;
+5$:	FORMAT	#COM06,#DSTADR	;250 forwarding to [host]
+	.MSG	<#^RLOG>	;tell log too
+	FORMAT	#COM06A,#DSTADR
+	.MSG	<#^RTT >
+	RTS	PC
+;
+; Data (dat) copy message
+; (segment of command language interpreter)
+; (no arguments)
+;
+DATA:	BIT	#MLFBIT,FLAGS	;is file open
+	BNE	1$		;branch if no
+	FORMAT	#COM25		;503 invalid command sequence
+	RTS	PC
+;
+1$:	MOV	#TTOBUF,PRTPTR	;insert header lines
+	MOV	#MAL02,R0	;"return-path" "mail-from"
+	MOV	#STOBGN,R1
+	JSR	PC,FORMAT
+	MOV	#MAL03,R0
+	MOV	CHAIN,R1
+	JSR	PC,FORMAT
+	CLRB	@PRTPTR
+	CLR	PRTPTR
+	MOV	#TTOBUF,R1	;copy header to buffer
+3$:	MOVB	(R1)+,R0
+	BEQ	4$
+	JSR	PC,MALBYT
+	BR	3$
+;
+4$:	BIT	#ERRBIT,FLAGS	;did something break
+	BEQ	MLF12		;branch if no
+MLF11:	TST	SAVCNT		;did count overflow
+	BEQ	1$		;branch if yes
+	FORMAT	#COM34,#STOBGN	;452 write error on file [file]
+	BR	MLF13
+;
+1$:	FORMAT	#COM39,#STOBGN	;552 message too long
+MLF13:	.PURGE	#0		;kill file
+	.VSEM	#SF.APN
+	BIC	#MLFBIT+EOFBIT+ERRBIT,FLAGS
+	RTS	PC
+;
+MLF12:	CLR	R0		;compute chars remaining
+	MOV	FILMAX,R1
+	SUB	SAVBLK,R1
+	ASHC	#9.,R0
+	SUB	SAVBCT,R1
+	SBC	R0
+	SUB	SAVCNT,R1
+	SBC	R0
+	BEQ	1$		;limit at max
+	MOV	#177777,R1
+1$:	MOV	R1,ARGBLK
+	FORMAT	#COM60,#STOBGN	;354 begin message [chars] chars max
+2$:	CLR	R0		;get next line
+	JSR	PC,RDLIN
+	CMPB	(R0)+,#'.	;is line "."<cr><lf>
+	BNE	6$		;branch if no
+	CMPB	(R0)+,#CR
+	BNE	5$		;branch if no
+	CMPB	(R0)+,#LF
+	BNE	6$		;branch if no
+	BIS	#EOFBIT,FLAGS	;yes. mark for eof
+	MOV	#SUB,R0		;end with ^z (sub)
+	JSR	PC,MALBYT
+	BIT	#ERRBIT,FLAGS	;did something break
+	BNE	4$		;branch if yes
+	.CLOSE	#0		;no. close file
+	.VSEM	#SF.APN
+	BIC	#MLFBIT+EOFBIT+ERRBIT,FLAGS
+	FORMAT	#COM42,#STOBGN	;250 message stored [chars] chars
+3$:	RTS	PC
+;
+4$:	JMP	MLF11
+;
+5$:	CMPB	-(R0),#'.	;"." is first char. is second also "."
+	BNE	6$		;branch if no
+	JSR	PC,RDBYT	;yes. destuff
+6$:	JSR	PC,RDBYT	;get next char
+	BEQ	2$
+	JSR	PC,MALBYT
+	BR	6$
+;
+; Subroutine to skip to beginning of route string
+;
+SKPSTR:	JSR	PC,RDASC	;skip to "<"
+	BEQ	1$
+	CMPB	R0,#'<
+	BNE	SKPSTR
+1$:	RTS	PC
+;
+; Subroutine to copy tail of route string
+; R1 = output pointer. returns r0 = break char, cc = z if eor
+;
+CPYSTR:	CLRB	@R1		;plant backstop
+	JSR	PC,RDBYT	;get next char
+	BEQ	3$		;branch if none
+	CMPB	R0,#040		;discard control chars
+	BLO	CPYSTR
+	CMPB	R0,#'\		;is char literal-next
+	BNE	5$		;branch if no
+	MOVB	R0,(R1)+	;yes. copy it and next char
+	JSR	PC,RDBYT
+	MOVB	R0,(R1)+
+	BR	CPYSTR
+;
+5$:	CMPB	R0,#'>		;is this break char
+	BEQ	3$		;branch if yes
+	CMPB	R0,#',
+	BEQ	4$		;branch if yes
+	CMPB	R0,#':
+	BEQ	4$		;branch if yes
+	CMPB	R0,#'@
+	BEQ	4$		;branch if yes
+	MOVB	R0,(R1)+	;no. copy it
+	BR	CPYSTR
+;
+4$:	CLZ
+3$:	RTS	PC
+	.PAGE
+	.SBTTL	TABLES, TEXT STRINGS AND VARIABLES
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+; Command table for kwik
+;
+; Information, setup and status commands
+;
+KWKTBL:	.KWTAB	<VER>,VERB	;set error level
+	.KWTAB	<SHO>,SHOW	;show status (private)
+	.KWTAB	<QUI>,QUIT	;leave the game
+	.KWTAB	<NOO>,NOOP	;no-operation
+	.KWTAB	<RSE>,RSET	;reset
+	.KWTAB	<HEL>,HELO	;store <host>
+	.KWTAB	<MAI>,MAIL	;store <receive-path>
+	.KWTAB	<RCP>,RCPT	;send to mailbox
+	.KWTAB	<DAT>,DATA	;store message
+	.KWTAB	<SEN>,UIMP	;send to terminal
+	.KWTAB	<SOM>,UIMP	;send to terminal or mailbox
+	.KWTAB	<SAM>,UIMP	;send to terminal and mailbox
+	.KWTAB	<VRF>,UIMP	;verify mailbox
+	.KWTAB	<EXP>,UIMP	;expand address list
+	.KWTAB	<   >,NTFD	;end of table
+;
+MALNAM:	.RAD50	'SY UNSENTMSG'	;mail file name
+;
+; User subroutine error codes
+;
+USETXT:	.WORD	0		;0 (not used)
+	.WORD	USE02		;1 directory not found
+	.WORD	USE03		;2 login file error
+	.WORD	USE04		;3 login incorrect
+;
+; Rname subroutine error codes
+;
+OPNTXT:	.WORD	0		;0 (not used)
+	.WORD	RTN06		;1 connection open error
+	.WORD	RTN06		;2 invalid parameters
+	.WORD	RTN06		;3 insufficient resources
+	.WORD	RTN06		;4 gateway down
+	.WORD	RTN06		;5 host down
+	.WORD	RTN06		;9 net error
+	.WORD	RTN07		;7 invalid name syntax
+	.WORD	RTN08		;6 name server not responding
+	.WORD	RTN09		;8 name not found
+	.WORD	RTN10		;9 name does not exist
+;
+; User text strings
+;
+HERALD:	.ASCIZ	'220 ^A'<LCLNAM+5>' SMTP Service (06-Apr-85 Version) ^LD ^LT'
+COM00:	.ASCIZ	'?SMPSRV-^+'
+COM09:	.ASCIZ	'221 ^A'<LCLNAM+5>' Closing'
+COM04:	.ASCIZ	'250 OK'
+COM27:	.ASCIZ	'250 ^A'<LCLNAM+5>
+COM06B:	.ASCII	'?SMPSRV-I-'
+USE00:	.ASCIZ	'250 Delivering to ^A'<0>
+COM06A:	.ASCII	'?SMPSRV-I-'
+COM06:	.ASCIZ	'250 Relaying to ^A'<0>
+COM42:	.ASCIZ	'250 Message stored ^I'<SAVCNT-STOBGN>' chars'
+COM60:	.ASCIZ	'354 Begin message ^I'<ARGBLK-STOBGN>' chars max'
+MALHDR:	.ASCIZ	<SUB>'D-MMM-YY HH:MM:SS,0;000000000000     '<cr><lf>
+MALFMT:	.ASCIZ	'^LD ^LT,^I'<SAVCNT-STOBGN>';000000000000^+'
+MALBUG:	.ASCIZ	'0^LD ^LT,^I'<SAVCNT-STOBGN>';000000000000^+'
+MAL00:	.ASCIZ	'DLVD to:<^A'<0>'>'
+MAL01:	.ASCIZ	'M000 to:<^A'<0>'>'
+MAL02:	.ASCII	'Return-path: <^A'<SRCADR-STOBGN>'>^/'
+	.ASCIZ	'Received: from ^A'<HSTADR-STOBGN>'^+'
+MAL03:	.ASCIZ	' by ^A'<LCLNAM+5>' ; ^LD ^LT-UT'
+COM24:	.ASCII	'211 Flags: ^K'<ARGBLK-STOBGN>'  host: ^A'<HSTADR-STOBGN>
+	.ASCII	'  file: ^F'<FILNAM-STOBGN>'[^I'<FILMAX-STOBGN>']'
+	.ASCIZ	' at ^I'<FILBLK-STOBGN>',^I'<FILBCT-STOBGN>
+COM50:	.ASCIZ	'450 Busy mail file ^F'<FILNAM-STOBGN>
+COM35:	.ASCIZ	'451 Unable to open mail file ^F'<FILNAM-STOBGN>
+COM34:	.ASCIZ	'452 Write error on mail file ^F'<FILNAM-STOBGN>
+COM29:	.ASCIZ	'500 Unrecognized command'
+COM28:	.ASCIZ	'502 Command not implemented'
+COM25:	.ASCIZ	'503 Invalid command sequence'
+COM36:	.ASCIZ	'550 Null recipient'
+COM37:	.ASCIZ	'550 Invalid mail host ^A'<0>
+COM39:	.ASCIZ	'552 Message too long'
+COM38:	.ASCIZ	'553 Invalid syntax'
+;
+; User subroutine error strings
+;
+USE02:	.ASCIZ	'450 Directory not found ^A'<0>
+USE03:	.ASCIZ	'452 Login file error ^A'<0>
+USE04:	.ASCIZ	'550 Userid not found ^A'<0>
+;
+; Rname subroutine error strings
+;
+RTN06:	.ASCIZ	'426 Host name server unreachable ^A'<0>
+RTN08:	.ASCIZ	'426 Host name server not responding ^A'<0>
+RTN09:	.ASCIZ	'450 Host name not found ^A'<0>
+RTN07:	.ASCIZ	'550 Invalid host name syntax ^A'<0>
+RTN10:	.ASCIZ	'550 Host name does not exist ^A'<0>
+	.EVEN
+;
+	.PSECT	$ERAS,RW,I
+STOBGN	=	.		;beginning of erasable storage
+;
+; File control block
+;
+FILNAM:	.BLKW	4		;file name
+FILMAX:	.BLKW	1		;max blocks
+FILCNT:	.BLKW	1		;word count
+FILBLK:	.BLKW	1		;block number
+FILBCT:	.BLKW	1		;byte count
+SAVBLK:	.BLKW	1		;saved block number
+SAVBCT:	.BLKW	1		;saved byte count
+SAVCNT:	.BLKW	1		;total byte count
+RCPCNT:	.BLKW	1		;recipient count
+;
+; Variables
+;
+TEMP:	.BLKW	2		;host address
+COUNT:	.BLKW	1		;host service bits
+ARGBLK:	.BLKW	5		;rt-11 argument block
+HSTADR:	.BLKB	HSTSIZ		;host name from helo command
+SRCADR:	.BLKB	RUTSIZ		;source route from mail command
+DSTADR:	.BLKB	RUTSIZ		;destination route from rcpt command
+TMPPTR:	.BLKW	1		;temporary buffer pointer
+TMPBUF:	.BLKB	512.		;header buffer (one block)
+	.EVEN
+FILBUF:	.BLKW	BUFSIZ		;mail file buffer
+;
+STOEND	=	.		;end of erasable storage
+;
+	.END
+                                                                                                                                                                                                                                                 

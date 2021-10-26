@@ -1,0 +1,506 @@
+	.TITLE	CSI Command String Interpreter
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn command string interpreter
+;
+; This module reads and interprets rt-11 file specifications in
+; the form: outfil/switch,...=infil/switch...
+;
+; External symbols
+;
+	.GLOBL	TRPENB
+;
+; Entry symbols
+;
+	.GLOBL	CSI
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.ERR,.CLP,.FLG,.IOD ;dcnlib definitions
+	.MCALL	.TTYIN,.TTYOU,.DSTAT ;rt-11 macros
+	.MCALL	.ENTER,.LOOKU,.CLOSE,.PRINT,.EXIT
+	.COM			;define commond data
+	.CHR			;define ascii codes
+	.ERR			;.exit return codes
+	.CLP			;rt-11 monitor area definitions
+	.FLG			;flag bit definitions
+	.IOD			;user process monitor area extension
+;
+; Temporary data block
+;
+.	=	IOHBLK
+DEFDEV:	.BLKW	1		;default device name
+SWTCNT:	.BLKW	1		;switch count
+FILDES:	.BLKW	5		;file descriptor (general mode only)
+DEVSTS:	.BLKW	4		;device information block
+REGSAV:	.BLKW	5		;registers r1-r5
+RTNLNK:	.BLKW	1		;return link
+CSTRNG:	.BLKW	1		;(arg 1) input string (0 => .tty)
+DEFTYP:	.BLKW	1		;(arg 2) default file extension block address
+DEVSPC:	.BLKW	1		;(arg 3) handler space address
+LINBUF:	.BLKW	1		;(arg 4) line buffer pointer (optional)
+STKSAV:	.BLKW	1		;stack pointer for restart
+;
+; Process-state procedure
+;
+	.PSECT	$USEI,RO,I
+;
+	.SBTTL	Command string interpreter
+;
+; .csigen - call csi in general mode
+; .csispc - call csi in special mode
+; .gtlin - return line of input
+;
+CSI:	JSR	PC,TRPENB	;switch to user mode
+	MOV	@#SYSPTR,R0	;save registers
+	ADD	#REGSAV,R0
+	MOV	R1,(R0)+	;save r1-r5
+	MOV	R2,(R0)+
+	MOV	R3,(R0)+
+	MOV	R4,(R0)+
+	MOV	R5,(R0)+
+	MOV	(SP)+,(R0)+	;rtnlnk. save return
+	MOV	(SP)+,(R0)+	;cstrng. save arguments
+	MOV	(SP)+,(R0)+	;deftyp
+	BIT	#1,@SP		;is argument flag set
+	BEQ	1$		;branch if no
+	BIC	#1,@SP		;yes. there's another one
+	MOV	(SP)+,(R0)+	;devspc
+	MOV	(SP)+,(R0)+	;linbuf
+	BR	2$
+;
+1$:	MOV	(SP)+,(R0)+	;devspc
+	CLR	(R0)+		;linbuf
+2$:	MOV	@#SYSPTR,R5	;set base register
+	MOV	SP,(R0)+	;stksav. save for restart
+;
+; Main loop
+;
+RESTRT:	CLRB	@#ERRBYT	;reset error indicator
+	MOV	CSTRNG(R5),R3
+	TSTB	DEVSPC+1(R5)	;is this gtlin
+	BNE	1$		;branch if no
+	MOV	DEFTYP(R5),R0	;yes. is prompt specified
+	BEQ	4$		;branch if no
+	.PRINT			;yes. output it
+	BR	4$
+;
+1$:	TSTB	FLAG1(R5)	;is this special mode
+	BNE	3$		;branch if yes
+	MOV	#8.,R1		;no. close channels 0-8
+2$:	.CLOSE	R1
+	DEC	R1
+	BPL	2$
+3$:	TST	R3		;is input from terminal
+	BNE	4$		;branch if no
+	.TTYOUT	#'*		;yes. prompt operator with "*"
+4$:	MOV	CSIBUF(R5),R2	;get remaining pointers
+	MOV	LINBUF(R5),R4
+	MOV	#80.,R1
+	CLRB	FLAG2(R5)
+5$:	TST	R3		;is input from terminal
+	BNE	6$		;branch if no
+	.TTYIN			;yes. get char from terminal
+	BIC	#^C177,R0	;is char nul
+	BEQ	5$		;branch to ignore if yes
+	BR	7$
+;
+6$:	MOVB	(R3)+,R0	;no. get char from specified string
+	BIC	#^C177,R0
+	BEQ	10$		;branch if backstop
+7$:	CMP	R0,#CR		;is char cr
+	BEQ	5$		;branch to ignore if yes
+	CMP	R0,#LF		;no. is char eol
+	BEQ	10$		;branch to end line if yes
+	DEC	R1		;account for length
+	BLE	9$		;branch if overflow
+	CMP	R0,#'=		;is char "="
+	BNE	8$		;branch if no
+	INCB	FLAG2(R5)	;yes. record for later
+8$:	MOVB	R0,-(R2)	;store in buffers
+	TST	R4
+	BEQ	9$
+	MOVB	R0,(R4)+
+9$:	CMP	R0,#ETX		;is this end file
+	BEQ	10$		;branch if yes
+	CMP	R0,#SUB
+	BNE	5$		;branch if no
+10$:	CLRB	-(R2)		;yes. stash terminator in buffers
+	TST	R4
+	BEQ	11$
+	CLRB	(R4)+
+11$:	TST	R1		;did buffer overflow
+	BLE	SYNERR		;branch if yes
+	TSTB	DEVSPC+1(R5)	;no. is this gtlin
+	BNE	12$		;branch if no
+	JMP	RETURN
+;
+12$:	MOV	DEVSPC(R5),R2	;set array pointer
+	CMPB	FLAG2(R5),#1	;test number of "=" chars
+	BHI	SYNERR		;branch if too many
+	CMP	R0,#ETX		;is this end file
+	BEQ	13$		;branch if yes
+	CMP	R0,#SUB
+	BNE	FLSPEC		;branch if no
+13$:	.EXIT			;yes. jump ship
+;
+; Process file specifications
+;
+FLSPEC:	MOV	CSIBUF(R5),R4	;reset csi buffer pointer
+	TSTB	FLAG1(R5)	;is it special mode ??
+	BEQ	2$		;no, don't clear output area
+	MOV	#39.,R1		;count
+	MOV	R2,R3		;copy pointer
+1$:	CLR	(R3)+		;clear
+	DEC	R1		;more ?
+	BNE	1$		;yes
+2$:	CLR	R3		;file counter
+	CLR	SWTCNT(R5)	;switch counter
+	TSTB	FLAG2(R5)	;input list only ??
+	BNE	GETDE		;no, start with output files
+STRTIN:	MOV	#3,R3		;begin input list
+	MOV	DEVSPC(R5),R2	;set file num = 3 and r2 to
+	ADD	#36,R2		;start of output space (special mode)
+	CLRB	FLAG2(R5)	;set switch to input
+GETDE:	MOV	DEFTYP(R5),R1	;get address of default extensions
+	BIC	#1,R1		;remove flag
+	MOV	#15270,DEFDEV(R5) ;use default device "dk"
+NXTFIL:	CMP	R3,#10		;how many files?
+	BGT	SYNERR		;too many.
+	TSTB	FLAG2(R5)	;output or input files ??
+	BEQ	1$		;input
+	TST	(R1)+		;output files, go to next extension
+1$:	TSTB	FLAG1(R5)	;general or special mode ?
+	BNE	SPECAL		;special, no fetch, enter, or lookup
+	MOV	R5,R2		;set up pointer to file descriptor
+	ADD	#FILDES,R2
+	JSR	PC,GETFD	;get the file descriptor
+	TST	(R0)		;was it a null file ?
+	BEQ	SWITCH		;yes
+	TSTB	FLAG2(R5)	;input or output
+	BEQ	INFILE		;input, no output checks
+	JSR	PC,OUSTUF	;go handle some output file checks
+	CLR	-(SP)		;construct argument block
+	MOV	@R2,-(SP)
+	MOV	R0,-(SP)
+	MOV	R3,-(SP)
+	.ENTER	SP
+	BCS	CSIER4		;branch if error
+	ADD	#10,SP		;restore stack
+	BR	SWITCH
+;
+SPECAL:	JSR	PC,GETFD	;get file descriptor
+	TSTB	FLAG2(R5)	;input or output
+	BEQ	SWITCH		;input, get switches
+	TST	(R0)		;null output file?
+	BEQ	1$		;yes.
+	JSR	PC,OUSTUF	;handle some output file checks
+1$:	TST	(R2)+		;bump pointer
+	BR	SWITCH		;and go look for switches
+;
+INFILE:	CLR	-(SP)		;construct argument block
+	MOV	R0,-(SP)
+	MOV	R3,-(SP)
+	.LOOKU	SP
+	BCS	CSIER1		;branch if error
+	ADD	#6,SP		;restore stack
+	BR	SWITCH
+;
+.SBTTL	Process switches
+;
+; End of loop cleanup
+;
+NOSWIT:	INC	R3		;increment file number
+	CMPB	@R4,#',		;inspect break char
+	BEQ	NXTFIL		;branch for next file
+	CMPB	@R4,#'=
+	BEQ	STRTIN		;branch for input file
+	MOV	SWTCNT(R5),-(SP) ;test end of list
+	TSTB	@R4
+	BEQ	RETURN		;branch if ok
+SYNERR:	MOV	PC,R0		;print "illegal command"
+	ADD	#CSC01-.,R0
+	BR	CSIER2
+;
+SWITCH:	CMPB	#'/,@R4		;does switch follow
+	BNE	NOSWIT		;branch if no
+	MOV	R3,-(SP)	;yes. save file number
+	SWAB	@SP		;save first char
+	MOVB	-(R4),@SP
+	BEQ	SYNERR		;branch if none
+	INC	SWTCNT(R5)	;account for switch
+1$:	CMPB	#':,-(R4)	;is there a value
+	BNE	SWITCH		;branch if no
+	MOV	@SP,-(SP)	;yes. make a second copy
+	BPL	2$
+	INC	SWTCNT(R5)
+	MOV	@SP,-(SP)
+2$:	BIS	#100000,@SP	;save indicator
+	MOV	R2,-(SP)
+	MOV	R4,R0		;convert decimal
+	JSR	PC,DECNUM
+	CMPB	#'.,@R4		;did it end on "."
+	BEQ	5$		;branch if yes
+	CMPB	-(R0),(R4)+	;no. is it rad50
+	BNE	3$		;branch if no
+	MOV	SP,R2		;yes. convert name
+	JSR	PC,GETNM1
+	BR	4$
+;
+3$:	MOV	R0,R4		;convert octal
+	CMPB	(SP)+,(R4)+
+	JSR	PC,OCTNUM
+4$:	INC	R4
+5$:	MOV	(SP)+,4(SP)	;jimmy stack
+	MOV	(SP)+,R2
+	BR	1$
+;
+.SBTTL	Return and error processing
+;
+; Error returns
+;
+HANERR:	MOV	PC,R0		;print "illegal device"
+	ADD	#CSC03-.,R0
+	BR	CSIER2
+;
+CSIER4:	MOV	PC,R0		;print "device full"
+	ADD	#CSC04-.,R0
+	BR	CSIER2
+;
+CSIER1:	MOV	PC,R0		;print "file not found"
+	ADD	#CSC00-.,R0
+CSIER2:	MOV	STKSAV(R5),SP	;restore sp for safety
+	.PRINT	R0
+	TST	CSTRNG(R5)	;did input come from terminal
+	BNE	CSIER3		;branch if no
+	JMP	RESTRT		;yes. restart csi
+;
+CSIER3:	MOVB	#0*2+1,@#ERRBYT	;set error code 0
+;
+; Return to calling program
+;
+RETURN:	MOV	DEVSPC(R5),-(SP) ;stash return r0 in clever place
+	MOV	R5,R0		;restore registers
+	ADD	#REGSAV,R0
+	MOV	(R0)+,R1
+	MOV	(R0)+,R2
+	MOV	(R0)+,R3
+	MOV	(R0)+,R4
+	MOV	(R0)+,R5
+	MOV	(R0)+,R0	;get return
+	ASRB	@#ERRBYT
+	RTS	R0		;backflip
+	.PAGE
+.SBTTL	Process output files
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;
+;	Oustuf verifies that a file structured device is not
+;	Being opened for output as non-structured (syntax error).
+;	It then scans off a construction of the form [decimal number]
+;	Which specifies the size of the output file in blocks.
+;	Calling sequence:
+;		r0  ->	file descriptor in rad50
+;		r2  ->	word to contain output file size
+;		r4  ->	input string
+;	Returns:
+;		r4  ->	character after ] if given, else after filename
+;		@r2 =	file size, 0 if not given
+;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;
+OUSTUF:	MOV	R0,-(SP)	;save fd pointer
+	TST	2(R0)		;is file name present
+	BNE	1$		;branch if yes
+	MOV	R1,-(SP)	;no. get device info
+	MOV	R5,R1
+	ADD	#DEVSTS,R1
+	.DSTAT	R1,R0
+	BCS	HANERR		;branch if illegal device
+	MOV	(SP)+,R1
+	TST	DEVSTS(R5)	;does device have directory
+	BMI	SYNERR		;branch if yes (error)
+1$:	CLR	@R2		;no. is size specified
+	CMPB	@R4,#'[
+	BNE	3$		;branch if no
+	JSR	PC,DECNUM	;yes. get size (blocks)
+	CMPB	@R4,#']		;is closing "]" present
+	BNE	SYNERR		;branch if no (error)
+	DEC	R4		;advance past "]"
+	MOV	(SP)+,@R2	;store size
+3$:	MOV	(SP)+,R0	;restore fd pointer
+	RTS	PC
+	.PAGE
+.SBTTL	GET FILE DESCRIPTOR SUBROUTINE
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;
+;	Getfd gets a file descriptor from the input string and
+;	Creates 4 words of radix 50 information of the form:
+;		.rad50	"dev"
+;		.rad50	"filnam"
+;		.rad50	"ext"
+;	Calling sequence:
+;		r1  ->	default extension
+;		r2  ->	output area (4 words)
+;		r4  ->	input string
+;	Returns:
+;		r0  ->  original output area (r2 input)
+;		r2  ->	word after the extension word
+;		r4  ->	character that delimited the name
+;	Destroys: r0
+;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;
+GETFD:	MOV	R2,-(SP)	;get file/device name
+	CLR	(R2)+
+	JSR	PC,GETNAM
+	BEQ	5$		;branch if none
+	CMPB	@R4,#':		;is it device name
+	BNE	4$		;branch if no
+	TST	2(R2)		;yes. is name null
+	BNE	4$		;branch if no
+	MOV	@R2,DEFDEV(R5)	;yes. set default device
+	JSR	PC,GETNAM	;get file name
+4$:	MOV	DEFDEV(R5),-(R2) ;save device name
+	ADD	#3*2,R2		;advance to extension field
+	MOV	@R1,@R2		;save default extension
+	CMPB	@R4,#'.		;is extension indicated
+	BNE	6$		;branch if no
+	JSR	PC,GETNM1	;yes. get it
+	TST	-(R2)
+5$:	CMP	(R2)+,(R2)+	;wash dishes and dry
+6$:	TST	(R2)+
+	MOV	(SP)+,R0
+	RTS	PC
+.PAGE
+.SBTTL	GET NAME SUBROUTINE
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;
+;	Getnam converts a sequence of 0 to 6 alphanumerics to rad50.
+;	A 2-word result is stored at the place pointed to by r2.
+;	The result is padded with 0's (rad50 blank) if < 6 characters.
+;	Calling sequence:
+;		r2  ->	2-word result area
+;		r4  ->	source string (backwards)
+;		jsr	pc,getnam
+;	Returns:
+;		r2 unchanged
+;		r4  ->	character that delimited the name
+;		condition code 'zero' if name is all zeros
+;	Destroys: r0
+;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;
+GETNAM:	JSR	PC,GETNM1	;get first rad50 word
+	CMP	(R2)+,(R2)+
+	INC	R4
+GETNM1:	DEC	R4		;get second rad50 word
+	MOV	#3,R0		;initialize
+	CLR	@R2
+1$:	DEC	R0		;get next char
+	MOV	R0,-(SP)
+	MOV	PC,R0
+	ADD	#GETAB2-.,R0
+	CLR	-(SP)		;decoding subroutine
+5$:	CMPB	(R0)+,@R4	;bracket code range
+	BHI	7$
+	CMPB	(R0)+,@R4
+	BLT	5$
+	CMPB	-(R0),-(R0)
+	BNE	6$
+	TSTB	FLAG1(R5)	;disallow "*" in general mode
+	BEQ	7$
+6$:	MOVB	@R4,@SP		;extract and adjust code
+	ADD	GETAB3-GETAB2(R0),@SP
+	DEC	R4
+7$:	ASL	@R2		;multiply and add
+	ASL	@R2
+	ASL	@R2
+	ADD	@R2,@SP
+	ASL	@R2
+	ASL	@R2
+	ADD	(SP)+,@R2
+	MOV	(SP)+,R0	;restore counter
+	BNE	1$		;branch if more
+	TST	-(R2)
+	RTS	PC		;return
+	.PAGE
+.SBTTL	OCTAL/DECIMAL CONVERSION ROUTINE
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;
+;	Num gets an octal/decimal number from the input string
+;	And returns it on the stack.
+;	Calling sequence:
+;		r4  ->	input string (backwards)
+;		jsr	pc,octnum/decnum/cvtnum
+;		(if called at cvtnum, carry 0 => octal, 1 => decimal
+;	Returns:
+;		@sp is converted number
+;		r4  ->	delimiter
+;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;
+OCTNUM:	TST	(PC)+		;clear carry, skip the sec
+DECNUM:	SEC			;indicate decimal
+CVTNUM:	MOV	(SP),-(SP)	;save return & leave room for value
+	MOV	R3,-(SP)	;save registers
+	MOV	R1,-(SP)
+	MOV	#100004,-(SP)	;set the radix and set asl to give carry
+	ADC	@SP
+	CMPB	-(R4),#'-	;is it a negative number?
+	BNE	1$		;no, go bump r4
+	ADD	#140000,@SP	;yes, don't bump r4 but leave @sp<0
+1$:	ASL	@SP		;double radix
+	ADC	R4		;fix r4 if no - sign
+	CLR	R1		;clear accumulating register
+2$:	MOVB	-(R4),R3	;get next character
+	SUB	#'0,R3		;check for a digit
+	CMPB	R3,@SP
+	BHIS	4$		;no,end of number
+	ASL	R1		;shift accumulator left
+	CMPB	@SP,#12		;is it octal or decimal ??
+	BNE	3$
+	ADD	R1,R3		;decimal, mult old by 10 (instead of 8)
+3$:	ASL	R1
+	ASL	R1
+	ADD	R3,R1		;put in new digit
+	BR	2$		;get next digit
+;
+4$:	TST	(SP)+		;remove radix
+	BPL	5$		;was it minus?
+	NEG	R1		;yep, negate it
+5$:	MOV	R1,6(SP)	;save the result
+	MOV	(SP)+,R1	;restore regs
+	MOV	(SP)+,R3
+	RTS	PC
+	.PAGE
+;
+; Data segment
+;
+	.PSECT	$USED,RO,D
+;
+; Decoding table
+;
+GETAB2:	.ASCII	"%%"		;range table
+	.ASCII	"**"
+	.ASCII	"09"
+	.ASCII	"AZ"
+	.ASCII	"az"
+;
+GETAB3:	.WORD	-11		;code adjust table
+	.WORD	-15
+	.WORD	-22
+	.WORD	-100
+	.WORD	-140
+;
+; Miscellaneous constants
+;
+CSC00:	.ASCIZ	'?CSI-F-File not found'
+CSC01:	.ASCIZ	'?CSI-F-Illegal command'
+CSC03:	.ASCIZ	'?CSI-F-Illegal device'
+CSC04:	.ASCIZ	'?CSC-F-Device full'
+	.EVEN
+;
+	.END
+                                                                                                                                                                                                                                                                                                                                                                                                                                                             

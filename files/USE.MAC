@@ -1,0 +1,546 @@
+	.TITLE	USE	USER PROCESS
+	.SBTTL	SYSTEM AND MODULE DEFINITIONS
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn basic operating system - user process
+;
+; This module represents the basic user process. it includes the
+; Initialization, synchronous and asynchronous interrupt processors
+; And utility functions.
+;
+; Conditional assembly switches
+;
+.IIF NDF,CS.CLI CS.CLI == 0	;0: nonresident, 1: resident
+;
+; External symbols
+;
+	.GLOBL	USEBGN,USEADR
+	.GLOBL	.SKED		;$keri
+	.GLOBL	SRESET,CHAIN	;$usei
+	.GLOBL	EMTTRA,$PNAME	;$used
+	.GLOBL	$IPHID		;$tabl
+;
+; Entry symbols
+;
+	.GLOBL	USEPAT,EXIT,TRPENB
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.ERR,.TRDEF,.PSA,.CLP,.FLG,.IOD,.PAT ;definitions
+	.MCALL	.STIM,.CTIM,.MSG,.GCLK,.TRAP ;supervisor calls
+	.MCALL	.EXIT,.CHAIN,.UNLOC ;rt-11 calls
+	.COM			;common definitions
+	.CHR			;ascii character codes
+	.ERR			;system error codes
+	.TRDEF			;define trap codes
+	.PSA			;supervisor psa and par definitions
+	.CLP			;rt-11 monitor area definitions
+	.FLG			;flag bit definitions
+	.IOD			;emulator monitor area extension
+;
+; Module definitions
+;
+PS	=	177776		;processor status (vos only)
+MSGSIZ	=	SD.END		;message buffer size
+OUTSIZ	=	SD.END		;output buffer size
+INPSIZ	=	128.		;input buffer size
+MONSIZ	=	IOHEND+MSGSIZ+OUTSIZ+INPSIZ ;rmon area size
+;
+; Temporary data block
+;
+.	=	IOHBLK
+USEARG:	.BLKW	5		;rt-11 v1 argument block
+USEPTR:	.BLKW	1		;rt-11 v1 r5
+USEPC:	.BLKW	1		;rt-11 v1 pc
+USECNT:	.BLKW	1		;version 1 arg count
+	.PAGE
+	.SBTTL	SUPERVISOR INTERRUPT PROCESSORS
+;
+; Procedure segment
+;
+; Supervisor-state procedure
+; Dsects: r4 = reg, r5 = psa
+;
+	.PSECT	$KERI,RO,I
+;
+; Synchronous interrupts
+;
+; Note: on entry sp points to the user stack. r5 is at the
+; Top of the stack followed by the pc and ps at interrupt.
+;
+CMDTRP:	MOV	R0,-(SP)	;short-term parking
+	MOV	PSACOD(R5),R0	;set interrupt code
+	TST	6(SP)		;is this user mode
+	BMI	1$		;branch if yes
+	CLR	-(SP)		;ps
+	BR	2$
+;
+1$:	BISB	#060,@#PS+1	;user mode. restore previous space
+	MFPI	SP		;razzle dazzle
+	SUB	#10,@SP
+	MOV	@SP,R5
+	MTPI	SP
+	MTPD	(R5)+		;r0
+	MTPD	(R5)+		;r5
+	MTPD	(R5)+		;pc
+	MTPD	(R5)+		;ps
+	MFPD	-(R5)		;restore ps
+2$:	MOV	#PANIC-USEBGN+USEADR,-(SP) ;pc. wake up in panic
+	RTI			;return to user mode
+;
+CMDRUT:	BIC	#17,REGPS(R4)	;get internet pid
+	MOVB	$IPHID,R0
+	MOV	R0,@R4
+	RTS	PC
+;
+; Asynchronous interrupt
+;
+; Note: on entry sp points to the supervisor stack. registers
+; R0-r5 have been pushed on the user stack followed by the pc
+; And ps at interrupt. This routine first stores the interrupt code
+; in the psa. If the process is waiting for a message, the process
+; is scheduled for activation. When the scheduler next makes this
+; process active the user-space interrupt routine will be called.
+;
+CMDASY:	TST	R0		;is this timer interrupt
+	BNE	1$		;branch if no
+	MOV	#ER.TIM,PSACOD(R5) ;yes. set timer interrupt code
+	BR	2$
+;
+1$:	TST	PSACOD(R5)	;attention interrupt. is something queued
+	BNE	2$		;branch if yes
+	MOV	#ER.ATN,PSACOD(R5) ;no. set attention interrupt code
+2$:	BITB	#2,PSASTS(R5)	;(REVBIT) is process waiting for message
+	BNE	3$		;branch if yes
+	RTS	PC		;no. mosey on home
+;
+3$:	BICB	#202,PSASTS(R5)	;(RUNBIT+REVBIT) ;simulate message tiemout
+	BIS	#10,REGPS(R4)	;(N) return indicator
+	JMP	.SKED		;shortcut
+	.PAGE
+	.SBTTL	USER PROCESS INITIALIZATION
+;
+; Process-state procedure
+; Dsects: none
+;
+	.PSECT	$USEI,RO,I
+;
+; User process initialization
+;
+; This routine is called when the user process is first started. It
+; formats the emulator data base, also called the monitor-offset area,
+; sets terminal output to tt: and then does an .exit to start things
+; off.
+;
+; r1 = pid, r3 = par, r4 = config, r5 = lower user-space limit,
+; sp = upper user-space limit
+;
+CLIINI:	MOV	SP,R2		;save the very top
+	MOV	#MONSIZ/2,R0	;make room for rt-11 "monitor" words
+1$:	CLR	-(SP)
+	SOB	R0,1$
+	MOVB	R1,IOHRPY(SP)	;save bits and pieces
+	MOV	R3,IOHPAR(SP)
+	MOV	R5,IOHBOT(SP)	;set lower user-space limit
+	MOV	SP,R5
+	MOV	#5,SYSVER(R5)	;rt-11 system version (v5.0)
+	BIC	#BIT22$,R4	;disguise for user process
+	MOV	R4,CONFIG(R5)	;configuration word
+	MOV	#EIS$,CONFG2(R5) ;extension configuration word
+	MOV	PC,R0		;save $pname offset for pip/dup
+	ADD	#$PNAME-.,R0
+	SUB	R5,R0
+	MOV	R0,PNPTR(R5)
+	CLR	SUFFIX(R5)	;save monitor suffix for dup
+	MOV	R5,IOHTOP(R5)	;set upper user-space limits
+	MOV	R5,IOHCLI(R5)
+	MOV	R5,IOHBRK(R5)
+	MOV	R2,CSIBUF(R5)	;set buffer pointers
+	SUB	#INPSIZ,R2
+	MOV	R2,INPBUF(R5)
+	MOV	R2,IOHGTI(R5)
+	ADD	#2,R2
+	MOV	R2,IOHPTI(R5)
+	MOV	R2,IOHISG(R5)
+	SUB	#OUTSIZ+2,R2
+	MOV	R2,OUTBUF(R5)
+	SUB	#MSGSIZ,R2
+	MOV	R2,MSGBUF(R5)
+	BIT	#KT11$,CONFIG(R5) ;is this vos
+	BEQ	4$		;branch if no
+	CLR	R0		;yes. clear virtual space
+3$:	CLR	(R0)+
+	CMP	R0,R5
+	BLO	3$
+	MOV	#2,@#30		;*** awful for dec editors ***
+4$:	MOV	R5,@#SYSPTR	;set monitor base pointer
+	.MSG	<#^RTT >	;send output to "tt"
+	CLR	@#JSW
+	CLR	@#ERRBYT
+	.EXIT			;begin collecting taxes
+	.PAGE
+	.SBTTL	.EXIT INTERFACE - RETURN TO CLI/TELNET SERVER
+;
+; Basic user process interface routines
+; (called via emt by user proc)
+;
+; This routine is activated by user .exit programmed request.
+; It shuffles housekeeping variables and calls either the cli
+; Or telnet server. if either of these are nonresident, the
+; Chain routine is used to load it first. note that the cli is
+; Position-independent and loads at the end of the user memory
+; Area just below the monitor area. the telnet server loads
+; At the usual place near the beginning of user memory.
+;
+; Upon entry to cli or telnet server the chain area, which starts
+; At loc 500 in the background process and relative loc 0 in a
+; Foreground process, contains the file name of the cli or telnet
+; Server load module.
+;
+; R5 = system area pointer (entry from emt linkage)
+;
+EXIT:	MOV	R5,IOHCTP(R5)	;channel table pointer
+	ADD	#IOHCSW,IOHCTP(R5)
+	JSR	PC,SRESET	;reset program status
+	CLR	IOHERR(R5)	;.trpse
+	CLR	IOHFPA(R5)	;.sfpa
+	CLR	IOHNCA(R5)	;.snca
+	CLR	IOHSCC(R5)	;.scca
+	BIC	#SERBIT,IOHFLG(R5) ;.herr
+	JSR	PC,TRPENB	;enter user mode
+	MOV	(SP)+,R0	;save interrupt pc
+	MOV	@#SYSPTR,R5	;achieve addressability
+	MOV	IOHCLI(R5),SP	;restore current stack frame
+	MOV	SP,IOHBRK(R5)	;set program break
+	MOV	R0,IOHBLK(R5)	;save interrupt pc for printout
+	MOV	IOHPAR(R5),R3	;get pointers
+	MOV	IOHBOT(R5),R4
+	BNE	1$
+	MOV	#500,R4
+1$:
+	.IF	NE,CS.CLI	;include for resident cli
+	CLR	@#JSW		;initialize jsw
+	.GLOBL	CLI
+	JMP	CLI		;dive into cli
+	.IFF			;include for nonresident cli
+	BIT	#CHNIF$,@#JSW	;is command in chain area
+	BNE	2$		;branch if yes
+	CLR	10(R4)		;no. so indicate
+	CLR	12(R4)
+2$:	CLR	@#JSW		;initialize jsw
+	TST	IOHSRV(R5)	;is ccb allocated
+	BNE	3$		;branch if yes
+	BIT	#SERVE$,PAROPT(R3) ;no. is server locked
+	BNE	4$		;branch if yes
+3$:	TSTB	IOHSIG(R5)	;no. is network squawking
+	BNE	4$		;branch if yes
+	BIT	#OPEBIT,IOHFLG(R5) ;no. is disconnect indicated
+	BEQ	5$		;branch if no
+	BIT	#CLSBIT,IOHFLG(R5)
+	BNE	6$		;branch if no
+4$:	MOV	PC,R1		;yes. chain to tcp server
+	ADD	#SRVNAM-.,R1
+	BR	8$
+;
+5$:	BIT	#040000,PAROPT(R3) ;is this spool daemon process
+	BEQ	6$		;branch if no
+	MOV	PC,R1		;yes. chain to logout
+	ADD	#LGONAM-.,R1
+	BR	10$
+;	
+6$:	CMPB	PARTPE(R3),#2	;is this daemon process
+	BEQ	9$		;branch if no
+	MOVB	@#ERRBYT+1,R1	;yes. is this error return
+	BEQ	7$		;branch if no
+	.TRAP	#TR.DMN,R1,R0	;yes. log reason
+7$:	MOVB	PARLNG(R3),R1	;get file pointer
+	ASH	#3,R1
+	ADD	R3,R1
+	ADD	#PARLDN,R1
+8$:	MOV	IOHTOP(R5),IOHCLI(R5) ;purge cli
+	MOV	IOHTOP(R5),IOHBRK(R5)
+	CLR	@#ERRBYT
+	BR	10$
+;
+9$:	CMP	IOHCLI(R5),IOHTOP(R5) ;is cli clobbered
+	BLO	13$		;branch if no
+	MOV	PC,R1		;store file name
+	ADD	#CLINAM-.,R1
+10$:	MOV	(R1)+,(R4)+	;stash program file name
+	MOV	(R1)+,(R4)+
+	MOV	(R1)+,(R4)+
+	MOV	(R1)+,(R4)+
+	BIT	#NTPGO$,PAROPT(R3) ;is argument string indicated
+	BEQ	12$		;branch if no
+	MOV	R4,R0		;yes. copy argument string
+	TST	(R4)+
+11$:	MOVB	(R1)+,(R4)+
+	BNE	11$
+	SUB	R0,R4		;compute length
+	BIS	#100000,R4	;nonstandard flag
+	MOV	R4,@R0
+12$:	.CHAIN			;chain to program
+;
+13$:	JMP	@IOHCLI(R5)	;cli ok. pounce
+	.ENDC
+	.PAGE
+	.SBTTL	USER INTERRUPT PROCESSOR
+;
+; User interrupt processor
+;
+; Note: this routine is activated as the result of a synchronous
+; Interrupt. at entry sp points to the user stack, on which has
+; Been pushed r5, pc and ps at the time of the interrupt. upon
+; Entry to this routine the process switches to emulator
+; Mode. in this mode r5 points to the rt-11 monitor area at the end
+; Of user memory. it switches back to user mode upon return to the
+; User program.
+;
+; Synchronous interrupts (traps)
+;
+PANIC:	MOV	@#SYSPTR,R5	;establish addressability
+	CMPB	R0,#ER.EMT	;is this emt intercept
+	BNE	1$		;branch if no
+	SWAB	R0		;yes. switch codes
+	BIC	#^C377,R0
+	BR	PAN15		;go to interpret emt code
+;
+1$:	CMPB	R0,#ER.IOT	;is this iot trap
+	BNE	2$		;branch if no
+	MOV	@#IOTVEC,R0	;yes. wander out that way
+	BR	5$
+;
+2$:	CMPB	R0,#ER.TRP	;is this trap trap
+	BNE	3$		;branch if no
+	MOV	@#TRPVEC,R0	;yes. wander out that way
+	BR	5$
+;
+3$:	CMPB	R0,#ER.ADR	;is this instruction or operand trap
+	BNE	4$		;branch if no
+	TST	IOHERR(R5)	;yes. is trpset set
+	BEQ	PAN4		;branch if no
+	MOV	IOHERR(R5),R0	;yes. wander out that way
+	CLR	IOHERR(R5)
+	BR	5$
+;
+4$:	CMPB	R0,#ER.FPN	;is this floating-point trap
+	BNE	6$		;branch if no
+	TST	IOHFPA(R5)	;yes. is sfpa set
+	BEQ	PAN4		;branch if no
+	MOV	IOHFPA(R5),R0	;yes. wander out that way
+	CLR	IOHFPA(R5)
+5$:	MOV	R0,R5		;razzle dazzle
+	MOV	(SP)+,R0
+	RTS	R5
+;
+; Asynchronous interrupts
+;
+6$:	CMPB	R0,#ER.ATN	;is this attention interrupt
+	BNE	7$		;branch if no
+	BIS	#INTBIT+TDMBIT,IOHFLG(R5) ;yes. record attention interrupt
+	TST	IOHSCC(R5)	;is scca set
+	BEQ	11$		;branch if no
+	BIC	#INTBIT,IOHFLG(R5) ;yes. set indicator
+	BIS	#100000,@IOHSCC(R5)
+	BR	12$
+;
+7$:	CMPB	R0,#ER.TIM	;is this timer interrupt
+	BNE	PAN4		;branch if no
+	TST	IOHTIM(R5)	;yes. fiddle residual interval
+	BNE	8$		;branch if more remaining
+	MOV	IOHTIM+2(R5),R0
+	BEQ	10$		;branch if none remaining
+	CMP	R0,#30000.
+	BLOS	9$		;branch if < 30 sec
+8$:	MOV	#30000.,R0	;> 30 sec. continue to crank
+9$:	SUB	R0,IOHTIM+2(R5)	;update residual interval
+	SBC	IOHTIM(R5)
+	.STIM
+	BR	12$
+
+10$:	BIS	#TIMBIT,IOHFLG(R5) ;yes. record timer interrupt
+11$:	BIT	#ENBBIT,IOHFLG(R5) ;is interrupt disabled
+	BNE	12$		;branch if yes
+	.UNLOC			;(nop) no. waddle through emulator
+12$:	MOV	(SP)+,R0	;pull a disappearing act
+	MOV	(SP)+,R5
+	RTI
+;
+; Trap processor
+;
+PAN4A:	MOVB	#ER.EMT,R0	;illegal emt
+PAN4:	MOVB	R0,@#ERRBYT+1
+	MOV	#350,R0		;(.exit emt code)
+PAN15:	MOV	R0,-(SP)	;save for later
+	ASR	@SP		;get high-order four bits
+	ASR	@SP
+	ASR	@SP
+	BIC	#^C36,@SP
+	ADD	(SP)+,PC	;zing a little
+	BR	TRP4		;000-017 v1 .delet
+	BR	TRP4		;020-037 v1 .looku
+	BR	TRP3		;040-057 v1 .enter
+	BR	PAN4A		;060-077 dcn synch interrupts
+	BR	TRP4		;100-117 v1 .renam
+	BR	TRP4		;120-137 v1 .saves
+	BR	TRP4		;140-157 v1 .reope
+	BR	TRP1A		;160-177 v1 .close
+	BR	TRP0		;200-217 v1 .read
+	BR	TRP0		;220-237 v1 .write
+	BR	TRP1B		;240-257 v1 .wait
+	BR	PAN4A		;260-277 dcn supervisor calls
+	BR	PAN4A		;300-317 dcn supervisor calls
+	BR	PAN4A		;320-337 dcn supervisor calls
+	BR	TRP2		;340-357 v1/v3 monitor calls
+	BR	TRP2		;360-377 v1/v3 monitor calls
+;
+TRP4:	CLRB	USECNT(R5)	;version 1 .delete, etc.
+	BR	TRP1C
+;
+TRP3:	MOVB	#1,USECNT(R5)	;version 1 .enter
+	BR	TRP1C
+;
+TRP0:	MOVB	#3,USECNT(R5)	;version 1 .read/.write
+TRP1C:	MOV	R0,USEARG(R5)	;save code
+	BIC	#^C17,USEARG(R5)
+	ASR	R0		;extract code
+	ASR	R0
+	ASR	R0
+	ASR	R0
+	MOVB	R0,USEARG+1(R5)
+	MOV	R5,R0		;get argument pointer
+	ADD	#USEARG+2,R0
+	MOV	(SP)+,(R0)+	;copy arg r0
+	MOV	(SP)+,USEPTR(R5) ;save arg r5
+	MOV	(SP)+,USEPC(R5)	;save arg pc
+	TST	(SP)+		;discard ps
+	TSTB	USECNT(R5)	;are there any args
+	BEQ	1$		;branch if no
+2$:	MOV	(SP)+,(R0)+	;copy arg
+	DECB	USECNT(R5)
+	BNE	2$
+;
+1$:	TST	-(SP)		;leave room for ps
+	MOV	USEPC(R5),-(SP)	;restore arg pc
+	MOV	USEPTR(R5),-(SP) ;restore arg r5
+	MOV	R5,-(SP)	;set r0 as arg pointer
+	ADD	#USEARG,@SP
+	MOV	#375,R0		;pretend emt 375
+	BR	TRP2
+;
+TRP1A:	BIC	#^C17,R0	;version 1 .close
+	BIS	#6*400,R0
+	BR	TRP1
+;
+TRP1B:	BIC	#^C17,R0	;version 1 .wait
+TRP1:	MOV	R0,@SP
+	MOV	#374,R0		;pretend emt 374
+TRP2:	MOV	4(SP),6(SP)	;recombobulate stack
+	MOV	2(SP),4(SP)
+	MOV	#TRPRTN-USEBGN+USEADR,2(SP)
+	ASL	R0		;use kmn branch table
+	ADD	PC,R0
+	ADD	#-340*2+EMTTRA-.,R0
+	ADD	@R0,R0
+	BIS	#ENBBIT,IOHFLG(R5)
+	CLRB	@#ERRBYT
+	RTS	R0
+	.PAGE
+	.SBTTL	UTILITY ROUTINES
+;
+; Trpenb (trp) restore r5, pop stack and enter user mode
+;
+TRPENB:	JSR	PC,TRPTST	;process latent interrupts
+	MOV	(SP)+,R5	;get return
+	TST	(SP)+		;discard original return
+	RTS	R5		;restore r5 and return
+;
+; Return to user mode
+;
+; Note: user interrupt processors return here via rts pc.
+; This routine enables attention interrupts and restores r5.
+;
+TRPRTN:	JSR	PC,TRPTST	;process latent interrupts
+	MOV	(SP)+,R5	;restore r5 and return
+TRP30:	RTS	PC
+;
+; Subroutine to test interrupt conditions and minor earthquakes
+;
+TRPTST:	ROR	-(SP)		;save c bit
+	MOV	R0,-(SP)	;save regs
+	MOV	R1,-(SP)
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	MOV	R5,-(SP)
+	BIC	#ENBBIT,IOHFLG(R5) ;enter user mode
+	BIT	#INTBIT,IOHFLG(R5) ;is attention interrupt pending
+	BEQ	1$		;branch if no
+	BIC	#INTBIT,IOHFLG(R5) ;yes. reveal that
+	MOVB	#ER.ATN,@#ERRBYT
+1$:	TSTB	QUEENB(R5)	;is completion routine active
+	BNE	8$		;branch if yes
+	INCB	QUEENB(R5)	;no. set it so
+2$:	BIT	#177600,@#ERRBYT ;is this system error
+	BNE	7$		;branch if yes
+	BIT	#TIMBIT,IOHFLG(R5) ;is timer interrupt pending
+	BEQ	4$		;branch if no
+	BIC	#TIMBIT,IOHFLG(R5) ;yes. call completion routine
+	MOV	IOHTIA(R5),R1
+	BEQ	4$		;branch if not defined
+	JSR	PC,@R1
+	MOV	@SP,R5		;(safety first)
+4$:	CMP	IOHGET(R5),IOHPUT(R5) ;is trap interrupt pending
+	BEQ	7$		;branch if no
+	MOV	IOHGET(R5),R0	;yes. get queue element pointer
+	TST	(R0)+
+	MOV	SD.AST(R0),R1	;get ast completion routine address
+	BITB	#3,SD.CTL(R0)	;is this trap message
+	BNE	5$		;branch if no
+	MOV	IOHNCA(R5),R1	;yes. use net completion routine instead
+5$:	TST	R1		;is entry defined
+	BEQ	6$		;branch if no
+	JSR	PC,@R1		;yes. call completion routine
+	MOV	@SP,R5		;(safety first)
+6$:	MOV	@IOHGET(R5),IOHGET(R5) ;advance to next element
+	DECB	QUESIG(R5)
+	BGE	2$		;branch if okay
+	MOVB	#ER.QUE,@#ERRBYT ;bum. event queue broken
+	BR	2$
+;
+7$:	DECB	QUEENB(R5)	;set completion routine inactive
+8$:	MOV	(SP)+,R5	;evas regs
+	MOV	(SP)+,R4
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	MOV	(SP)+,R0
+	ROL	(SP)+		;evas c bit
+	BITB	#200,@#ERRBYT	;is this system error
+	BEQ	TRP30		;branch if no
+	BIT	#SERBIT,IOHFLG(R5) ;yes. are soft errors enabled
+	BNE	TRP30		;branch if yes
+	MOVB	@#ERRBYT,@#ERRBYT+1 ;no. pull plug and drain
+	.EXIT
+	.PAGE
+;
+; Data segments
+;
+	.PSECT	$KERD,RO,D
+;
+; Process header
+;
+USEPAT:	.PAT	0,CLIINI-USEBGN+USEADR,10*400+PRI1,<CMDTRP,CMDASY,CMDRUT>
+;
+	.PSECT	$USED,RO,D
+;
+; File names
+;
+CLINAM:	.RAD50	'SY CLI   SAV'	;command interpreter
+SRVNAM:	.RAD50	'SY TELSRVSAV'	;tcp server
+LGONAM:	.RAD50	'SY LOGOUTSAV'	;logout processor
+;
+	.END
+                                                            

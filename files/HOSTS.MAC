@@ -1,0 +1,654 @@
+	.TITLE	HOSTS	Internet name/address tables
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Internet name/address tables
+;
+; This program reads a copy of the Internet host table HOSTS.TXT and
+; constructs a hash-coded output file used by the NAME subroutine.
+;
+; The format of HOSTS.TXT is documented in RFC-810, "DoD Internet Host
+; Table Specification." There are three line types:
+;
+; NET : NET-ADDR : NETNAME :
+; GATEWAY : ADDR[,ADDR] : NAME[,NAME] : CPUTYPE : OPSYS : PROTOCOLS :
+; HOST : ADDR[,ADDR : NAME[,NAME] : CPUTYPE : OPSYS : PROTOCOLS :
+;
+; Where:
+;
+; ADDR = internet address in decimal, e.g., 10.0.0.73
+; CPUTYPE = machine type (PDP-11/70, VAX-11/780, FOONLY-F3, C/30, etc.)
+; OPSYS = operating system (UNIX, TOPS-20, TENEX, ITS, etc.)
+; PROTOCOLS = transport/service (NCP/FTP,TCP/TELNET,TCP/FTP, etc.)
+; : (colon) = field delimiter
+; :: (2 colons) = null field
+;
+; Only the HOST and GATEWAY line types and ADDR, NAME and PROTOCOLS fields are
+; used by this program. An additional line type DOMAIN not in RFC-810 is used
+; to define name servers (see RFC-882 and RFC-883). Spaces and comments are
+; ignored. The flags byte is derived in part from the PROTOCOLS field and
+; coded as follows:
+;
+; Code		Function
+; ------	-----------------------------------------------
+; TELNET	supports virtual-terminal (tcp/telnet) protocol
+; SMTP		supports mail-transfer (tcp/smtp) protocol
+; FTP		supports file-transfer (tcp/ftp) protocol
+; D		domain entry
+; N		name entry
+; P		pointer entry
+; M		more entries follow
+;
+; The output file consists of a set of block lists, one for each block
+; (512 bytes) Items in each block list are of the following three types:
+;
+;      1      4       4    4 or n+1
+;   +-----+-------+-------+---//---+
+; 0 |flags|address|  link |  name  | principal name and address
+;   +-----+-------+-------+---//---+
+;   +-----+-------+-------+---//---+
+; 1 |flags|pointer|  link |  name  | additional name
+;   +-----+-------+-------+---//---+
+;   +-----+-------+-------+-------+
+; 2 |flags|pointer|  link |address| additional address
+;   +-----+-------+-------+-------+
+;
+; Each HOST, GATEWAY and DOMAIN line produces a sublist of items, the first
+; of which is a type-0 header and the remainder type-1 or type-2 items. The
+; flags field consists of a single byte and is coded as below. The address
+; field consists of a four-byte Internet address, while the name field
+; consists of an n-byte ASCII name followed by a zero-byte terminator. The
+; pointer field contains the four-byte block number and offset of the header,
+; while the link field contains the four-byte block number and offset of the
+; next item in the list. The link field of the last item is zero.
+;
+; External symbols
+;
+	.GLOBL	RDDEC,RDASC,HASH,FORMAT
+;
+; Entry symbols
+;
+	.GLOBL	RDBYT,PRBYT	;character i/o routines
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.CSIGE,.PRINT,.TTYOU ;rt-11 macroni
+	.MCALL	.READW,.WRITW,.WAIT,.CLOSE,.PURGE
+	.MCALL	DFSRV		;netlib macroni
+	DFSRV			;define service bits
+;
+; Module definitions
+;
+HT	=	011		;horizontal tabulation
+LF	=	012		;ascii line feed
+CR	=	015		;ascii carriage return
+;
+; Procedure segment
+;
+	.PSECT
+;
+; Main program
+;
+; Usage: outfile,dbfile=infile[/option],...
+; outfile	output hash-coded name/address file
+; dbfile	output format file (rfc-883 format)
+; infile	input text name/address file (rfc-810 format)
+;
+; Options
+; s:maxblk	size of output file (blocks)
+; a		edit .arpa domain name
+;
+; Initialize files and things
+;
+HOSTS:	MOV	@#42,SP		;reset stack
+	.CSIGE	@#50,#DEFEXT,#0	;get file spec
+	BCS	HOSTS		;branch if error
+	MOV	#BASE,R1	;initialize
+1$:	CLR	(R1)+
+	CMP	R1,#STOEND
+	BLO	1$
+	MOV	#256.,MAXBLK
+	MOV	#3,CHAN
+	TST	(SP)+		;pop off option count
+2$:	CMP	SP,@#42		;more switches specified
+	BHIS	5$		;branch if no
+	MOV	(SP)+,R1	;yes. get option switch
+	BPL	3$		;branch if no value
+	MOV	(SP)+,R0	;value. retrieve it
+	CMPB	R1,#'S		;is this s:value
+	BNE	3$		;branch if no
+	MOV	R0,MAXBLK	;yes. stash max blocks
+	BR	2$
+;
+3$:	CMPB	R1,#'A		;is this a
+	BNE	4$		;branch if no
+	MOV	R1,ARPMOD	;yes. save file number
+	BR	2$
+;
+4$:	.PRINT	#COM15		;invalid switch specification
+	BR	HOSTS
+;
+5$:	.WAIT	#0		;is output file specified
+	BCS	8$		;branch if no
+	CLR	R1		;yes. clear output fule
+6$:	.WRITW	#ARGBLK,#0,#WBUF,#256.,R1
+	BCC	7$		;branch if no
+	.PRINT	#COM11		;output file i/o error
+	BR	HOSTS
+;
+7$:	INC	R1		;advance to next block
+	CMP	R1,MAXBLK
+	BLO	6$		;branch if more
+	CLR	RBLK		;done. initialize
+	MOV	#RBUF+512.,RPTR
+	CLR	HCNT
+8$:	.WAIT	#1		;is output format file specified
+	BCS	HSH1		;branch if no
+	MOV	#LBUF,LPTR	;yes. direct format output there
+;
+; Scan line and extract host/gateway info
+;
+HSH1:	CLRB	CHAR		;unlock next line
+	CLRB	SPEC
+	JSR	PC,HASH		;is key "HOST"
+	CMP	R0,#<^RHOS>
+	BNE	1$		;branch if no
+	INC	HSTCNT		;yes. tally that
+	BR	HSH4
+;
+1$:	CMP	R0,#<^RGAT>	;is key "GATEWAY"
+	BNE	2$		;branch if no
+	INC	GATCNT		;yes. tally that
+	BR	HSH44
+;
+2$:	CMP	R0,#<^RDOM>	;is key "DOMAIN"
+	BNE	3$		;branch if no
+	INC	NAMCNT		;yes. tally that
+	BR	HSH44
+;
+3$:	CMP	R0,#<^RNET>	;is key "NET"
+	BNE	4$		;branch if no
+	INC	NETCNT		;yes. tally that
+4$:	JSR	PC,RDASC	;skip this line
+	BNE	4$
+	BR	HSH1
+;
+; Construct address list, name list and flags
+;
+HSH44:	BISB	#D,SPEC		;suppress address inversion
+HSH4:	INC	HCNT		;tally line
+	MOV	#ADRLST,R1	;copy address fields
+1$:	JSR	PC,RDDEC
+	MOVB	R0,(R1)+
+	CMPB	CHAR,#':	;is this field separator
+	BNE	1$		;branch if no
+	CLRB	@R1		;yes. insert list backstop
+	MOV	#NAMLST,R1	;copy name fields
+2$:	MOV	R1,R2		;parse next field
+3$:	JSR	PC,RDASC
+	CMPB	CHAN,ARPMOD+1	;is this .arpa modifier
+	BNE	5$		;branch if no	
+	CMPB	R0,#'.		;yes. is this domain separator
+	BNE	5$		;branch if no
+	MOV	R2,R1		;yes. ignore this field
+4$:	JSR	PC,RDASC	;*** only works for current nic format ***
+	CMPB	R0,#',
+	BEQ	2$
+	CMPB	R0,#':
+	BEQ	12$
+	BR	4$
+;
+5$:	CMPB	R0,#',		;is this entry separator
+	BNE	8$		;branch if no
+	CMPB	CHAN,ARPMOD+1	;is this .arpa modifier
+	BNE	7$		;branch if no	
+	MOV	#ARPA,R0	;yes. append ".arpa"
+6$:	MOVB	(R0)+,(R1)+
+	BNE	6$
+	BR	2$
+;
+7$:	CLRB	(R1)+		;insert entry backstop
+	BR	2$
+;
+8$:	CMPB	R0,#':		;is this field separator
+	BEQ	9$		;branch if yes
+	MOVB	R0,(R1)+	;no. copy char
+	BR	3$
+;
+9$:	CMPB	CHAN,ARPMOD+1	;is this .arpa modifier
+	BNE	11$		;branch if no	
+	MOV	#ARPA,R0	;yes. append ".arpa"
+10$:	MOVB	(R0)+,(R1)+
+	BNE	10$
+	BR	12$
+;
+11$:	CLRB	(R1)+		;insert entry backstop
+12$:	CLRB	(R1)+		;insert list backstop
+	JSR	PC,SKIP		;skip cpu field
+	JSR	PC,SKIP		;skip opsys field
+13$:	JSR	PC,HASH		;get next service spec
+	BEQ	HSH2		;branch if none
+	CMP	R0,#<^RTEL>	;update flag bits
+	BNE	14$
+	BISB	#TELNET,SPEC
+14$:	CMP	R0,#<^RFTP>
+	BNE	15$
+	BISB	#FTP,SPEC
+15$:	CMP	R0,#<^RSMT>
+	BNE	13$
+	BISB	#SMTP,SPEC
+	BR	13$
+;
+; Process address and name lists
+;
+HSH2:	BISB	#N,SPEC		;switch to name format
+	BICB	#P,SPEC
+	MOV	#NAMLST,NAMPTR	;insert principal entry
+	MOV	#ADRLST,ADRPTR
+	MOV	NAMPTR,R0	;compute size
+1$:	TSTB	(R0)+
+	BNE	1$
+	SUB	NAMPTR,R0
+	MOV	R0,SIZE
+	DEC	R0		;hash name to block
+	BEQ	HSH2A
+	MOV	NAMPTR,R1
+	JSR	PC,HASHY
+	MOV	R0,SBLK
+	JSR	PC,INSERT	;insert entry
+	BICB	#N,SPEC		;switch to address format
+	BISB	#P,SPEC
+	ADD	SIZE,NAMPTR	;insert inverted entries
+	MOV	NAMPTR,-(SP)
+	MOV	#KEY,NAMPTR
+	MOV	#4,SIZE
+2$:	TSTB	@ADRPTR		;insert next address
+	BEQ	HSH3		;branch if none
+	MOV	SIZE,R0		;hash address to block
+	MOV	ADRPTR,R1
+	JSR	PC,HASHY
+	MOV	R0,SBLK
+	JSR	PC,INSERT	;insert entry
+	ADD	SIZE,ADRPTR	;advance to next address
+	BR	2$
+;
+HSH3:	MOV	(SP)+,NAMPTR	;restore pointer
+HSH2A:	MOV	#ADRLST,ADRPTR
+	BISB	#N+P,SPEC	;switch to secondary name format
+1$:	TSTB	@NAMPTR		;insert next secondary name
+	BEQ	4$		;branch if none	
+	MOV	NAMPTR,R0	;compute size
+2$:	TSTB	(R0)+
+	BNE	2$
+	SUB	NAMPTR,R0
+	MOV	R0,SIZE
+	DEC	R0		;hash name to block
+	MOV	NAMPTR,R1
+	JSR	PC,HASHY
+	MOV	R0,SBLK
+	JSR	PC,INSERT	;insert entry
+3$:	ADD	SIZE,NAMPTR
+	BR	1$
+;
+4$:	JMP	HSH1		;done. solicit next filespec
+;
+; Subroutine to read byte from input file
+; Returns r0 = char, cc(z) = 1 if end line
+;
+RDBYT:	CMPB	CHAR,#LF	;is line empty
+	BEQ	4$		;branch if yes
+	CMP	RPTR,#RBUF+512.	;no. is buffer empty
+	BLO	2$		;branch if no
+1$:	.READW	#ARGBLK,CHAN,#RBUF,#256.,RBLK ;yes. read block
+	BCS	5$		;branch if error
+	INC	RBLK
+	MOV	#RBUF,RPTR
+2$:	MOVB	@RPTR,R0	;fetch byte
+	INC	RPTR
+	BIC	#^C177,R0
+	CMPB	R0,#<' >
+	BEQ	RDBYT		;delete space
+	CMPB	R0,#LF
+	BEQ	3$		;end on <lf>
+	CMPB	CHAR,#';
+	BEQ	RDBYT		;delete ";" and rest of line
+	MOVB	R0,CHAR		;normal exit
+	CLZ
+	RTS	PC
+;
+3$:	MOVB	R0,CHAR		;end line exit
+4$:	CLR	R0
+	RTS	PC
+;
+5$:	TSTB	@#52		;is this end file
+	BEQ	6$		;branch if yes
+	.PRINT	#COM13		;no. input file i/o error
+	BR	EXIT
+;
+6$:	INC	CHAN		;advance to next filespec
+	.WAIT	CHAN
+	BCS	7$		;branch if not there
+	CLR	RBLK
+	BR	1$
+
+7$:	.PRINT	#COM10		;processing complete
+EXIT:	.CLOSE	#0		;tidy up
+	JSR	PC,PREOF
+	MOV	TOTSIZ+2,R1	;compute mean block size
+	MOV	TOTSIZ,R0
+	DIV	MAXBLK,R0
+	MOV	R0,TOTSIZ
+	MOV	#COM12,R0	;print statistics
+	MOV	#BASE,R1
+	JSR	PC,FMT
+	JMP	HOSTS
+;
+; Subroutine to skip a field
+;
+SKIP:	JSR	PC,RDBYT	;snarf a char
+	BEQ	1$		;branch if empty line
+	CMPB	CHAR,#':
+	BNE	SKIP		;branch if not end of field
+1$:	RTS	PC
+;
+; Subroutine to write byte to terminal
+; R0 = byte
+;
+PRBYT:	TST	LPTR		;is output file open
+	BNE	1$		;branch if yes
+	.TTYOU			;no. easy come, easy go
+	RTS	PC
+;
+1$:	MOVB	R0,@LPTR	;stash byte
+	INC	LPTR
+	CMP	LPTR,#LBUF+512.	;is buffer full
+	BHIS	PREOF		;branch if yes
+	RTS	PC
+;
+; Subroutine to flush output format buffer
+;
+PREOF:	CMP	LPTR,#LBUF	;is output format buffer empty
+	BLOS	3$		;branch if yes
+1$:	CMP	LPTR,#LBUF+512.	;no. zero-fill block
+	BHIS	2$
+	CLRB	@LPTR
+	INC	LPTR
+	BR	1$
+;
+2$:	.WRITW	#ARGBLK,#1,#LBUF,#256.,LBLK ;yes. write buffer
+	BCS	4$		;branch if error
+	INC	LBLK
+	MOV	#LBUF,LPTR
+3$:	RTS	PC
+;
+4$:	.PRINT	#COM11		;output file i/o error
+	JMP	HOSTS
+;
+; Subroutine to insert entry in output file
+; ADRPTR -> address pointer, NAMPTR -> name pointer, SPEC = flags
+; SIZE = name length, SBLK = hash block
+; Returns WBLK = block/offset
+;
+INSERT:	MOV	R1,-(SP)	;preserve registers
+	MOV	R2,-(SP)
+	INC	COUNT
+	TST	LPTR		;is output format file open
+	BEQ	INS21		;branch if no	
+	CLR	R2
+	BITB	#N,SPEC		;yes. is this name
+	BEQ	2$		;branch if no
+	MOV	NAMPTR,R1	;yes. copy it
+1$:	MOVB	(R1)+,R0
+	BEQ	3$
+	JSR	PC,PRBYT
+	INC	R2
+	BR	1$
+;
+2$:	CMP	ADRPTR,#ADRLST	;suppress principal inversion
+	BEQ	INS21
+3$:	CMP	R2,#24.		;tab for align
+	BHIS	4$
+	MOVB	#HT,R0
+	JSR	PC,PRBYT
+	ADD	#8.,R2
+	BR	3$
+;
+4$:	BITB	#N,SPEC		;is this cname
+	BEQ	5$		;branch if no
+	BITB	#P,SPEC
+	BEQ	5$		;branch if no
+	MOV	#FMT1,R0	;yes. cname record
+	MOV	#NAMLST,R1
+	JSR	PC,FORMAT
+	BR	INS21
+;
+5$:	MOV	#FMT2,R0	;a record
+	MOV	ADRPTR,R1
+	JSR	PC,FORMAT
+INS21:	.WAIT	#0		;is output file open
+	BCS	2$		;branch if no
+	MOV	SBLK,WBLK	;yes. chug along
+	CLR	RCNT
+1$:	INC	RCNT		;read that block
+	.READW	#ARGBLK,#0,#WBUF,#256.,WBLK
+	BCC	3$		;branch if no error
+	.PRINT	#COM11		;output file i/o error
+	JMP	EXIT
+;
+2$:	JMP	INS20
+;
+3$:	MOV	#WBUF,R1	;scan block for hole
+4$:	TSTB	@R1		;is this hole
+	BEQ	7$		;branch if yes
+	BITB	#N,HT.FLG(R1)	;no. is this name entry
+	BEQ	6$		;branch if no
+	ADD	#HT.LEN,R1	;yes. advance to next entry
+5$:	TSTB	(R1)+
+	BNE	5$
+	BR	4$
+;
+6$:	ADD	#HT.LEN+4,R1	;advance to next entry
+	BR	4$
+
+7$:	MOV	#WBUF+511.-HT.LEN,R0 ;hole. compute size left
+	SUB	SIZE,R0
+	CMP	R1,R0		;will string fit
+	BLOS	INS2		;branch if yes
+	INC	OVRFLO		;no. try next block
+	INC	WBLK
+	CMP	WBLK,MAXBLK
+	BLO	8$
+	CLR	WBLK
+8$:	CMP	WBLK,SBLK	;has read wrapped completely around
+	BNE	1$		;branch if no
+	.PRINT	#COM14		;output file full
+	JMP	EXIT
+;
+; Insert entry in file
+;
+INS2:	MOV	R1,WBLK+2	;save pointer
+	MOVB	SPEC,(R1)+	;copy flags
+	MOV	ADRPTR,R0	;copy address/pointer
+	BITB	#P,SPEC
+	BEQ	1$
+	MOV	#KEY,R0
+1$:	MOVB	(R0)+,(R1)+
+	MOVB	(R0)+,(R1)+
+	MOVB	(R0)+,(R1)+
+	MOVB	(R0)+,(R1)+
+	CLRB	(R1)+		;insert link
+	CLRB	(R1)+
+	CLRB	(R1)+
+	CLRB	(R1)+
+	MOV	ADRPTR,R0	;copy address/name
+	BITB	#N,SPEC
+	BEQ	3$
+	MOV	NAMPTR,R0
+3$:	MOV	SIZE,R2
+4$:	MOVB	(R0)+,(R1)+
+	SOB	R2,4$
+	MOV	R1,R2		;update statistics
+	SUB	#WBUF,R1
+	CMP	R1,MAXSIZ
+	BLOS	5$
+	MOV	R1,MAXSIZ
+5$:	SUB	WBLK+2,R2
+	ADD	R2,TOTSIZ+2
+	ADC	TOTSIZ
+	CMP	RCNT,MAXRED
+	BLOS	6$
+	MOV	RCNT,MAXRED
+6$:	CMP	RCNT,#1		;is this overflow
+	BLOS	9$		;branch if no
+	MOV	WBLK+2,R2	;yes. advise that fact
+	MOV	#DBG1,R0
+	MOV	#BASE,R1
+	JSR	PC,FMT
+	MOV	WBLK+2,R1
+	MOV	#DBG2,R0
+	BITB	HT.FLG(R2),#P
+	BEQ	7$
+	MOV	#DBG3,R0
+7$:	JSR	PC,FMT
+	MOV	#DBG4,R0
+	BITB	HT.FLG(R2),#N
+	BEQ	8$
+	MOV	#DBG5,R0
+8$:	JSR	PC,FMT
+9$:	SUB	#WBUF,WBLK+2	;construct offset
+	.WRITW	#ARGBLK,#0,#WBUF,#256.,WBLK ;re-write block
+	BCS	10$		;branch if error
+	BITB	#P,SPEC		;is this header
+	BEQ	12$		;branch if yes
+	.READW	#ARGBLK,#0,#WBUF,#256.,LINK ;read previous block
+	BCS	10$		;branch if error
+	MOV	#WBLK,R0	;insert link
+	MOV	LINK+2,R1
+	BISB	#M,WBUF+HT.FLG(R1)
+	ADD	#WBUF+HT.LNK,R1
+	MOVB	(R0)+,(R1)+
+	MOVB	(R0)+,(R1)+
+	MOVB	(R0)+,(R1)+
+	MOVB	(R0)+,(R1)+
+	.WRITW	#ARGBLK,#0,#WBUF,#256.,LINK ;re-write block
+	BCC	11$		;branch if no error
+10$:	.PRINT	#COM11		;output file i/o error
+	JMP	EXIT
+;
+12$:	MOV	WBLK,KEY	;save pointer
+	MOV	WBLK+2,KEY+2
+11$:	MOV	WBLK,LINK	;save link
+	MOV	WBLK+2,LINK+2
+INS20:	MOV	(SP)+,R2	;exit
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to hash string
+; Hash function: (x^10 + x^9 + x^8 + x^6 + x^2 + x + 1)
+; R0 = length, r1 = pointer, returns r0 = hash value
+;
+HASHY:	MOV	R1,-(SP)	;preserve registers
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	MOV	R5,-(SP)
+	MOV	R1,R5		;initialize
+	CLR	R1
+	MOV	#3507,R3	;(x^10 + x^9 + x^8 + x^6 + x^2 + x + 1)
+1$:	MOVB	(R5)+,R4	;get octet
+	MOV	#8.,R2		;galois gallop
+2$:	RORB	R4
+	ROL	R1
+	BIT	#2000,R1
+	BEQ	3$
+	XOR	R3,R1
+3$:	SOB	R2,2$		;for 8 bits
+	SOB	R0,1$		;for that many octets
+	MOV	R1,R0
+	MUL	MAXBLK,R0
+	ASHC	#6,R0
+	MOV	(SP)+,R5	;restore registers
+	MOV	(SP)+,R4
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to display formatted statistics line
+; R0 = string pointer, r1 = data pointer
+;
+FMT:	MOV	LPTR,-(SP)	;switch to display
+	CLR	LPTR
+	JSR	PC,FORMAT
+	MOV	(SP)+,LPTR	;switch back
+	RTS	PC
+;
+; Constants
+;
+DEFEXT:	.RAD50	'TXTDATDNS   '	;default extensions
+COM15:	.ASCIZ	'?HOSTS-F-Invalid option'
+COM11:	.ASCIZ	'?HOSTS-F-Output file i/o error'
+COM13:	.ASCIZ	'?HOSTS-F-Input file i/o error'
+COM14:	.ASCIZ	'?HOSTS-F-Output file full'
+COM10:	.ASCIZ	'Processing completed'
+COM12:	.ASCII	'  Number of lines:    ^I'<HCNT-BASE>'^/'
+	.ASCII	'  Number of entries:  ^I'<COUNT-BASE>'^/'
+	.ASCII	'  Mean block size:    ^I'<TOTSIZ-BASE>'^/'
+	.ASCII	'  Max block size:     ^I'<MAXSIZ-BASE>'^/'
+	.ASCII	'  Overflow entries:   ^I'<OVRFLO-BASE>'^/'
+	.ASCII	'  Max file reads:     ^I'<MAXRED-BASE>'^/'
+	.ASCII	'Nets: ^I'<NETCNT-BASE>'  gateways: ^I'<GATCNT-BASE>
+	.ASCIZ	'  hosts: ^I'<HSTCNT-BASE>'  name servers: ^I'<NAMCNT-BASE>
+DBG1:	.ASCIZ	'^I'<SBLK-BASE>'	^I'<RCNT-BASE>'	^+'
+DBG2:	.ASCIZ	'^BK'<0>' ^C'<1>' ^BK'<5>' ^BK'<6>' ^BK'<7>' ^BK'<10>'^+'
+DBG3:	.ASCII	'^BK'<0>' ^BK'<1>' ^BK'<2>' ^BK'<3>' ^BK'<4>
+	.ASCIZ	' ^BK'<5>' ^BK'<6>' ^BK'<7>' ^BK'<10>'^+'
+DBG4:	.ASCIZ	' ^C'<11>
+DBG5:	.ASCIZ	' ^A'<11>
+FMT1:	.ASCIZ	'IN	CNAME	^A'<0>
+FMT2:	.ASCIZ	'IN	A	^BI'<0>'.^BI'<1>'.^BI'<2>'.^BI'<3>
+ARPA:	.ASCIZ	'.ARPA'
+	.EVEN
+;
+; Variables
+;
+BASE	=	.		;statistics block base
+HCNT:	.BLKW	1		;number of lines
+COUNT:	.BLKW	1		;number of entries
+TOTSIZ:	.BLKW	2		;total size of all entries
+MAXSIZ:	.BLKW	1		;max size used any block
+OVRFLO:	.BLKW	1		;overflow entries
+MAXRED:	.BLKW	1		;max file reads
+NETCNT:	.BLKW	1		;count of NET lines
+GATCNT:	.BLKW	1		;count of GATEWAY lines
+HSTCNT:	.BLKW	1		;count of HOST lines
+NAMCNT:	.BLKW	1		;count of NAME-SERVER lines;
+ARGBLK:	.BLKW	5		;rt-11 argument block
+CHAN:	.BLKW	1		;input file channel
+ARPMOD:	.BLKW	1		;.arpa modifier file number
+MAXBLK:	.BLKW	1		;size of output file (blocks)
+SIZE:	.BLKW	1		;size of entry
+ADRPTR:	.BLKW	1		;address list pointer
+NAMPTR:	.BLKW	1		;name list pointer
+RBLK:	.BLKW	1		;input file block
+RPTR:	.BLKW	1		;input buffer pointer
+RCNT:	.BLKW	1		;file reads
+SBLK:	.BLKW	1		;initial output block
+LBLK:	.BLKW	1		;output format block
+LPTR:	.BLKW	1		;output format pointer
+KEY:	.BLKW	2		;header block/offset
+LINK:	.BLKW	2		;link block/offset
+WBLK:	.BLKW	2		;output block/offset
+RBUF:	.BLKW	256.		;input buffer
+WBUF:	.BLKW	256.		;output buffer
+LBUF:	.BLKW	256.		;output format buffer
+ADRLST:	.BLKW	50.*2		;address list
+NAMLST:	.BLKB	512.		;name list
+SPEC:	.BLKB	1		;flags
+CHAR:	.BLKB	1		;break char
+	.EVEN
+STOEND	=	.		;end of erasable area
+;
+	.END	HOSTS
+                            

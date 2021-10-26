@@ -1,0 +1,382 @@
+	.TITLE	SMTP	SMTP USER PROCESS
+	.SBTTL	SYSTEM AND MODULE DEFINITONS
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn basic operating system - smtp user process
+;
+; This is a user program for the simple mail transfer protocol (smtp)
+; described in rfc-821.
+;
+; External symbols
+;
+	.GLOBL	RDLIN,RDBYT,RDASC,RDOCT,RDDEC,TYPE,GETARG
+	.GLOBL	HELP,ERRLVL
+	.GLOBL	FLAGS,TTOBUF,PRTPTR,PRIDNT,PRBYT
+	.GLOBL	CTRL,SEND,RNAME,GTHOST
+	.GLOBL	NETSTR,NETRST,NETSIG,NETAST
+	.GLOBL	SMPSRT,EXIT
+;
+; Entry symbols
+;
+	.GLOBL	INIT,KWKTBL,COM00,SHOST
+	.GLOBL	ABOR,GHOST,STATE,FILFCB,RPYBUF
+	.GLOBL	MRCTAB,AREA,ARGBLK,SRCRUT,OPNBLK
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.SMF	;dcnlib definitions
+	.MCALL	.KWTAB,.VSEM,.TSEM,.MSG ;dcnlib macros
+	.MCALL	.PRINT,.CSISP,.LOOKU,.READW,.PURGE ;rt-11 macros
+	.MCALL	$DFSIG		;moslib definitions
+	.MCALL	DFCON,DFFCB,OPNBLK,ADDR,CALL,FORMAT,GETARG,DFSRV ;netlib macros
+	.MCALL	LOOK
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.SMF			;define semaphore ids
+	$DFSIG			;define interprocess signals
+	DFCON			;define connection block
+	DFFCB			;define file control block
+	DFSRV			;define service bits
+;
+; Module definitions
+;
+; Assembly parameters
+;
+P.TCP	=	6		;tcp-4 protocol number
+SMPPRT	=	25.		;smtp port
+SRCSIZ	=	1000.		;max source route strings length
+FILSIZ	=	4		;mail buffer size (blocks)
+USESIZ	=	64.		;max user string length
+HSTSIZ	=	64.		;max domain string length
+RUTSIZ	=	256.		;max route string length
+RPYSIZ	=	512.		;max reply string length
+MRCSIZ	==	100.		;max recipient table entries
+	.PAGE
+	.SBTTL	COMMAND INTERPRETATION
+;
+	.PSECT	$BOSI,RO,I
+;
+; Net completion routine
+;
+NETSUB:	JSR	PC,NETAST
+	RTS	PC
+;
+; Initialization
+;
+INIT:	CALL	GTHOST,#SHOST,#0,#0 ;get host name
+	MOV	#1,ERRLVL
+	JSR	PC,NETRST	;reset overlay
+	BIT	#CHNBIT,FLAGS	;is argument in chain area
+	BNE	2$		;branch if yes
+	FORMAT	#HERALD,#SHOST	;no. from the top
+	RTS	PC
+;
+2$:	.MSG	<#^RLOG>	;use log output
+	JSR	PC,SENDX	;default send command
+	RTS	PC
+;
+; Unrecognized command
+;
+NTFD:	FORMAT	#COM29		;unrecognized command
+	RTS	PC
+;
+; Show (sho) show smtp status
+; (segment of command language interpreter)
+; (no arguments)
+;
+SHOW:	MOV	FLAGS,STATE+2	;move under umbrella
+	FORMAT	#COM24,#STATE
+	FORMAT	#COM20,#OPNBLK
+	FORMAT	#COM22,SRCRUT
+	FORMAT	#COM45,#FILFCB
+	FORMAT	#COM46,#RPYBUF
+	RTS	PC
+;
+; Quit (qui) leave the game
+; (segment of command language interpreter)
+; (no arguments)
+;
+QUIT:	TST	STATE		;is mail in progress
+	BEQ	1$		;branch if no
+	FORMAT	#COM30		;invalid command sequence
+	RTS	PC
+;
+1$:	JSR	PC,ABOR		;reset recipient table
+	JMP	EXIT
+;
+; Verbose (ver) be very noisy
+; (segment of command language interpreter)
+; arg = error level
+;
+VERB:	JSR	PC,RDDEC	;set error level
+	MOV	R0,ERRLVL
+	RTS	PC
+;
+; Quote (quo) send smtp message
+; (segment of command language interpreter)
+; Arg = command line
+;
+QUOT:	MOV	#TTOBUF,PRTPTR
+1$:	JSR	PC,RDASC	;copy line to buffer
+	BEQ	2$
+	JSR	PC,PRBYT
+	BR	1$
+;
+2$:	MOV	#CRLF,R0
+TSEND:	JSR	PC,FORMAT
+	MOV	PRTPTR,R0	;send to net
+	CLR	PRTPTR
+	MOV	#TTOBUF,R1
+	SUB	R1,R0
+	BIS	#100000,R0
+	CALL	SEND,R0,R1,OPNBLK+CONPTR
+	TST	R0		;was it successful
+	BEQ	1$		;branch if yes
+	JSR	PC,PRIDNT	;no. print error comment
+	JSR	PC,ABOR
+1$:	RTS	PC
+;
+; Send (mtp) send smtp mail
+; (segment of command language interpreter)
+; Arg1 = file name, arg2 = source route
+;
+SENDX:	TST	STATE		;is mail in progress
+	BEQ	1$		;branch if no
+	FORMAT	#COM30		;invalid command sequence
+	BR	11$
+;
+1$:	JSR	PC,ABOR		;reset recipient table
+	CLR	MRCTAB
+	MOV	#ARG,R2		;get file name
+	GETARG	R2
+	MOVB	ARG,R0		;is it default
+	JSR	PC,TYPE
+	BMI	20$		;branch if no (numeric)
+	BVS	20$		;branch if no (alpha)
+	MOV	#MSGNAM,R2	;yes. use "unsent.msg"
+20$:	LOOK	R2,#FILFCB,#0
+	BCC	2$		;branch if found
+	FORMAT	#COM35,#FILFCB	;file not found
+	BR	11$
+;
+2$:	GETARG	#ARG		;get source route
+	MOV	#SMPPRT*400,OPNBLK+CONRMT+4
+	JSR	PC,RDDEC	;get port number
+	BEQ	3$		;branch if missing
+	SWAB	R0
+	MOV	R0,OPNBLK+CONRMT+4
+3$:	MOV	#ROUTE,RUTPTR	;reset source route
+	CLR	SRCRUT
+	MOV	#ARG,R0		;get routing info
+	CMPB	@R0,#'<
+	BNE	8$		;branch if default
+	JSR	PC,RDLIN
+	JSR	PC,GHOST
+	BCS	10$		;branch if invalid
+	MOV	R0,SRCRUT
+	MOVB	BRKCHR,R0	;copy remainder of string
+	MOV	RUTPTR,R1
+	DEC	R1
+5$:	CMPB	R0,#',
+	BEQ	6$
+	CMPB	R0,#':
+	BEQ	6$
+	CMPB	R0,#'@
+	BNE	7$
+6$:	MOVB	R0,(R1)+
+	JSR	PC,CPYSTR
+	BNE	5$
+7$:	CLRB	(R1)+
+	MOV	R1,RUTPTR	
+8$:	.TSEM	#SF.SMP		;is file locked
+	BCC	9$		;branch in no
+	FORMAT	#COM50		;busy mail file
+	BR	11$
+;
+9$:	JSR	PC,SMPSRT	;construct recipient table
+	JSR	PC,NETRST	;reset overlay
+	JSR	PC,NETSTR	;transmit mailbag
+12$:	RTS	PC
+;
+10$:	JSR	PC,NETRST	;reset overlay
+11$:	BIT	#CHNBIT,FLAGS	;is argument in chain area
+	BEQ	12$		;branch if no
+	JMP	EXIT
+;
+; Abort (abo) abort file transfer
+; (segment of command language interpreter)
+; (no arguments)
+;
+ABOR:	TST	STATE		;is operation in progress
+	BEQ	1$		;branch if no
+	CLR	STATE		;yes. yank rug, circle wagons
+	FORMAT	#COM06		;command aborted
+	.VSEM	#SF.SMP
+1$:	.PURGE	#0		;purge file
+	CALL	CTRL,#CM.CLS,#0,OPNBLK+CONPTR ;ip close
+	RTS	PC
+;
+; Fix (fix) repair smtp file lock (wizards only)
+; (segment of command language interpreter)
+; (no arguments)
+;
+FIXU:	.TSEM	#SF.APN		;fix up append semaphore
+	BCC	FIXU
+	.VSEM	#SF.APN	
+1$:	.TSEM	#SF.SMP		;fix up smtp semaphore
+	BCC	1$
+	.VSEM	#SF.SMP	
+	RTS	PC
+;
+; Subroutine to parse "<route>" line
+; Returns next host in route table, cc = c if error
+;
+GHOST:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	CLR	R2		;indicate route
+	JSR	PC,SKPSTR	;skip noise
+	MOV	RUTPTR,R1	;edit "to" field
+1$:	JSR	PC,CPYSTR	;copy next field
+	BEQ	2$		;branch if no host
+	CMPB	R0,#'@
+	BNE	1$
+	MOV	RUTPTR,R1
+	JSR	PC,CPYSTR	;copy field
+	MOVB	R0,BRKCHR
+	TSTB	@RUTPTR		;is string null
+	BNE	3$		;branch if no
+2$:	FORMAT	#COM38		;invalid syntax
+	BR	6$
+;
+3$:	CALL	RNAME,RUTPTR,#OPNBLK+CONRMT,#COUNT ;get address
+	TST	R0
+	BEQ	4$		;branch if found
+	JSR	PC,PRIDNT	;print reason for failure
+	BR	6$
+;
+4$:	BITB	#SMTP,COUNT	;can host receive direct
+	BNE	5$		;branch if yes
+	FORMAT	#COMYY,RUTPTR	;smtp service unsupported [name]
+5$:	MOV	RUTPTR,R0	;return route string pointer
+	MOV	R1,RUTPTR	;update pointer
+	CLC			;normal exit
+	BR	7$
+;
+6$:	SEC			;error exit
+7$:	MOV	(SP)+,R2	;restore registers
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to skip to beginning of route string
+;
+SKPSTR:	JSR	PC,RDASC	;skip to "<"
+	BEQ	1$
+	CMPB	R0,#'<
+	BNE	SKPSTR
+1$:	RTS	PC
+;
+; Subroutine to copy tail of route string
+; R1 = output pointer. returns r0 = break char, cc = z if eor
+;
+CPYSTR:	CLRB	@R1		;plant backstop
+	JSR	PC,RDBYT	;get next char
+	BEQ	3$		;branch if none
+	CMPB	R0,#040		;discard control chars
+	BLO	CPYSTR
+	CMPB	R0,#'\		;is char literal-next
+	BNE	5$		;branch if no
+	MOVB	R0,(R1)+	;yes. copy it and next char
+	JSR	PC,RDBYT
+	MOVB	R0,(R1)+
+	BR	CPYSTR
+;
+5$:	CMPB	R0,#'>		;is this break char
+	BEQ	3$		;branch if yes
+	CMPB	R0,#',
+	BEQ	4$		;branch if yes
+	CMPB	R0,#':
+	BEQ	4$		;branch if yes
+	CMPB	R0,#'@
+	BEQ	4$		;branch if yes
+	MOVB	R0,(R1)+	;no. copy it
+	BR	CPYSTR
+;
+4$:	CLZ
+3$:	RTS	PC
+	.PAGE
+	.SBTTL	TABLES, TEXT STRINGS AND VARIABLES
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+; Command table for kwik
+;
+KWKTBL:	.KWTAB	<HEL>,HELP	;send help information
+	.KWTAB	<SHO>,SHOW	;show mtp status
+	.KWTAB	<QUI>,QUIT	;leave the game
+	.KWTAB	<ABO>,ABOR	;abort file transfer
+	.KWTAB	<VER>,VERB	;set error level
+	.KWTAB	<QUO>,QUOT	;send message
+	.KWTAB	<SEN>,SENDX	;send smtp mail
+	.KWTAB	<FIX>,FIXU	;repair smtp file lock (wizards only)
+	.KWTAB	<   >,NTFD	;end of table
+;
+; Miscellaneous tables and chairs
+;
+DEFTYP:	.RAD50	'MSGMSGMSGMSG'	;default file extensions
+;
+; Text strings for smtp user protocol
+;
+HERALD:	.ASCIZ	'^A'<0>' SMTP User Process (06-Apr-85 Version) ^LD ^LT'
+CRLF:	.BYTE	0
+MSGNAM:	.ASCIZ	'SY:UNSENT.MSG'	;default mail file name
+COM24:	.ASCIZ	'State: ^I'<0>' ^K'<2>'  host: ^+'
+COM20:	.ASCIZ	'(^R'<CONIDN>') ^C'<CONRMT>' ^XI'<CONRMT+4>'^+'
+COM22:	.ASCIZ	'  route: ^A'<0>'^+'
+COM45:	.ASCIZ	'  file: ^F'<FCBNAM>'[^I'<FCBMAX>']'
+COM46:	.ASCIZ	'Reply: ^A'<0>
+;
+; Text strings for error conditions
+;
+COM00:	.ASCIZ	'?SMTP-^+'
+COM29:	.ASCIZ	'?SMTP-F-Unrecognized command'
+COM30:	.ASCIZ	'?SMTP-F-Invalid command sequence'
+COM06:	.ASCIZ	'?SMTP-F-Command aborted'
+COM35:	.ASCIZ	'?SMTP-F-Mail file not found ^F'<FCBNAM>
+COM50:	.ASCIZ	'?SMTP-F-Mail file busy'
+COM32:	.ASCIZ	'?SMTP-F-Unrecognized host name <@^A'<0>'>'
+COM33:	.ASCIZ	'?SMTP-W-Ambiguous host name <@^A'<0>'>'
+COMYY:	.ASCIZ	'?SMTP-W-SMTP service unsupported <@^A'<0>'>'
+COM38:	.ASCIZ	'?SMTP-F-Invalid syntax'
+	.EVEN
+;
+	.PSECT	$DATA,RW,I
+;
+; Smtp connection data
+;
+OPNBLK:	OPNBLK	0,SMP,,,NETSUB,P.TCP,45 ;open block
+;
+	.PSECT	$ERAS,RW,I
+;
+; Variables
+;
+STATE:	.BLKW	2		;current state/flags (display)
+COUNT:	.BLKW	1		;count used by ghost
+RUTPTR:	.BLKW	1		;current route pointer
+SRCRUT:	.BLKW	1		;source route pointer
+ARGBLK:	.BLKW	5		;rt-11 argument block
+AREA:	.BLKW	39.		;scratch area
+FILFCB:	.BLKW	8.		;file control block
+ARG:	.BLKB	RUTSIZ		;argument
+RPYBUF:	.BLKB	RPYSIZ		;reply buffer
+ROUTE:	.BLKB	SRCSIZ		;source route
+SHOST:	.BLKB	64.		;this host name
+BRKCHR:	.BLKB	1		;ghost break character
+	.EVEN
+MRCTAB:	.BLKW	8.*MRCSIZ+1	;recipient table
+;
+	.END
+                                                                                                                                                                                                                                                                                                                  

@@ -1,0 +1,1789 @@
+	.TITLE	NTPSRV	Network time server
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn - Network time server
+;
+; This program is a network time server compatible with NTP Version 2 as
+; amended.
+;
+; 0                   1                   2                   3
+; 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |LI | VN  |Code |    Stratum    | Poll Interval |   Precision   |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |                             Delay                             |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |                           Dispersion                          |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |                  Reference Clock Identifier                   |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |                                                               |
+; |                 Reference Timestamp (64 bits)                 |
+; |                                                               |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |                                                               |
+; |                 Originate Timestamp (64 bits)                 |
+; |                                                               |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |                                                               |
+; |                  Receive Timestamp (64 bits)                  |
+; |                                                               |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |                                                               |
+; |                  Transmit Timestamp (64 bits)                 |
+; |                                                               |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |                        Key Identifier                         |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |                                                               |
+; |             Message Authentication Code (64 bits)             |
+; |                                                               |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;
+; External symbols
+;
+	.GLOBL	FLOPKT,GETPKT,SNDPKT,FREPKT ;utility routines
+	.GLOBL	OPNBLK		;connection block
+	.GLOBL	NTPTAB,NTPEND,NTPCNT,NTPADR,NTPSYS,NTPSKW ;ntp data
+	.GLOBL	NTPPTR,NTPSTR,NTPDSP,NTPENC ;current clock source
+	.GLOBL	NTPHID,NTPKID	;encryption key id, ntp clock id
+	.GLOBL	PARPTR		;udp process pointer
+	.GLOBL	COMPTR		;host process pointer
+	.GLOBL	STAPTR		;statistics pointer
+	.GLOBL	STATS		;write statistics
+	.GLOBL	UDPDST,UDPSRC	;address/port fields
+	.GLOBL	CRYSET,CRYTST	;authentication routines
+;
+; Entry symbols
+;
+	.GLOBL	NTPREQ		;time request
+	.GLOBL	NTPSND		;timeout entry
+	.GLOBL	CLEAR		;clear filter
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.PSA,.SUP,.CLP,.TRDEF ;dcnlib definitions
+	.MCALL	.GDAT,.GCLK,.PRIO,.TRAP,.WIND ;dcnlib macros
+	.MCALL	.EXIT		;rt-11 macros
+	.MCALL	$DFIH,$DFUH,$DFNH,$DFMH,$DFSIG,$DFTIM,$DFTBL ;moslib defs
+	.MCALL	DFCON,CALL,FORMAT,NTPTAB ;netlib macros
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.PSA			;define process storage area
+	.SUP			;define host process par areas
+	.CLP			;rt-11 monitor area definitions
+	.TRDEF			;define trap codes
+	$DFIH			;define internet header
+	$DFUH			;define user datagram header
+	$DFNH			;define network time header
+	$DFMH			;define ntp control message header
+	$DFSIG			;define interprocess signals
+	$DFTIM			;define timer values
+	$DFTBL			;define host/gateway table formats
+	DFCON			;define connection block
+	NTPTAB			;define ntp tables
+;
+; Module definitions
+;
+	.MACRO	LMOV A,B	;48-bit move
+	MOV	A,B
+	MOV	2+A,2+B
+	MOV	4+A,4+B
+	.ENDM	LMOV
+;
+	.MACRO	LTST A,?L1,?L2	;48-bit test
+	TST	A
+	BNE	L1
+	TST	2+A
+	BNE	L2
+	TST	4+A
+L2:	CLN
+L1:
+	.ENDM	LTST
+;
+	.MACRO	LADD A,B	;48-bit add
+	ADD	4+A,4+B
+	ADC	2+B
+	ADC	B
+	ADD	2+A,2+B
+	ADC	B
+	ADD	A,B
+	.ENDM	LADD
+;
+	.MACRO	LSUB,A,B	;48-bit subtract
+	SUB	4+A,4+B
+	SBC	2+B
+	SBC	B
+	SUB	2+A,2+B
+	SBC	B
+	SUB	A,B
+	.ENDM	LSUB
+;
+	.MACRO	LNEG A		;48-bit complement
+	COM	4+A
+	COM	2+A
+	COM	A
+	ADD	#1,4+A
+	ADC	2+A
+	ADC	A
+	.ENDM	LNEG
+;
+; Assembly parameters
+;
+POLMIN	=	6.		;min poll interval (64 sec)
+POLMAX	=	10.		;max poll interval (1024 sec)
+STRINF	=	15.		;max stratum
+CNDMAX	=	10.		;max clocks (<= lstmax/2-1)
+DSPMAX	=	16000.		;max dispersion
+LSTMAX	=	20.*6		;max list size (words >= fltmax*2)
+IPPID	=	2+EXTBAS	;get internet process pid
+NTPID	=	3+EXTBAS	;get net process pid
+;
+; Options word bits
+;
+X.POLL	=	000004		;disable variable-rate poll
+;
+	.PSECT	$BOSI,RO,I
+;
+; Time request
+; R0 = udp length, r1 = packet pointer, r2 = udp header pointer
+;
+NTPREQ:	MOV	R0,PKTLNG	;save length
+	CMP	R0,#NT.LEN	;is format valid
+	BLO	7$		;branch if no
+	.GDAT			;yes. save receive timestamp
+	MOV	R0,PKTSTP
+	MOV	PH.TIM(R1),PKTSTP+2
+	MOV	PH.TIM+2(R1),PKTSTP+4
+	CLR	ACCUM		;(lru entry)
+	MOV	NTPTAB,R4	;search neighbor table
+1$:	CMP	R4,NTPEND	;is search complete
+	BHIS	5$		;branch if yes
+	TST	NG.SRC(R4)	;no. is this entry last
+	BEQ	6$		;branch if yes
+	CMP	UDPDST,NG.DST(R4) ;no. do addresseses match
+	BNE	2$		;branch if no
+	CMP	UDPDST+2,NG.DST+2(R4)
+	BNE	2$		;branch if no
+	CMP	UDPDST+4,NG.DST+4(R4)
+	BNE	2$		;branch if no
+	CMP	UDPSRC,NG.SRC(R4)
+	BNE	2$		;branch if no
+	CMP	UDPSRC+2,NG.SRC+2(R4)
+	BNE	2$		;branch if no
+	CMP	UDPSRC+4,NG.SRC+4(R4)
+	BEQ	8$		;branch if yes
+2$:	TSTB	NG.FLG(R4)	;no. is neighbor mobilized
+	BNE	4$		;branch if yes
+	MOV	ACCUM,R0	;no. is this lru
+	BEQ	3$		;branch if yes
+	MOV	NG.DLY+2(R0),ACCUM+2 ;replace max distance
+	ASR	ACCUM+2
+	ADD	NG.ERR+2(R0),ACCUM+2
+	MOV	NG.DLY+2(R4),ACCUM+4
+	ASR	ACCUM+4
+	ADD	NG.ERR+2(R4),ACCUM+4
+	CMP	ACCUM+2,ACCUM+4
+	BHIS	4$		;branch if no
+3$:	MOV	R4,ACCUM	;yes. set this lru
+4$:	ADD	#NG.LEN,R4	;advance to next entry
+	BR	1$
+;
+5$:	MOV	ACCUM,R4	;is lru entry available
+	BEQ	7$		;branch if no
+6$:	JSR	PC,INST		;yes. instantiate peer
+	BCC	8$		;branch if okay
+7$:	JSR	PC,FREPKT	;naughty. discard packet
+	RTS	PC
+;
+8$:	TSTB	NG.FLG(R4)	;is neighbor mobilized
+	BNE	NTPSEL		;branch if yes
+	MOVB	NT.STA(R2),R1	;no. extract service code
+	MOVB	R1,NG.FLG(R4)
+	BICB	#NX.MOD,NG.FLG(R4)
+	BIC	#^CNX.MOD,R1
+	CMP	R1,#NC.CRM	;is this client request mode
+	BNE	9$		;branch if no
+	BISB	#NC.SRM,NG.FLG(R4) ;yes. set server reply mode
+	BR	NTPSEL
+;
+9$:	BISB	#NC.SPM,NG.FLG(R4) ;set symmetric passive mode
+NTPSEL:	JSR	PC,DECMAC	;decrypt mac
+	MOV	#<NT.LEN-NT.ERR>/2,R0 ;swab decks
+	MOV	R2,R1
+	ADD	#NT.ERR,R1
+1$:	SWAB	(R1)+
+	SOB	R0,1$
+	SWAB	NT.RID(R2)	;unswab these
+	SWAB	NT.RID+2(R2)
+	MOVB	NT.STA(R2),R1	;are modes in range
+	BIC	#^CNX.MOD,R1
+	BEQ	ERRR		;branch if no
+	CMP	R1,#5
+	BHI	ERRR		;branch if no
+	MUL	#5,R1
+	MOVB	NG.FLG(R4),R0
+	BIC	#^CNX.MOD,R0
+	BEQ	ERRR		;branch if no
+	CMP	R0,#5
+	BHI	ERRR		;branch if no
+	ADD	R1,R0		;yes. set table offset
+	ASL	R0
+	MOV	SVCJMP-10.-2(R0),PC ;wander off somewhere
+;
+ERRR:	JSR	PC,FREPKT	;discard packet
+ERR1:	BIT	#NX.CFG,NG.PST(R4) ;is this configured entry
+	BNE	1$		;branch if yes
+	CLRB	NG.FLG(R4)	;no. demobilize entry
+1$:	RTS	PC
+;
+RECV:	JSR	PC,NTPDAT	;process sample
+	BITB	#360,NG.BIT(R4)	;is this serious flash
+	BNE	ERR1		;branch if yes
+	BR	NTP33		;no. mobilize
+;
+XMIT:	JSR	PC,NTPDAT	;process sample
+NTP34:	MOVB	NG.HPI(R4),NG.MPI(R4) ;reset poll interval
+	JSR	PC,RSTIME	;check peer timer
+	MOV	#1,NG.TIM(R4)	;(for retry)
+	JSR	PC,NTPSND	;send immediate reply
+	RTS	PC		;(unspec) leave association in limbo
+;
+PACK:	JSR	PC,NTPDAT	;process sample
+	BITB	#360,NG.BIT(R4)	;is this serious flash
+	BNE	NTP34		;branch if yes
+NTP33:	TSTB	NG.SRG(R4)	;no. is neighbor up
+	BNE	2$		;branch if yes
+	BIC	#17*400,NG.PST(R4) ;no. flash peer reachable
+	BIS	#NP.RCH*400+NX.RCH,NG.PST(R4)
+	ADD	#20*400,NG.PST(R4)
+	BCC	1$
+	SUB	#20*400,NG.PST(R4)
+1$:	FORMAT	#COM40A,R4	;peer reachable
+2$:	BISB	#1,NG.SRG(R4)	;mark reachable
+	TSTB	NG.BIT(R4)	;are data valid
+	BNE	3$		;branch if no
+	JSR	PC,UPDATE	;yes. update local clock
+	JSR	PC,HOSTUP	;keep books for local net
+	BIT	#NX.CFG,NG.PST(R4) ;are statistics enabled
+	BEQ	3$		;branch if no
+	MOV	STAPTR,R1
+	BEQ	3$		;branch if no
+	MOV	#PKTSTP,R0	;yes. stash update time (rt-11 format)
+	MOV	(R0)+,(R1)+
+	MOV	(R0)+,(R1)+
+	MOV	(R0)+,(R1)+
+	MOVB	NG.IDN(R4),(R1)+ ;stash entry id
+	MOVB	NG.STR(R4),-(SP) ;fetch stratum
+	BIC	#^C17,@SP
+	MOV	NG.PST(R4),R0	;insert peer status code
+	ASH	#4,R0
+	BIS	(SP)+,R0
+	MOVB	R0,(R1)+
+	MOV	#SAMPLE+2,R0
+	MOV	(R0)+,(R1)+	;stash offset (low-order 32 bits)
+	MOV	(R0)+,(R1)+
+	MOV	(R0)+,@R1	;stash total delay
+	ADD	NG.ERR+2(R4),(R1)+
+	MOV	(R0)+,@R1	;stash total dispersion
+	ADD	NG.DRF+2(R4),(R1)+
+	JSR	PC,STATS	;write buffer
+3$:	RTS	PC
+;
+; Packet procedure
+;
+; r2 = udp neader pointer, r4 = neighbor pointer, returns error flash
+; (t1 = org, t2 = rec, t3 = xmt, t4 = dst)
+;
+; Copy and convert header timestamp fields
+;
+NTPDAT:	INC	NG.RCV(R4)	;log inbound packets
+	CLRB	NG.BIT(R4)	;douse error flash
+	CMP	NT.XMT(R2),NG.ORG(R4) ;is this dupe or replay (test 1)
+	BNE	1$		;branch if no
+	CMP	NT.XMT+2(R2),NG.ORG+2(R4)
+	BNE	1$		;branch if no
+	CMP	NT.XMT+4(R2),NG.ORG+4(R4)
+	BNE	1$		;branch if no
+	CMP	NT.XMT+6(R2),NG.ORG+6(R4)
+	BNE	1$		;branch if no
+	BISB	#1,NG.BIT(R4)	;yes. test 1 fails
+1$:	CMP	NT.ORG(R2),NG.XMT(R4) ;no. match last sent (test 2)
+	BNE	2$		;branch if no
+	CMP	NT.ORG+2(R2),NG.XMT+2(R4)
+	BNE	2$		;branch if no
+	CMP	NT.ORG+4(R2),NG.XMT+4(R4)
+	BNE	2$		;branch if no
+	CMP	NT.ORG+6(R2),NG.XMT+6(R4)
+	BEQ	3$		;branch if yes
+2$:	BISB	#2,NG.BIT(R4)	;no. test 2 fails
+3$:	MOV	R4,R3		;update association timestamps
+	ADD	#NG.ORG,R3
+	MOV	NT.XMT(R2),(R3)+ ;(ng.org) originate (ntp format)
+	MOV	NT.XMT+2(R2),(R3)+
+	MOV	NT.XMT+4(R2),(R3)+
+	MOV	NT.XMT+6(R2),(R3)+
+	MOV	#PKTSTP,R1	;(ng.rec) receive (ntp format)
+	JSR	PC,DCNNTP
+	MOV	R2,R1		;convert packet timestamps
+	ADD	#NT.REF,R1
+	MOV	R1,R3
+	JSR	PC,NTPTIM	;(nt.ref)
+	MOV	R1,R3
+	JSR	PC,NTPTIM	;(nt.org) t1
+	MOV	R1,R3
+	JSR	PC,NTPTIM	;(nt.rec) t2
+	MOV	R1,R3
+	JSR	PC,NTPTIM	;(nt.xmt) t3
+;
+; Calculate delay and offset
+;
+NTP28:	LTST	NT.ORG(R2)	;is peer synchronized (test 3)
+	BEQ	1$		;branch if no
+	LTST	NT.REC(R2)
+	BNE	2$		;branch if yes
+1$:	BISB	#4,NG.BIT(R4)	;no. test 3 fails
+2$:	LMOV	NT.XMT(R2),TEMP48 ;is reference okay (test 6)
+	LSUB	NT.REF(R2),TEMP48 ;(nt.xmt - nt.ref)
+	TST	TEMP48
+	BNE	3$		;branch if no
+	CMP	TEMP48+2,#1318.
+	BHIS	3$		;branch if no
+	CMPB	NT.STA(R2),#300	;(unsynchronized)
+	BLO	4$		;branch if yes
+3$:	BISB	#40,NG.BIT(R4)	;no. test 6 fails
+4$:	MOV	R4,R1		;convert t4 to milliseconds
+	ADD	#NG.REC,R1	;(ng.rec)
+	MOV	#TEMP48,R3
+	JSR	PC,NTPTIM
+	LMOV	TEMP48,SAMPLE	;t4 skew dispersion (1 ms per 64 s)
+	LSUB	NT.ORG(R2),SAMPLE ;t4 - t1
+	MOV	SAMPLE+2,R0	;rho + phi(t4 - t1)
+	JSR	PC,PRETHR
+	MOV	R0,SAMPLE+10	;dispersion
+	LSUB	NT.ORG(R2),NT.REC(R2) ;t2 - t1 = a
+	LMOV	NT.REC(R2),SAMPLE
+	LSUB	TEMP48,NT.XMT(R2) ;t3 - t4 = b
+	LADD	NT.XMT(R2),SAMPLE ;(a + b)/2 = offset
+	ASR	SAMPLE
+	ROR	SAMPLE+2
+	ROR	SAMPLE+4
+	LMOV	NT.REC(R2),TEMP48
+	LSUB	NT.XMT(R2),TEMP48 ;a - b = delay
+	MOV	TEMP48+4,SAMPLE+6 ;is delay okay (test 4)
+	ROL	TEMP48+4
+	ADC	TEMP48+2
+	BNE	5$		;branch if no
+	ADC	TEMP48
+	BEQ	NTP29		;branch if yes
+5$:	BISB	#10,NG.BIT(R4)	;no. test 4 fails
+;
+; Check remaining header fields
+;
+NTP29:	BIT	#NX.CFG,NG.PST(R4) ;is authentication okay (test 5)
+	BEQ	1$		;branch if maybe
+	BIT	#NX.MAC,NG.PST(R4)
+	BEQ	3$		;branch if yes
+1$:	BIT	#NX.KEY,NG.PST(R4)
+	BNE	3$		;branch if yes
+2$:	BISB	#20,NG.BIT(R4)	;no. test 5 fails
+3$:	BIT	#NX.CFG,NG.PST(R4) ;is stratum okay (test 7)
+	BNE	5$		;branch if yes
+	MOVB	NT.STR(R2),R0
+	DECB	R0
+	CMPB	R0,#STRINF-1
+	BHIS	4$		;branch if no
+	MOV	COMPTR,R1
+	MOVB	CLKSTR(R1),R1
+	DECB	R1
+	CMPB	R0,R1
+	BLOS	5$		;branch if yes
+4$:	BISB	#100,NG.BIT(R4)	;no. test 7 fails
+5$:	MOV	R2,R3
+	ADD	#NT.ERR,R3
+	JSR	PC,NTPMS	;(nt.err) is root delay okay
+	BEQ	6$		;branch if yes
+	BISB	#200,NG.BIT(R4)	;no. test 8 fails (overflow)
+6$:	JSR	PC,NTPMS	;(nt.drf) is root dispersion okay
+	BCS	7$		;branch if no (minus)
+	BEQ	NTP30		;branch if yes
+7$:	BISB	#200,NG.BIT(R4)	;no. test 8 fails. (minus or overflow)
+;
+; Update association variables (note unspec: header always saved)
+;
+NTP30:	MOV	R4,R3		;save header (less timestamps)
+	ADD	#NG.ERS,R3
+	MOV	R2,R1
+	ADD	#NT.STA,R1
+	MOV	R4,R3
+	ADD	#NG.STA,R3
+	MOV	#<NT.REF-NT.STA>/2,R0
+1$:	MOV	(R1)+,(R3)+
+	SOB	R0,1$
+	CLRB	(R3)+		;(ng.rid backstop)
+	MOV	R4,R3		;convert refstamp
+	ADD	#NG.REF,R3
+	JSR	PC,TIMDCN
+	JSR	PC,RSTIME	;update poll interval
+	MOV	#PKTSTP,R1	;stamp arrival time (rt-11 format)
+	MOV	(R1)+,NG.UPD(R4)
+	MOV	(R1)+,NG.UPD+2(R4)
+	MOV	(R1)+,NG.UPD+4(R4)
+	BITB	#017,NG.BIT(R4)	;are data valid
+	BNE	2$		;branch if no
+	MOV	#SAMPLE,R1	;yes. munch filter
+	JSR	PC,FILTER
+2$:	JSR	PC,FREPKT	;discard packet
+	RTS	PC
+;
+; Transmit procedure
+; r4 = neighbor pointer (preserves only r4)
+;
+NTPSND:	MOV	NG.DST(R4),UDPDST ;restore address fields
+	MOV	NG.DST+2(R4),UDPDST+2
+	MOV	NG.DST+4(R4),UDPDST+4
+	MOV	NG.SRC(R4),UDPSRC
+	MOV	NG.SRC+2(R4),UDPSRC+2
+	MOV	NG.SRC+4(R4),UDPSRC+4
+	JSR	PC,FLOPKT	;get ip packet (flow controlled) 
+	BCC	3$		;branch if ok
+	INC	NG.PMT(R4)	;record if not (get it next scan)
+	RTS	PC
+;
+3$:	MOV	#1,R0		;gain some clout
+	.PRIO
+	BISB	#300+TQ.DLY,IH.TOS(R1) ;hoist priority
+	MOV	R1,R2
+	ADD	PH.OFS(R1),R2
+	MOV	R2,R3
+	ADD	#UH.LEN,R3
+	MOV	COMPTR,R0	;ordinary data
+	MOVB	NG.FLG(R4),(R3)+ ;(nt.sta) version/code
+	MOVB	CLKSTR(R0),(R3)+ ;(nt.str) stratum
+	MOVB	NG.MPI(R4),(R3)+ ;(nt.pol) poll interval
+	MOVB	CLKPRE(R0),(R3)+ ;(nt.pre) precision
+	CLR	2(R3)		;(nt.err) root delay
+	SXT	@R3
+	CMPB	CLKTYP(R0),#CK.NTP ;is this ntp
+	BNE	4$		;branch if no
+	MOV	NTPDSP,2(R3)	;yes. use value computed
+	SXT	@R3
+4$:	JSR	PC,MSNTP
+	.GDAT			;get current date
+	MOV	R0,R1
+	MOV	R0,PKTSTP
+	SWAB	R1		;insert leap bits
+	BICB	#^C300,R1
+	BICB	#300,NT.STA(R2)
+	BISB	R1,NT.STA(R2)
+	.GCLK			;get current time
+	BIT	#NX.MAC,NG.PST(R4) ;is encryption enabled
+	BEQ	5$		;branch if no
+	ADD	NTPSKW+6,R1	;yes. adjust for encryption delay
+	ADC	R0
+5$:	MOV	R0,PKTSTP+2
+	MOV	R1,PKTSTP+4
+	MOV	COMPTR,R1	;compute skew dispersion (1 ms per 64 s)
+	SUB	CLKREF+2(R1),R0
+	JSR	PC,PRETHR	;include measurement dispersion
+	ADD	CLKERR(R1),R0	;include root dispersion
+	BCC	6$
+	MOV	#-1,R0
+6$:	MOV	R0,2(R3)	;(nt.drf) root dispersion
+	CLR	@R3
+	JSR	PC,MSNTP
+	MOV	COMPTR,R0
+	CMPB	CLKTYP(R0),#CK.NTP ;is this ntp
+	BNE	7$		;branch if no
+	MOV	NTPADR,(R3)+	;(nt.rid) yes. reference clock address
+	MOV	NTPADR+2,(R3)+
+	BR	8$
+;
+7$:	MOVB	CLKTYP(R0),R1	;(nt.rid) reference clock id
+	ASH	#2,R1
+	MOV	NTPENC(R1),(R3)+
+	MOV	NTPENC+2(R1),(R3)+
+8$:	MOV	R0,R1		;(nt.ref) reference timestamp
+	ADD	#CLKREF,R1
+	JSR	PC,DCNNTP
+	MOV	R4,R1		;(nt.org, nt.rec) timestamps
+	ADD	#NG.ORG,R1
+	MOV	#10,R0
+9$:	MOV	(R1)+,(R3)+
+	SOB	R0,9$
+NTP53:	MOV	#PKTSTP,R1	;(nt.xmt) convert to ntp format
+	JSR	PC,DCNNTP
+	MOV	NT.XMT(R2),NG.XMT(R4) ;save for later
+	MOV	NT.XMT+2(R2),NG.XMT+2(R4)
+	MOV	NT.XMT+4(R2),NG.XMT+4(R4)
+	MOV	NT.XMT+6(R2),NG.XMT+6(R4)
+	MOV	#<NT.LEN-NT.ERR>/2,R0 ;swab decks
+	MOV	R2,R1
+	ADD	#NT.ERR,R1
+1$:	SWAB	(R1)+
+	SOB	R0,1$
+	SWAB	NT.RID(R2)	;unswab these
+	SWAB	NT.RID+2(R2)
+	MOV	#NT.LEN,R0
+	BIT	#NX.MAC,NG.PST(R4) ;is encryption enabled
+	BEQ	3$		;branch if no
+	JSR	PC,ENCMAC	;yes. encrypt mac
+	TST	NTPSKW+6	;is encryption delay defined
+	BNE	2$		;branch if no
+	MOV	R0,-(SP)	;yes. compute it
+	.GCLK
+	SUB	PKTSTP+4,R1
+	MOV	R1,NTPSKW+6
+	MOV	(SP)+,R0
+2$:	ADD	#UH.LEN,R0	;send packet
+3$:	JSR	PC,SNDPKT
+	INC	NG.SND(R4)	;log outbound packets
+	CLR	R0		;lose clout
+	.PRIO
+NTP51:	CLC			;update filter status
+	ROLB	NG.SRG(R4)
+	BNE	3$		;branch if recent
+	BCC	2$		;branch if expired	
+	BIC	#17*400+NX.RCH,NG.PST(R4) ;flash unreachable
+	BIS	#NP.UNR*400,NG.PST(R4)
+	ADD	#20*400,NG.PST(R4)
+	BCC	1$
+	SUB	#20*400,NG.PST(R4)
+1$:	FORMAT	#COM40B,R4	;peer unreachable
+2$:	BIT	#NX.CFG,NG.PST(R4) ;is this configured entry
+	BNE	3$		;branch if yes
+	CLRB	NG.FLG(R4)	;no. release entry
+	CLR	NG.TIM(R4)
+	BR	8$
+;
+3$:	BITB	NG.SRG(R4),#6	;valid samples previous two intervals
+	BEQ	5$		;branch if no
+	CMPB	NG.RCT(R4),NG.SIZ(R4) ;yes. is threshold reached
+	BHIS	4$		;branch if yes
+	INCB	NG.RCT(R4)	;no. increment valid samples
+	BR	7$
+;
+4$:	INCB	NG.MPI(R4)	;increment poll interval
+	BR	7$
+;
+5$:	TSTB	NG.RCT(R4)	;decrement valid samples
+	BEQ	6$
+	DECB	NG.RCT(R4)
+6$:	MOV	#ZERO,R1	;shift zero to purge old data
+	JSR	PC,FILTER
+	JSR	PC,SELECT	;reselect clock source
+	JSR	PC,HOSTUP	;keep books for local net
+	DECB	NG.MPI(R4)	;decrement poll interval
+7$:	JSR	PC,RSTIME	;check peer timer
+	MOV	R0,R1		;declare fence
+	ASR	R1
+	ADD	R0,NG.TIM(R4)	;reset timer
+	CMP	NG.TIM(R4),R1	;observe restraint
+	BGE	8$
+	MOV	R1,NG.TIM(R4)
+8$:	RTS	PC
+;
+; Clock filter procedure
+;
+; r4 = neighbor pointer, r1 = sample pointer
+;
+FILTER:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	JSR	PC,SKEW		;calculate skew increment
+	MOV	PKTSTP+2,NG.AGE(R4) ;update sample age
+	MOV	R4,R3		;shift old samples
+	ADD	#<FLTMAX-1>*FX.LEN+NG.FLT,R3
+	MOV	#FLTMAX-1,R2
+1$:	SUB	#FX.LEN,R3
+	LMOV	FX.OFS(R3),FX.LEN+FX.OFS(R3)
+	MOV	FX.DLY(R3),FX.LEN+FX.DLY(R3)
+	MOV	FX.DSP(R3),FX.LEN+FX.DSP(R3)
+	ADD	R0,FX.LEN+FX.DSP(R3) ;adjust dispersion
+	CMP	FX.LEN+FX.DSP(R3),#DSPMAX ;(unspec) clamp for neatness
+	BLOS	2$
+	MOV	#DSPMAX,FX.LEN+FX.DSP(R3)
+2$:	SOB	R2,1$
+	MOV	(R1)+,(R3)+	;(offset) insert new sample
+	MOV	(R1)+,(R3)+
+	MOV	(R1)+,(R3)+
+	MOV	(R1)+,(R3)+	;(delay)
+	MOV	(R1)+,(R3)+	;(dispersion)
+	MOV	R4,R1		;sort list by increasing distance
+	ADD	#NG.FLT,R1
+	MOVB	NG.SIZ(R4),R0
+	MOV	#FLIST,R2
+3$:	CMP	FX.DSP(R1),#DSPMAX ;copy new entry on list
+	BHIS	8$		;branch if null
+	MOV	R1,@R2		;(index)
+	MOV	FX.DLY(R1),R3	;(distance)
+	BGE	4$
+	NEG	R3
+4$:	ASR	R3
+	ADD	FX.DSP(R1),R3
+	MOV	R3,2(R2)
+	MOV	#FLIST,R3	;order new entry
+5$:	CMP	R3,R2		;is this end of list
+	BHIS	7$		;branch if yes
+	CMP	2(R3),2(R2)	;no. is new distance less than old
+	BLE	6$		;branch if no
+	MOV	(R2)+,OPRND	;yes. exchange entries
+	MOV	(R2)+,OPRND+2
+	MOV	2(R3),-(R2)
+	MOV	0(R3),-(R2)
+	MOV	OPRND,@R3
+	MOV	OPRND+2,2(R3)
+6$:	ADD	#4,R3		;advance to next entry
+	BR	5$
+;
+7$:	ADD	#4,R2		;advance to next entry
+8$:	ADD	#FX.LEN,R1
+	SOB	R0,3$
+	CMP	R2,#FLIST	;is list empty
+	BLOS	14$		;branch if yes
+	MOV	FLIST,R0	;no. save first entry
+	MOV	(R0)+,NG.OFS(R4) ;(offset)
+	MOV	(R0)+,NG.OFS+2(R4)
+	MOV	(R0)+,NG.OFS+4(R4)
+	MOV	(R0)+,NG.DLY(R4) ;(delay)
+	MOV	(R0)+,NG.DSP(R4) ;(dispersion)
+	CLR	R3		;compute filter dispersion
+	MOVB	NG.SIZ(R4),R1
+	ASH	#2,R1
+	ADD	#FLIST,R1
+9$:	SUB	#4,R1		;get next entry
+	CMP	R1,#FLIST
+	BLO	13$		;branch if done
+	CMP	R1,R2
+	BHIS	11$		;branch if no sample
+	MOV	@R1,R0
+	LMOV	0(R0),OPRND
+	MOV	FLIST,R0
+	LSUB	0(R0),OPRND
+	TST	OPRND
+	BPL	10$
+	LNEG	OPRND
+10$:	TST	OPRND		;is dispersion in range
+	BNE	11$		;branch if no
+	TST	OPRND+2
+	BNE	11$		;branch if no
+	CMP	OPRND+4,#DSPMAX
+	BLOS	12$		;branch if yes
+11$:	MOV	#DSPMAX,OPRND+4	;no. clamp at max
+12$:	ADD	OPRND+4,R3	;accumulate dispersion
+	ROR	R3		;(weight = 0.5)
+	BR	9$
+;
+13$:	ADD	R3,NG.DSP(R4)	;compute peer dispersion
+	CMP	NG.DSP(R4),#DSPMAX ;(unspec) clamp for neatness
+	BLOS	15$
+14$:	MOV	#DSPMAX,NG.DSP(R4)
+15$:	JSR	PC,WEIGHT	;calculate distance and weight
+	MOV	(SP)+,R3	;evas
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Clock selection procedure
+;
+; ntpskw = min dispersion, ntpskw+2 = min clocks,
+; ntpskw+4 = max distance;
+; returns ntpptr = clock source, accum+6 = clock offset
+;
+SELECT:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+;
+; Following is the modified DTS algorithm to calculate the confidence
+; interval containing the correct time.
+;
+; This section constructs and sorts the endpoint list.
+;
+; temp16 = peer count
+;
+	CLR	TEMP16		;initialize m = 0
+	MOV	#FLIST,R2
+	MOV	NTPTAB,R4	;search neighbor table
+1$:	BIC	#7,NG.PST(R4)	;wink flash (0)
+	CMP	TEMP16,#LSTMAX/6 ;is list full
+	BHIS	2$		;branch if yes
+	TSTB	NG.SRG(R4)	;(unspec) no. is peer reachable
+	BEQ	2$		;branch if no
+	CMP	NG.DSP(R4),#DSPMAX ;yes. is dispersion okay
+	BHIS	2$		;branch if no
+	MOVB	NG.STR(R4),R0	;yes. is peer synchronized to us
+	DECB	R0
+	BLE	3$		;branch if no
+	CMP	NG.DST(R4),NG.RID(R4)
+	BNE	3$		;branch if no
+	CMP	NG.DST+2(R4),NG.RID+2(R4)
+	BNE	3$		;branch if no
+2$:	JMP	13$		;yes. reject peer
+;
+3$:	INC	TEMP16		;record new entry m = m+1
+	INC	NG.PST(R4)	;flash survived sanity checks (1)
+	MOV	#-1,SURVIV
+4$:	MOV	R4,@R2
+	MOV	SURVIV,2(R2)
+	MOV	#FLIST,R3	;order list
+5$:	CMP	R3,R2		;is this end of list
+	BHIS	12$		;branch if yes
+	MOV	R4,-(SP)	;no. get current offset
+	MOV	@R3,R4
+	LMOV	NG.OFS(R4),TEMP48
+	JSR	PC,DIST		;calculate synchronization distance
+	TST	2(R3)
+	BEQ	7$		;branch if midpoint
+	BLT	6$		;branch if lowpoint
+	ADD	R0,TEMP48+4	;highpoint. add distance
+	ADC	TEMP48+2
+	ADC	TEMP48
+	BR	7$
+;
+6$:	SUB	R0,TEMP48+4	;lowpoint. subtract distance
+	SBC	TEMP48+2
+	SBC	TEMP48
+7$:	MOV	@R2,R4		;a - b
+	LSUB	NG.OFS(R4),TEMP48
+	JSR	PC,DIST		;calculate synchronization distance
+	TST	2(R2)
+	BEQ	9$		;branch if midpoint
+	BGT	8$		;branch if highpoint
+	ADD	R0,TEMP48+4	;lowpoint. add distance
+	ADC	TEMP48+2
+	ADC	TEMP48
+	BR	9$
+;
+8$:	SUB	R0,TEMP48+4	;highpoint. subtract distance
+	SBC	TEMP48+2
+	SBC	TEMP48
+9$:	MOV	(SP)+,R4
+	LTST	TEMP48		;is a > b
+	BLT	11$		;branch if no
+	BGT	10$		;branch if yes
+	CMP	2(R3),2(R2)
+	BLE	11$		;branch if no
+10$:	MOV	(R2)+,OPRND	;yes. exchange entries
+	MOV	(R2)+,OPRND+2
+	MOV	2(R3),-(R2)
+	MOV	0(R3),-(R2)
+	MOV	OPRND,(R3)+
+	MOV	OPRND+2,(R3)+
+11$:	ADD	#4,R3		;advance to next entry
+	BR	5$
+;
+12$:	ADD	#4,R2		;advance to next subentry
+	TST	SURVIV
+	BGT	13$		;branch if done
+	INC	SURVIV
+	BR	4$
+;
+13$:	ADD	#NG.LEN,R4	;advance to next table entry
+	CMP	R4,NTPEND	;is search complete
+	BHIS	CHM2		;branch if yes
+	JMP	1$		;no. collect another one
+;
+; This section searches for largest interval containing truechimers.
+;
+; temp16 = m, surviv = m-f, r1 = endpoint count, r4 = truechimers,
+; temp48 = low index, temp48+2 = high index
+;
+CHM2:	MOV	TEMP16,SURVIV	;endpoints = m-f (f = 0)
+	BEQ	SEL10		;branch if empty list
+1$:	MOV	TEMP16,R4	;falsetickers = m-c (c = 0)
+	CLR	R1		;find lowpoint
+	MOV	#FLIST,R3	;search list from lowest
+2$:	CMP	R3,R2
+	BHIS	3$		;branch if done
+	MOV	R3,TEMP48	;set lowpoint
+	TST	(R3)+
+	MOV	(R3)+,R0
+	SUB	R0,R1		;subtract increment
+	CMP	R1,SURVIV	;found m-f lowpoints
+	BGE	3$		;branch if yes
+	TST	R0		;no. is this midpoint
+	BNE	2$		;branch if no
+	DEC	R4		;yes. caught a falseticker
+	BR	2$
+;
+3$:	CLR	R1		;find highpoint
+	MOV	R2,R3		;search list from highest
+4$:	CMP	R3,#FLIST
+	BLOS	5$		;branch if done
+	MOV	-(R3),R0
+	TST	-(R3)
+	MOV	R3,TEMP48+2	;set highpoint
+	ADD	R0,R1		;add increment
+	CMP	R1,SURVIV	;found m-f highpoints
+	BGE	5$		;branch if yes
+	TST	R0		;no. is this midpoint
+	BNE	4$		;branch if no
+	DEC	R4		;yes. caught a falseticker
+	BR	4$
+;
+5$:	CMP	R4,SURVIV	;are falstickers <= f
+	BGT	6$		;branch if yes
+	DEC	SURVIV		;no. f = f+1
+	MOV	TEMP16,R0	;is f > m/2
+	ASR	R0
+	CMP	SURVIV,R0
+	BGT	1$		;try again
+6$:	MOV	TEMP48,R3	;light flashers
+7$:	CMP	R3,TEMP48+2
+	BHI	SEL10
+	MOV	(R3)+,R0
+	TST	(R3)+
+	BNE	7$
+	INC	NG.PST(R0)	;flash truechimer (2)
+	BR	7$
+;
+; Following is the NTP selection algorithm
+;
+; This section constructs the candidate list and sorts it by
+; stratum||synchronization distance.
+;
+; r2 = end-list pointer
+;
+SEL10:	MOV	#FLIST,R2	;initialize
+	MOV	NTPTAB,R4	;search neighbor table
+1$:	CMP	R4,NTPEND	;is search complete
+	BHIS	7$		;branch if yes
+	BIT	#2,NG.PST(R4)	;no. is this a truechimer (2)
+	BEQ	6$		;branch if no
+	JSR	PC,WEIGHT	;yes. assemble stratum||distance
+	MOVB	NG.STR(R4),R1 
+	DEC	R1
+	MUL	#DSPMAX,R1	;scale for weight
+	ADD	R0,R1
+	BCC	2$		;clamp at max
+	MOV	#-1,R1
+2$:	MOV	R4,@R2		;insert new entry on list
+	MOV	R1,2(R2)
+	MOV	#FLIST,R3	;order list
+3$:	CMP	R3,R2		;is this end of list
+	BHIS	5$		;branch if yes
+	CMP	2(R3),2(R2)	;no. is old entry less than new
+	BLOS	4$		;branch if no
+	MOV	(R2)+,OPRND	;yes. exchange entries
+	MOV	(R2)+,OPRND+2
+	MOV	2(R3),-(R2)
+	MOV	0(R3),-(R2)
+	MOV	OPRND,(R3)+
+	MOV	OPRND+2,(R3)+
+4$:	ADD	#4,R3		;advance to next entry
+	BR	3$
+;
+5$:	CMP	R2,#CNDMAX*4+FLIST ;is this too many peers
+	BHIS	6$		;branch if yes
+	ADD	#4,R2		;no. remember that
+6$:	ADD	#NG.LEN,R4	;advance to next table entry
+	BR	1$
+;
+7$:	MOV	#FLIST,R4	;scan for flashers
+8$:	CMP	R4,R2		;is this end of list
+	BHIS	SEL2		;branch if yes
+	MOV	@R4,R0		;no. flash survived outlyer check (4)
+	ADD	#2,NG.PST(R0)
+	ADD	#4,R4		;advance to next entry
+	BR	8$
+;
+; This section prunes outlyers from the candidate list until
+; the maximum selection dispersion is less than the minimum
+; dispersion for all survivors remaining on the list.
+;
+; r2 = end-list pointer, surviv = current clock source
+;
+SEL2:	CLR	TEMP48		;(max dispersion) initialize
+	CLR	TEMP48+2
+	CLR	TEMP48+4
+	MOV	#DSPMAX,TEMP16	;(min epsilon)
+	CLR	SURVIV		;(clock source)
+	MOV	#FLIST,R3
+2$:	CMP	R3,R2		;calling all clocks
+	BHIS	4$		;branch if done
+	JSR	PC,DISP		;compute max xi and min epsilon
+	CMP	@R3,NTPPTR	;remember current source
+	BNE	3$
+	MOV	R3,SURVIV
+3$:	ADD	#4,R3		;advance to next clock
+	BR	2$
+;
+4$:	TST	TEMP48		;is max xi less than min epsilon
+	BNE	5$		;branch if no
+	TST	TEMP48+2
+	BNE	5$		;branch if no
+	CMP	TEMP48+4,TEMP16
+	BLOS	SEL30		;branch if yes
+	MOV	NTPSKW+2,R0	;no. are there enough clocks
+	ASH	#2,R0
+	ADD	#FLIST,R0
+	CMP	R2,R0
+	BLOS	SEL30		;branch if no
+5$:	SUB	#4,R2		;yes. toss max entry
+	MOV	@R4,R0		;flash survived data check (3)
+	DEC	NG.PST(R0)
+	CMP	R0,NTPPTR	;is this current source
+	BNE	6$		;branch if no
+	CLR	SURVIV		;yes. not any more
+6$:	CMP	R4,R2		;squish outlyer
+	BHIS	SEL2		;branch if done
+	MOV	4(R4),@R4
+	MOV	6(R4),2(R4)
+	ADD	#4,R4
+	BR	6$
+;
+; This section determines the new clock source. If the current clock
+; source is among the survivors and has the lowest stratum, the clock
+; source is unchanged. Otherwise the first survivor on the candidate
+; list becomes the new clock source. In either case the combining
+; algorithm computes the weighted average of the survivor offsets.
+;
+; returns ntpptr = clock source, accum+6 = clock offset, surviv = xi
+;
+SEL30:	CMP	R2,#FLIST	;are there survivors
+	BHI	1$		;branch if yes
+	TST	NTPPTR		;no. is this news
+	BEQ	8$		;branch if no
+	CLR	NTPPTR		;yes. lost clock source
+	BIC	#17*400,NTPSYS	;system new clock source or stratum
+	BIS	#NS.SRC*400,NTPSYS
+	FORMAT	#COM40E		;lost clock source
+	ADD	#20*400,NTPSYS
+	BCC	8$
+	SUB	#20*400,NTPSYS
+	BR	8$		;forget this
+;
+1$:	MOV	SURVIV,R3	;is clock source represented
+	BEQ	2$		;branch if no
+	MOV	@R3,R0		;yes. is it low stratum
+	MOV	FLIST,R1
+	CMPB	NG.STR(R0),NG.STR(R1)
+	BLOS	3$		;branch if no (use new source)
+2$:	MOV	#FLIST,R3	;yes. use current source
+3$:	MOV	(R3)+,R4	;declare winner
+	MOV	(R3)+,SURVIV
+	INC	NG.PST(R4)	;flash clock source (5)
+	JSR	PC,DIST		;is total distance okay
+	ADD	SURVIV,R0
+	BCS	4$		;branch if no
+	CMP	R0,NTPSKW+4
+	BHIS	4$		;branch if no
+	INC	NG.PST(R4)	;yes. flash clock synchronized (6)
+4$:	JSR	PC,COMBIN	;combine weight offsets
+	CMPB	NG.STR(R4),NTPSTR ;is this new stratum
+	BEQ	5$		;branch if no
+	MOVB	NG.STR(R4),NTPSTR ;yes. update
+	BR	6$
+;
+5$:	TST	NTPPTR		;is this news
+	BNE	7$		;branch if no
+6$:	BIC	#17*400,NTPSYS	;yes. update
+	BIS	#NS.SRC*400,NTPSYS
+	FORMAT	#COM40D,R4	;new clock source or stratum
+	ADD	#20*400,NTPSYS
+	BCC	7$
+	SUB	#20*400,NTPSYS
+7$:	MOV	R4,NTPPTR	;set clock source
+	JSR	PC,RSTIME	;check peer timer
+8$:	MOV	(SP)+,R4	;evas
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to compute select dispersion
+;
+; r2 = end-list pointer, r3 = entry pointer; returns temp48 = max xi,
+; temp16 = min epsilon, xi in list, r4 = max xi pointer
+;
+DISP:	CLR	ACCUM		;initialize dispersion
+	CLR	ACCUM+2
+	CLR	ACCUM+4
+	MOV	R4,-(SP)
+	MOV	@R3,R4		;skew dispersion
+	JSR	PC,SKEW
+	ADD	NG.DSP(R4),R0	;filter dispersion
+	CMP	R0,TEMP16	;save min dispersion
+	BHIS	1$
+	MOV	R0,TEMP16
+1$:	MOV	(SP)+,R4
+	MOV	R2,R1		;calling all clocks
+2$:	SUB	#4,R1
+	CMP	R1,#FLIST
+	BLO	4$		;branch if done
+	MOV	@R1,R0		;compute absolute difference
+	LMOV	NG.OFS(R0),OPRND
+	MOV	@R3,R0
+	LSUB	NG.OFS(R0),OPRND
+	TST	OPRND
+	BPL	3$
+	LNEG	OPRND
+3$:	LADD	OPRND,ACCUM	;accumulate dispersion
+	CLC			;(weight = 0.75)
+	ROR	ACCUM
+	ROR	ACCUM+2
+	ROR	ACCUM+4
+	LMOV	ACCUM,TEMP64
+	CLC
+	ROR	ACCUM
+	ROR	ACCUM+2
+	ROR	ACCUM+4
+	LADD	TEMP64,ACCUM
+	BR	2$
+;
+4$:	LMOV	ACCUM,TEMP64	;save abs max and pointer
+	LSUB	TEMP48,TEMP64
+	BMI	5$
+	LMOV	ACCUM,TEMP48
+	MOV	R3,R4
+5$:	MOV	ACCUM+4,2(R3)	;save xi for later
+	RTS	PC		;normal exit
+;
+; Subroutine to compute synchronization distance
+;
+; r4 = neighbor pointer; returns r0 = distance
+;
+DIST:	MOV	R1,-(SP)	;save
+	JSR	PC,SKEW		;skew dispersion
+	ADD	NG.DSP(R4),R0	;peer dispersion
+	ADD	NG.DRF+2(R4),R0	;root dispersion
+	BCS	1$		;branch if overflow
+	MOV	NG.DLY(R4),R1	;peer delay
+	ADD	NG.ERR+2(R4),R1	;root delay
+	BVS	1$		;branch if overflow
+	ASR	R1		;total delay/2
+	ADD	R1,R0		;combine all terms
+	BCC	2$		;branch if okay
+1$:	MOV	#-1,R0		;unreasonable clamp
+2$:	MOV	(SP)+,R1	;evas
+	RTS	PC
+;
+; Subroutine to compute skew dispersion
+;
+; r4 = neighbor pointer; returns r0 = skew dispersion (1 ms per 64 s)
+;
+SKEW:	MOV	R1,-(SP)	;save
+	MOV	PKTSTP+2,R0	;determine sample age
+	SUB	NG.AGE(R4),R0
+	BGE	1$		;branch if okay
+	ADD	#1318.,R0	;correct for day rollover
+1$:	BNE	2$		;branch if okay
+	INC	R0		;the clock always ticks
+2$:	MOV	(SP)+,R1	;evas
+	RTS	PC
+;
+; Subroutine to compute measurement/skew dispersion
+;
+; r0 = skew dispersion (1 ms per 64 s); returns r0 = dispersion
+;
+PRETHR:	MOV	R1,-(SP)	;save
+	TST	R0		;check interval
+	BGE	1$		;branch if okay
+	ADD	#1318.,R0	;correct for day rollover
+1$:	MOV	R0,-(SP)
+	MOV	COMPTR,R0	;compute measurement error
+	MOVB	CLKPRE(R0),R1
+	MOV	#1000.,R0
+	ASH	R1,R0		;(scale and round)
+	ADC	R0
+	ADD	(SP)+,R0	;compute dispersion
+	MOV	(SP)+,R1	;evas
+	RTS	PC
+;
+; Subroutine to compute distance and weight
+;
+; r4 = neighbor pointer; returns r0 = distance
+;
+WEIGHT:	MOV	#-1,ACCUM+12	;compute reciprocal
+	CLR	ACCUM+10
+	CLR	ACCUM+6
+	CLR	ACCUM+4
+	CLR	ACCUM+2
+	CLR	ACCUM
+	JSR	PC,DIST		;compute distance
+	MOV	R0,-(SP)
+	NEG	R0
+	MOV	R0,OPRND+4
+	MOV	#-1,OPRND+2
+	MOV	#-1,OPRND
+	JSR	PC,BIGDIV
+	MOV	ACCUM+12,NG.WGT(R4) ;leave in a handy place
+	MOV	(SP)+,R0
+	RTS	PC
+;
+; Combine procedure
+;
+; r2 = end-list pointer, returns accum+6 = clock offset
+;
+COMBIN:	CLR	TEMP48+4	;initialize weights
+	CLR	TEMP48+2
+	CLR	TEMP48
+	CLR	TEMP64+6
+	CLR	TEMP64+4
+	CLR	TEMP64+2
+	CLR	TEMP64
+	MOV	#FLIST,R1	;calling all clocks
+1$:	CMP	R1,R2		;is search complete
+	BHIS	4$		;branch if yes
+	MOV	@R1,R0		;compute weighted contribution
+	ADD	NG.WGT(R0),TEMP48+4 ;compute weighted contribution
+	ADC	TEMP48+2
+	ADC	TEMP48
+	MOV	NG.WGT(R0),ACCUM+12
+	CLR	ACCUM+10
+	CLR	ACCUM+6
+	LMOV	NG.OFS(R0),OPRND ;(a nasty signed multiply-add)
+	BMI	2$
+	JSR	PC,BIGMUL
+	ADD	ACCUM+12,TEMP64+6
+	ADC	TEMP64+4
+	ADC	TEMP64+2
+	ADC	TEMP64
+	ADD	ACCUM+10,TEMP64+4
+	ADC	TEMP64+2
+	ADC	TEMP64
+	ADD	ACCUM+6,TEMP64+2
+	ADC	TEMP64
+	ADD	ACCUM+4,TEMP64
+	BR	3$
+;
+2$:	LNEG	OPRND
+	JSR	PC,BIGMUL
+	SUB	ACCUM+12,TEMP64+6
+	SBC	TEMP64+4
+	SBC	TEMP64+2
+	SBC	TEMP64
+	SUB	ACCUM+10,TEMP64+4
+	SBC	TEMP64+2
+	SBC	TEMP64
+	SUB	ACCUM+6,TEMP64+2
+	SBC	TEMP64
+	SUB	ACCUM+4,TEMP64
+3$:	ADD	#4,R1		;advance to next entry
+	BR	1$
+;
+4$:	LMOV	TEMP48,OPRND	;calculate weighted offset
+	LNEG	OPRND
+	LMOV	TEMP64+2,ACCUM+6
+	MOV	TEMP64,ACCUM+4
+	SXT	ACCUM+2
+	SXT	ACCUM
+	JSR	PC,SBGDIV
+	RTS	PC
+;
+; Update procedure
+; r4 = neighbor pointer, ntpptr = clock source, accum+6 = clock offset,
+; surviv = xi
+;
+UPDATE:	MOV	R1,-(SP)	;save
+	MOVB	NTPSYS,-(SP)	;save old clock trash
+	MOV	COMPTR,R0
+	MOVB	CLKTYP(R0),R0	;fetch current clock type
+	BIC	#^C77,R0
+	BIC	#77,NTPSYS
+	BIS	R0,NTPSYS
+	JSR	PC,SELECT	;reselect clock source(s)
+	CMP	R4,NTPPTR	;is this our tick
+	BNE	1$		;branch if no
+	BIT	#2,NG.PST(R4)	;is total distance okay (6)
+	BEQ	1$		;branch if no
+	JSR	PC,SETCLK	;yes. tock to the clock
+1$:	MOVB	PKTSTP+1,R0	;get current leap bits
+	BIC	#^C300,R0
+	BIC	#300,NTPSYS
+	BIS	R0,NTPSYS
+	CMPB	(SP)+,NTPSYS	;did status word change
+	BEQ	2$		;branch if no
+	BIC	#17*400,NTPSYS	;yes. new system status
+	BIS	#NS.LEP*400,NTPSYS
+	FORMAT	#COM40F,#NTPSYS	;new system status
+	ADD	#20*400,NTPSYS
+	BCC	2$
+	SUB	#20*400,NTPSYS
+2$:	MOV	(SP)+,R1	;evas
+	RTS	PC
+;
+; Subroutine to set local clock
+; r4 = neighbor pointer, accum+6 = clock offset
+;
+SETCLK:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R4,-(SP)
+	MOV	#-23552.,OPRND+4 ;(rem(86400*1000/65536)*65536)
+	MOV	#^C1318.,OPRND+2 ;(mod(86400*1000/65536))
+	SXT	OPRND
+	JSR	PC,SBGDIV
+	MOV	PKTSTP,R0	;determine new date
+	BIC	#140000,R0
+	ADD	ACCUM+12,R0	
+	MOVB	NG.STA(R4),R1	;insert leap bits
+	SWAB	R1
+	BIC	#^C140000,R1
+	BIS	R1,R0
+	MOV	R0,OPRND
+	MOV	NG.SRC(R4),NTPADR ;save address
+	MOV	NG.SRC+2(R4),NTPADR+2
+	MOV	NG.ERR+2(R4),NTPDSP ;save total delay
+	ADD	NG.DLY(R4),NTPDSP
+	MOV	COMPTR,R0	;is clock locked to ntp
+	CMPB	NTPHID,PARCKH(R0)
+	BNE	STC11		;branch if no
+	MOV	SURVIV,R2	;(xi) yes. assemble total dispersion
+	JSR	PC,SKEW		;(skew)
+	ADD	R0,R2
+	ADD	NG.DSP(R4),R2	;(peer dispersion)
+	CMP	R2,NTPSKW	;clamp at min
+	BHIS	1$
+	MOV	NTPSKW,R2
+1$:	ADD	NG.DRF+2(R4),R2	;(peer root dispersion)
+	BCC	2$		;clamp at max
+	MOV	#-1,R2
+2$:	CLR	R0		;assemble clock type/stratum
+	BISB	NG.STR(R4),R0
+	BEQ	3$
+	CMP	R0,#STRINF	;clamp at max
+	BHIS	3$
+	INC	R0
+3$:	SWAB	R0
+	BISB	#CK.NTP,R0
+	.TRAP	#TR.CLK,R0,R2,OPRND,OPRND+2,OPRND+4
+	BCC	STC11		;branch if linear track
+;
+; Clock step: forget past sins
+;
+STC10:	BIC	#17*400,NTPSYS	;aperture exceeded
+	BIS	#NS.APX*400,NTPSYS
+	FORMAT	#COM40G,#OPRND	;step adjustment
+	ADD	#20*400,NTPSYS
+	BCC	1$
+	SUB	#20*400,NTPSYS
+1$:	MOV	NTPTAB,R4	;purge all filters
+2$:	CMP	R4,NTPEND
+	BHIS	STC11		;branch if done
+	TSTB	NG.SRG(R4)
+	BEQ	3$		;branch if not running
+	JSR	PC,CLEAR	;clear filter
+3$:	ADD	#NG.LEN,R4	;advance to next entry
+	BR	2$
+;
+STC11:	MOV	(SP)+,R4	;evas
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Peer instantiation procedure
+; r4 = neighbor pointer
+;
+; Note: This code disables off-net access for more than n unconfigured
+; peers on the same net.
+;
+INST:	CLR	R0		;(count of peers on this net)
+	INC	NTPCNT		;create new association identifier
+	BEQ	INST		;avoid zero
+	MOV	NTPTAB,R1
+1$:	CMP	R1,NTPEND	;search for prior occurance
+	BHIS	NTP19		;branch if none
+	TST	NG.SRC(R1)
+	BEQ	NTP19		;branch if none
+	CMP	NTPCNT,NG.IDN(R1) ;is identifier in use
+	BEQ	INST		;branch if yes
+	BIT	#NX.CFG,NG.PST(R1) ;no. is this configured entry
+	BNE	3$		;branch if yes
+	CMPB	UDPSRC,NG.SRC(R1) ;no. is peer net already in table
+	BNE	3$		;branch if no
+	CMPB	UDPSRC,#128.
+	BLO	2$		;branch if yes
+	CMPB	UDPSRC+1,NG.SRC+1(R1)
+	BNE	3$		;branch if no
+	CMPB	UDPSRC,#192.
+	BLO	2$		;branch if yes
+	CMPB	UDPSRC+2,NG.SRC+2(R1)
+	BNE	3$		;branch if no
+2$:	INC	R0		;yes. bump peer count
+3$:	ADD	#NG.LEN,R1	;no. advance to next entry
+	BR	1$
+;
+NTP19:	CMPB	UDPSRC,UDPDST	;is peer on this net
+	BNE	1$		;branch if no
+	CMPB	UDPSRC,#128.
+	BLO	2$		;branch if yes
+	CMPB	UDPSRC+1,UDPDST+1
+	BNE	1$		;branch if no
+	CMPB	UDPSRC,#192.
+	BLO	2$		;branch if yes
+	CMPB	UDPSRC+2,UDPDST+2
+	BEQ	2$		;branch if yes
+1$:	CMP	R0,NTPSKW+10	;no. is this the limit
+	BLO	2$		;branch if no
+	SEC			;yes. access denied
+	RTS	PC
+;
+2$:	MOV	#NG.LEN,R0	;one of the good guys. move in
+	MOV	R4,R1		;clear past sins
+3$:	CLRB	(R1)+
+	SOB	R0,3$
+	MOV	UDPDST,NG.DST(R4) ;save addresses
+	MOV	UDPDST+2,NG.DST+2(R4)
+	MOV	UDPDST+4,NG.DST+4(R4)
+	MOV	UDPSRC,NG.SRC(R4)
+	MOV	UDPSRC+2,NG.SRC+2(R4)
+	MOV	UDPSRC+4,NG.SRC+4(R4)
+	MOV	NTPCNT,NG.IDN(R4) ;save identifier
+	MOV	PKTSTP+4,NG.TIM(R4) ;(cute randomization trick)
+	BIC	#^C77,NG.TIM(R4)
+	JSR	PC,CLEAR	;clear filter
+;	FORMAT	#COM40H,R4	;peer installed
+	CLC			;access approved
+	RTS	PC
+;
+; Clear prodedure
+; r4 = neighbor pointer
+;
+CLEAR:	MOV	R1,-(SP)	;save
+	MOV	R4,R1		;clear reset area
+	ADD	#NG.ORG,R1
+	MOV	#<NG.ERS-NG.ORG>/2,R0
+1$:	CLR	(R1)+
+	SOB	R0,1$
+	MOV	R4,R1		;clear filter
+	ADD	#NG.FLT,R1
+	MOV	#FLTMAX,R0
+2$:	CLR	(R1)+		;zero offset
+	CLR	(R1)+
+	CLR	(R1)+
+	CLR	(R1)+		;zero delay
+	MOV	#DSPMAX,(R1)+	;max dispersion
+	SOB	R0,2$
+	MOV	#DSPMAX,NG.DSP(R4) ;initialize dispersion and weight
+	JSR	PC,WEIGHT
+	MOVB	#FLTMAX,NG.SIZ(R4)
+	MOV	COMPTR,R0	;is this crystal clock
+	BIT	#KW11P$,PAROPT(R0)
+	BNE	3$		;branch if yes
+	ASRB	NG.SIZ(R4)	;yes. loosen loop for power grid
+3$:	MOVB	#POLMIN,NG.MPI(R4) ;reset poll interval
+	JSR	PC,RSTIME	;check peer timer
+	JSR	PC,SELECT	;reselect clock
+	MOV	(SP)+,R1	;evas
+	RTS	PC
+;
+; Poll update procedure
+; r4 = neighbor pointer, returns r0 = timer preset
+;
+RSTIME:	MOV	R1,-(SP)	;save
+	BIT	#X.POLL,@PARPTR	;is variable rate disabled
+	BNE	3$		;branch if yes
+	CMPB	NG.SIZ(R4),#FLTMAX
+	BNE	3$		;branch if yes
+	MOV	#POLMAX,R1	;clamp mypoll max
+	CMP	R4,NTPPTR
+	BNE	1$
+	MOV	COMPTR,R0	;(clock source)
+	MOVB	PARDCC(R0),R1
+	NEG	R1
+	ADD	#POLMIN,R1
+1$:	CMPB	NG.MPI(R4),R1
+	BLE	2$
+	MOVB	R1,NG.MPI(R4)
+2$:	CMPB	NG.MPI(R4),#POLMIN ;clamp mypoll min
+	BGE	4$
+3$:	MOVB	#POLMIN,NG.MPI(R4)
+4$:	MOVB	NG.HPI(R4),R1	;clamp hispoll min
+	CMPB	R1,#POLMIN
+	BGE	5$
+	MOV	#POLMIN,R1
+5$:	CMPB	R1,NG.MPI(R4)	;find min( hispoll, mypoll)
+	BLE	6$
+	MOVB	NG.MPI(R4),R1
+6$:	MOV	#1,R0		;convert to seconds (-1)
+	ASH	R1,R0
+	DEC	R0
+	CMP	R0,NG.TIM(R4)	;is new value less than old
+	BGE	7$		;branch if no
+	BIC	PKTSTP+4,R0	;yes. (cute randomization trick)
+	MOV	R0,NG.TIM(R4)
+	CLR	R0
+7$:	MOV	(SP)+,R1
+	RTS	PC
+;
+; Encrypt message authentication code
+; r2 = udp header pointer, r4 = neighbor pointer; returns NTP length
+;
+ENCMAC:	MOVB	NTPKID,R0	;assume system key id
+	BITB	#1,NG.FLG(R4)	;is this an active mode
+	BNE	1$		;branch if yes
+	MOVB	NG.KEY(R4),R0	;no. assume peer key id	
+	BIT	#NX.KEY,NG.PST(R4) ;was last received message auth
+	BNE	1$		;branch if yes
+	CLR	R0		;no. assume default key
+1$:	MOV	R2,R1		;set pointers
+	ADD	#UH.LEN,R1
+	CALL	CRYSET,R1,#NT.LEN-UH.LEN,R0 ;construct authenticator
+	RTS	PC		;returns NTP length
+;
+; Decrypt message authentication code
+; r2 = udp header pointer, r4 = neighbor pointer
+;
+DECMAC:	BIT	#NX.CFG,NG.PST(R4) ;is entry configured
+	BNE	1$		;branch if yes
+	BIC	#NX.MAC,NG.PST(R4) ;no. is this authenticated
+	CMP	PKTLNG,#NT.LEN
+	BLOS	1$		;branch if no
+	BIS	#NX.MAC,NG.PST(R4) ;yes. so indicate
+1$:	BIT	#NX.MAC,NG.PST(R4) ;is authentication enabled
+	BEQ	2$		;branch if no
+	MOV	PKTLNG,R0	;yes. verify authenticator
+	SUB	#UH.LEN,R0
+	MOV	R2,R1
+	ADD	#UH.LEN,R1
+	CALL	CRYTST,R1,#NT.LEN-UH.LEN,R0
+	MOVB	R0,NG.KEY(R4)	;save key for later
+	BEQ	2$		;branch if failure
+	BIS	#NX.KEY,NG.PST(R4) ;mark okay
+	RTS	PC
+;
+2$:	BIT	#NX.KEY,NG.PST(R4) ;was this once authenticated
+	BEQ	3$		;branch if no
+	BIC	#17*400+NX.KEY,NG.PST(R4) ;yes. flash auth failure
+	BIS	#NP.KEY*400,NG.PST(R4)
+	FORMAT	#COM40C,R4	;peer authentication failure
+	ADD	#20*400,NG.PST(R4)
+	BCC	3$
+	SUB	#20*400,NG.PST(R4)
+3$:	RTS	PC
+;
+; Subroutine to mark ntp host up/down
+; ntpptr = clock source
+;
+HOSTUP:	MOV	R1,-(SP)	;save
+	MOV	R4,-(SP)
+	MOVB	NTPHID,R1	;is hid valid
+	BEQ	3$		;branch if no
+	MUL	#HOSLEN,R1	;yes. compute host table offset
+	MOV	R1,-(SP)
+	MOV	COMPTR,R1	;map host table into window
+	MOV	PARHOS(R1),R0
+	MOV	PARHOS+2(R1),R1
+	.WIND
+	ADD	(SP)+,R1	;point at entry
+	EMT	IPPID		;extract process id
+	BCS	3$		;branch if cant
+	MOV	NTPPTR,R4	;is there a flash
+	BNE	1$		;branch if yes
+	CMPB	R0,HOSPID(R1)	;no. is we tracking ntp
+	BNE	3$		;branch if no
+	MOV	#TM.TTL,HOSDLY(R1) ;yes. mark ntp down
+	BR	3$
+;
+1$:	MOVB	R0,HOSPID(R1)	;flash. refresh invariant fields
+	CLRB	HOSTTL(R1)
+	MOV	NTPDSP,R0	;clamp distance
+	CMP	R0,#TM.MIN
+	BGE	2$
+	MOV	#TM.MIN,R0
+2$:	MOV	R0,HOSDLY(R1)	;update host variables
+	MOV	NG.OFS+4(R4),HOSOFS(R1)
+	MOV	PKTSTP+2,HOSTIM(R1)
+	MOV	PKTSTP+4,HOSTIM+2(R1)
+3$:	MOV	(SP)+,R4	;evas
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Time conversion routines
+;
+; NTP time is 64-bit seconds with the decimal point between bits 32
+; and 33. The low-order 16 bits are saved, but are not significant
+; in timestamp calculations. The four words are in byte-swapped
+; order. DCN time is a two-part quantity, first the 16-bit date in
+; days past 1 Jan 72 and second the 32-bit integral milliseconds
+; since midnight UT. Internal time is 48-bit integral milliseconds.
+;
+; Subroutine to convert ntp time to internal time (in situ)
+; r1 = ntp time pointer, r3 = internal time pointer (updated)
+;
+NTPTIM:	MOV	(R1)+,ACCUM+6	;get ntp time (high-order 48 bits)
+	MOV	(R1)+,ACCUM+10
+	MOV	(R1)+,ACCUM+12
+	TST	(R1)+
+	MOV	#1000.,OPRND+4	;convert to milliseconds
+	SXT	OPRND+2
+	SXT	OPRND	
+	JSR	PC,BIGMUL
+	MOV	ACCUM+4,(R3)+
+	MOV	ACCUM+6,(R3)+
+	MOV	ACCUM+10,(R3)+
+	RTS	PC
+;
+; Subroutine to convert internal time to dcn time
+; r1 = internal time pointer, r3 = dcn time pointer (updated)
+;
+TIMDCN:	MOV	(R1)+,ACCUM+6	;get internal time
+	SXT	ACCUM+4
+	SXT	ACCUM+2
+	SXT	ACCUM
+	MOV	(R1)+,ACCUM+10
+	MOV	(R1)+,ACCUM+12
+	MOV	#-23552.,OPRND+4 ;divide by 1000*60*60*24
+	MOV	#^C1318.,OPRND+2
+	SXT	OPRND
+	JSR	PC,BIGDIV
+	MOV	ACCUM+12,@R3	;stash date	
+	SUB	#26297.,(R3)+	;(0000 1 january 1972)
+	MOV	OPRND+2,(R3)+	;stash time-of-day
+	MOV	OPRND+4,(R3)+
+	RTS	PC
+;
+; Subroutine to convert dcn time to ntp time
+; r1 = dcn time pointer, r3 = ntp time pointer (updated)
+;
+DCNNTP:	MOV	(R1)+,ACCUM+12	;get julian day
+	BIC	#140000,ACCUM+12
+	CLR	ACCUM+10
+	CLR	ACCUM+6	
+	ADD	#26297.,ACCUM+12 ;(0000 1 january 1972)
+	ADC	ACCUM+10
+	ADC	ACCUM+6
+	MOV	#20864.,OPRND+4 ;(24*60*60) convert to seconds
+	MOV	#1,OPRND+2
+	SXT	OPRND
+	JSR	PC,BIGMUL
+	MOV	ACCUM+10,TEMP64
+	MOV	ACCUM+12,TEMP64+2
+	CLR	TEMP64+4
+	CLR	TEMP64+6
+	MOV	(R1)+,ACCUM+6	;get time-of-day
+	SXT	ACCUM+4
+	SXT	ACCUM+2
+	SXT	ACCUM
+	MOV	(R1)+,ACCUM+10
+	CLR	ACCUM+12
+	MOV	#-1000.,OPRND+4 ;convert to seconds
+	SXT	OPRND+2
+	SXT	OPRND
+	JSR	PC,BIGDIV
+	ADD	ACCUM+12,TEMP64+4 ;add to day-seconds
+	ADC	TEMP64+2
+	ADC	TEMP64
+	ADD	ACCUM+10,TEMP64+2
+	ADC	TEMP64
+	ADD	ACCUM+6,TEMP64
+	MOV	TEMP64,(R3)+	;copy timestamp
+	MOV	TEMP64+2,(R3)+
+	MOV	TEMP64+4,(R3)+
+	MOV	TEMP64+6,(R3)+
+	RTS	PC
+;
+; Subroutine to convert signed ntp seconds to internal milliseconds
+; r3 = ntp seconds pointer/internal milliseconds pointer (updated)
+; returns cc(z) if overflow 16 bits
+;
+NTPMS:	MOV	@R3,ACCUM+10	;get ntp seconds
+	SXT	ACCUM+6
+	MOV	2(R3),ACCUM+12
+	MOV	#1000.,OPRND+4	;convert to milliseconds
+	SXT	OPRND+2
+	SXT	OPRND	
+	JSR	PC,SBGMUL
+	MOV	ACCUM+6,(R3)+	;stash result
+	MOV	ACCUM+10,(R3)+
+	ROL	ACCUM+10	;flash z if no overflow
+	ADC	ACCUM+6
+	RTS	PC
+;
+; Subroutine to convert signed internal milliseconds to ntp seconds
+; r3 = internal milliseconds pointer/ntp seconds pointer (updated)
+; returns cc(z) if overflow 16 bits
+;
+MSNTP:	CLR	ACCUM+12	;get milliseconds
+	MOV	@R3,ACCUM+6
+	SXT	ACCUM+4
+	SXT	ACCUM+2
+	SXT	ACCUM
+	MOV	2(R3),ACCUM+10
+	MOV	#-1000.,OPRND+4 ;convert to ntp seconds
+	SXT	OPRND+2
+	SXT	OPRND
+	JSR	PC,SBGDIV
+	MOV	ACCUM+10,(R3)+	;stash result
+	MOV	ACCUM+12,(R3)+
+	ROL	ACCUM+12	;flash z if no overflow
+	ADC	ACCUM+10
+	RTS	PC
+;
+; Multiple-precision arithmetic functions (unsigned)
+;
+; oprnd		48-bit multiplier/quotient register (three words)
+; accum		96-bit accumulator (six words)
+;
+; 96-bit signed multiply
+; offset = signed multiplier, accum = multiplicand
+; returns signed product in accum
+;
+SBGMUL:	TST	OPRND		;is multiplier negative
+	BMI	1$		;branch if yes
+	JSR	PC,BIGMUL	;no. onward
+	BR	2$
+;
+1$:	LNEG	OPRND		;complement multiplier
+	JSR	PC,BIGMUL
+	COM	ACCUM+12	;complement product
+	COM	ACCUM+10
+	COM	ACCUM+6
+	COM	ACCUM+4
+	COM	ACCUM+2
+	COM	ACCUM
+	ADD	#1,ACCUM+12
+	ADC	ACCUM+10
+	ADC	ACCUM+6
+	ADC	ACCUM+4
+	ADC	ACCUM+2
+	ADC	ACCUM
+2$:	RTS	PC
+;
+; 96-bit multiply
+; offset = multiplier, accum = multiplicand
+; returns product in accum
+;
+BIGMUL:	MOV	R0,-(SP)	;save
+	CLR	ACCUM		;initialize
+	CLR	ACCUM+2
+	CLR	ACCUM+4
+	MOV	#49.,R0
+1$:	ASR	ACCUM		;shift partial product right
+	ROR	ACCUM+2
+	ROR	ACCUM+4
+	ROR	ACCUM+6
+	ROR	ACCUM+10
+	ROR	ACCUM+12
+	BCC	2$		;branch if lsb = 0
+	LADD	OPRND,ACCUM	;lsb ~= 0. add multiplier
+2$:	SOB	R0,1$
+	MOV	(SP)+,R0	;evas
+	RTS	PC
+;
+; 96-bit signed divide
+; oprnd = (-)divisor, accum = signed dividend
+; returns signed quotient in accum, remainder in oprnd
+;
+SBGDIV:	TST	ACCUM		;is dividend negative
+	BMI	1$		;branch if yes
+	JSR	PC,BIGDIV	;no. onward
+	BR	2$
+;
+1$:	COM	ACCUM+12	;complement dividend
+	COM	ACCUM+10
+	COM	ACCUM+6
+	COM	ACCUM+4
+	COM	ACCUM+2
+	COM	ACCUM
+	ADD	#1,ACCUM+12
+	ADC	ACCUM+10
+	ADC	ACCUM+6
+	ADC	ACCUM+4
+	ADC	ACCUM+2
+	ADC	ACCUM
+	JSR	PC,BIGDIV
+	LNEG	OPRND		;complement remainder
+	LNEG	ACCUM+6		;complement quotient
+2$:	TST	ACCUM+6		;propagate sign
+	SXT	ACCUM+4
+	SXT	ACCUM+2
+	SXT	ACCUM
+	RTS	PC
+;
+; 96-bit unsigned divide
+; oprnd = (-)divisor, accum = dividend
+; returns quotient in accum, remainder in oprnd
+;
+BIGDIV:	MOV	R0,-(SP)	;save
+	MOV	R1,-(SP)
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	CLR	R1		;clear remainder
+	CLR	R2
+	CLR	R3
+	MOV	#97.,R0		;initialize
+1$:	ROL	R3		;shift partial remainder left
+	ROL	R2
+	ROL	R1
+	ADD	OPRND+4,R3	;subtract divisor
+	ADC	R2
+	ADC	R1
+	ADD	OPRND+2,R2
+	ADC	R1
+	ADD	OPRND,R1
+	BCS	2$		;branch if no underflow
+	SUB	OPRND+4,R3	;restore partial remainder
+	SBC	R2
+	SBC	R1
+	SUB	OPRND+2,R2
+	SBC	R1
+	SUB	OPRND,R1
+2$:	ROL	ACCUM+12	;rotate partial quotient left
+	ROL	ACCUM+10
+	ROL	ACCUM+6
+	ROL	ACCUM+4
+	ROL	ACCUM+2
+	ROL	ACCUM
+	SOB	R0,1$
+	MOV	R1,OPRND	;save remainder
+	MOV	R2,OPRND+2
+	MOV	R3,OPRND+4
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	MOV	(SP)+,R0
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+ZERO:	.WORD	0,0,0,0,DSPMAX	;oven stuffer
+;
+; Service branch table
+;
+;		 1    2    3    4    5
+SVCJMP:	.WORD	RECV,PACK,RECV,XMIT,XMIT ;1
+	.WORD	RECV,ERRR,RECV,ERRR,ERRR ;2
+	.WORD	XMIT,XMIT,ERRR,XMIT,XMIT ;3
+	.WORD	RECV,ERRR,RECV,ERRR,ERRR ;4
+	.WORD	RECV,ERRR,RECV,ERRR,ERRR ;5
+;
+; Text strings
+;
+COM40A:	.ASCII	'?UDP-I-NTP peer ^I'<NG.IDN>
+	.ASCIZ	' reachable ^C'<NG.SRC>' ^XI'<NG.SRC+4>
+COM40H:	.ASCII	'?UDP-I-NTP peer ^I'<NG.IDN>
+	.ASCIZ	' installed ^C'<NG.SRC>' ^XI'<NG.SRC+4>
+COM40B:	.ASCIZ	'?UDP-I-NTP peer ^I'<NG.IDN>' unreachable'
+COM40C:	.ASCII	'?UDP-I-NTP peer ^I'<NG.IDN>
+	.ASCIZ	' authentication failure ^BI'<NG.KEY>
+COM40D:	.ASCII	'?UDP-I-NTP peer ^I'<NG.IDN>' new stratum ^BI'<NG.STR>
+	.ASCIZ	' ^SI'<NG.DLY>' ^SMI'<NG.OFS+2>' ^I'<NG.DSP>
+COM40E:	.ASCIZ	'?UDP-I-NTP lost clock source'
+COM40F:	.ASCIZ	'?UDP-I-NTP new system status ^K'<0>
+COM40G:	.ASCIZ	'?UDP-I-NTP step adjust ^SMI'<2>
+	.EVEN
+;
+	.PSECT	$ERAS,RW,I
+;
+; Variables
+;
+$HOSAD:	.BLKW	1		;host table pointer
+PKTLNG:	.BLKW	1		;packet length
+PKTSTP:	.BLKW	3		;packet timestamp (rt-11 format)
+SURVIV:	.BLKW	1		;survivor select dispersion
+TEMP16:	.BLKW	1		;16-bit temporary
+TEMP48:	.BLKW	3		;48-bit temporary
+TEMP64:	.BLKW	4		;64-bit temporary
+SAMPLE:	.BLKW	5		;offset/delay/dispersion sample
+OPRND:	.BLKW	3		;48-bit multiplier/divisor
+ACCUM:	.BLKW	6		;96-bit accumulator
+FLIST::	.BLKW	LSTMAX		;temporary list
+;
+	.END
+                                                           

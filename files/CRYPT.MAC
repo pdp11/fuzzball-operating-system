@@ -1,0 +1,423 @@
+	.TITLE	CRYPT	DES encryption routines
+	.NLIST	BEX
+	.ENABL	LC
+;
+; This is an implementation of the Federal Information Processing Data
+; Encryption Standard algorithm described in NBS FIPS 46. It operates on
+; a 64-bit plaintext block to produce a 64-bit ciphertext block
+; according to a 64-bit key block. The bits of each octet of the key,
+; plaintext and ciphertext are numbered from the high-order end of the
+; low-order byte in memory: 1...64; however, relative to the DES
+; numbering, the octets of the key are rotated right one bit position:
+; 8,1...7, so that bit 8, which is not used in the DES algorithm,
+; becomes the parity bit in conventional ASCII encoding.
+;
+; DES encryption is a two-step procedure. First, the KSKED routine is
+; called to produce a key schedule from the key. The key schedule is a
+; 16x48-octet bit array provided by the caller, one 48-bit row for each
+; of the 16 steps of the DES algorithm. Then the encryption routine CRYP
+; is called as many times as required for the same key.
+; 
+; External symbols
+;
+; Entry symbols
+;
+	.GLOBL	KSKED		;construct key schedule
+	.GLOBL	CRYPT		;encrypt/decrypt block
+;
+; System definitions
+;
+	.ASECT
+;
+; Module definitions
+;
+	.PSECT	$BOSI,RO,I
+;
+; Note: Calling sequences are compatible with the ULP/C compilers.
+;
+; ksked(keyskd, key) construct key schedule
+; key = key pointer, keyskd = key schedule pointer (16x48 octets)
+;
+KSKED:	MOV	R5,-(SP)	;standard entry
+	MOV	SP,R5
+	MOV	R1,-(SP)
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+;
+; Construct 28-bit C and D arrays by permuting bits of the key selected
+; by PC-1 tables. Note: C and D arrays must be contiguous.
+;
+	CLR	R3
+1$:	MOVB	PC1C(R3),R0	;determine next bit of C
+	DEC	R0
+	MOV	R0,R1
+	ASH	#-3,R1
+	ADD	6(R5),R1	;(key)
+	BIC	#^C7,R0
+	CLRB	C(R3)
+	BITB	BITS+1(R0),@R1
+	BEQ	2$
+	INCB	C(R3)
+2$:	MOVB	PC1D(R3),R0	;determine next bit of D
+	DEC	R0
+	MOV	R0,R1
+	ASH	#-3,R1
+	ADD	6(R5),R1	;(key)
+	BIC	#^C7,R0
+	CLRB	D(R3)
+	BITB	BITS+1(R0),@R1
+	BEQ	3$
+	INCB	D(R3)
+3$:	INC	R3		;continue for 28 bits
+	CMP	R3,#28.
+	BLO	1$
+;
+; Iterate over 16 steps of the key schedule
+;
+	CLR	R3
+;
+; Rotate C and D arrays according to schedule
+;
+4$:	MOVB	SHIFTS(R3),R2	;get rotate count
+5$:	CLR	R1		;rotate c left
+	MOVB	C(R1),R0
+6$:	MOVB	C+1(R1),C(R1)
+	INC	R1
+	CMP	R1,#28.-1
+	BLO	6$
+	MOVB	R0,C(R1)
+	CLR	R1		;rotate d left
+	MOVB	D(R1),R0
+7$:	MOVB	D+1(R1),D(R1)
+	INC	R1
+	CMP	R1,#28.-1
+	BLO	7$
+	MOVB	R0,D(R1)
+	SOB	R2,5$		;continue for rotate count
+;
+; Iterate over 48 bits of each row and permute according to PC-2 table.
+;
+	MOV	R3,R1		;insert key schedule bits
+	ASL	R1
+	MOV	INDEX(R1),R1
+	ADD	4(R5),R1	;(keyskd)
+	MOV	#PC2,R2
+8$:	MOVB	(R2)+,R0	;(do 2 bits per step)
+	MOVB	C-1(R0),(R1)+
+	MOVB	(R2)+,R0
+	MOVB	C-1(R0),(R1)+
+	CMP	R2,#PC2+48.	;continue for 48 bits (24 steps)
+	BLO	8$
+	INC	R3		;continue for 16 rows
+	CMP	R3,#16.
+	BLO	4$
+	MOV	(SP)+,R4	;standard exit
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	MOV	(SP)+,R5
+	RTS	PC
+;
+; crypt(block, keyskd, flag) encrypt/decrypt block
+; block = plaintext/ciphertext pointer, keyskd = key schedule pointer,
+; flag = 0 = encrypt, 1 = decrypt
+;
+CRYPT:	MOV	R5,-(SP)	;standard entry
+	MOV	SP,R5
+	MOV	R1,-(SP)
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+;
+; Unpack 4 16-bit words and do initial permutation to produce initial L and R.
+; Note: L and R must be contiguous
+;
+BGNBLK:	CLR	R3		;initial unpack and permutation
+1$:	CLR	R2		;(do 2 bits each step)
+	MOVB	IP(R3),R0
+	DEC	R0
+	MOV	R0,R1
+	ASH	#-3,R1
+	ADD	4(R5),R1	;(block)
+	BIC	#^C7,R0
+	BITB	BITS(R0),@R1
+	BEQ	2$
+	BIS	#1,R2
+2$:	MOVB	IP+1(R3),R0
+	DEC	R0
+	MOV	R0,R1
+	ASH	#-3,R1
+	ADD	4(R5),R1	;(block)
+	BIC	#^C7,R0
+	BITB	BITS(R0),@R1
+	BEQ	3$
+	BIS	#1*400,R2
+3$:	MOV	R2,L(R3)
+	ADD	#2,R3		;continue for 64 bits (32 steps)
+	CMP	R3,#64.
+	BLO	1$
+;
+; Iterate over 16 rows of the key schedule
+;
+	CLR	CYCLE		;set direction
+CRKEY:	MOV	CYCLE,R4
+	TST	10(R5)		;(flag)
+	BEQ	1$		;branch if encrypt
+	NEG	R4		;decrypt. go the other way
+	ADD	#15.,R4
+1$:	MOV	#R,R1		;save R (later becomes L)
+	MOV	#TEMPL,R2
+	MOV	#64./4,R0
+2$:	MOV	(R1)+,(R2)+	;(do 4 bits each step)
+	MOV	(R1)+,(R2)+
+	SOB	R0,2$		;continue for 32 bits (8 steps)
+;
+; Iterate over 48 bits of the schedule row
+;
+	MOV	#E,R3		;expand R using E table
+	MOV	#PRES,R2
+	MOV	R4,R1
+	ASL	R1
+	MOV	INDEX(R1),R1
+	ADD	6(R5),R1	;(keyskd)
+3$:	MOV	(R1)+,@R2	;(do 2 bits per step)
+	MOVB	(R3)+,R0
+	MOVB	R-1(R0),-(SP)
+	MOVB	(R3)+,R0
+	MOVB	R-1(R0),1(SP)
+	MOV	(SP)+,R0
+	XOR	R0,(R2)+	;xor with schedule row
+	CMP	R3,#E+48.	;continue for 48 bits (24 cycles)
+	BLO	3$
+;
+; Iterate over 8 bits of the 6-bit PRES block
+;
+	CLR	R3
+4$:	MOV	R3,R1		;t = 6*j
+	ADD	R3,R1
+	ADD	R3,R1
+	ASL	R1
+	ADD	#PRES,R1	;assemble column bits
+	MOVB	(R1)+,R0	;PRES[t+0]<<5
+	MOVB	SEL(R0),R2
+	MOVB	(R1)+,R0	;PRES[t+1]<<3
+	BISB	SEL+2(R0),R2
+	MOVB	(R1)+,R0	;PRES[t+2]<<2
+	BISB	SEL+4(R0),R2
+	MOVB	(R1)+,R0	;PRES[t+3]<<1
+	BISB	SEL+6(R0),R2
+	MOVB	(R1)+,R0	;PRES[t+4]<<0
+	BISB	SEL+8.(R0),R2
+	MOVB	(R1)+,R0	;PRES[t+5]<<4
+	BISB	SEL+10.(R0),R2
+	MOV	R3,R1		;compute row offset
+	ASH	#6,R1		;(*64)
+	ADD	R2,R1
+	MOVB	S1(R1),R2	;k = S[j][t]
+	ASH	#4,R2
+	MOV	R3,R1
+	ASH	#2,R1		;t = 4*j;
+	ADD	#F+4,R1
+	CLR	-(R1)
+	CLR	-(R1)
+	ROLB	R2		;f[t+0] = (k>>3)&01
+	ROLB	(R1)+
+	ROLB	R2		;f[t+1] = (k>>2)&01
+	ROLB	(R1)+
+	ROLB	R2		;f[t+2] = (k>>1)&01
+	ROLB	(R1)+
+	ROLB	R2		;f[t+3] = (k>>0)&01
+	ROLB	(R1)+
+	INC	R3		;continue for 8 steps
+	CMP	R3,#8.
+	BLO	4$
+;
+; for (j=0; j<32; j++) R[j] = L[j] ^ F[P[j]-1];
+;
+	CLR	R3		;permute f with P function
+5$:	MOVB	P(R3),R0
+	MOVB	F-1(R0),R0
+	MOVB	L(R3),R1	;xor with L
+	XOR	R1,R0
+	MOVB	R0,R(R3)
+	INC	R3
+	CMP	R3,#32.		;contine for 32 bits
+	BLO	5$
+	MOV	#TEMPL,R1	;copy original R to L
+	MOV	#L,R2
+	MOV	#32./4,R0
+6$:	MOV	(R1)+,(R2)+	;(do 4 bits each step)
+	MOV	(R1)+,(R2)+
+	SOB	R0,6$		;continue for 32 bits (8 steps)
+	INC	CYCLE		;continue for 16 schedule rows
+	CMP	CYCLE,#16.
+	BHIS	CRSWP
+	JMP	CRKEY
+;
+; Final swap
+;
+CRSWP:	MOV	#L,R1		;swap L and R
+	MOV	#64./4,R0
+1$:	MOV	@R1,R2		;(do 4 bits each step)
+	MOV	R-L(R1),@R1
+	MOV	R2,R-L(R1)
+	MOV	2(R1),R2
+	MOV	R-L+2(R1),2(R1)
+	MOV	R2,R-L+2(R1)
+	ADD	#4,R1		;continue for 64 bits (16 steps)
+	SOB	R3,1$
+;
+; Do final permutation of L and R and pack 4 16-bit words
+;
+ENDBLK:	MOV	#FP,R3		;final permutation and pack
+	MOV	4(R5),R1	;(block)
+1$:	MOV	#8.,R2		;(do 8 bits each step)
+	CLRB	@R1
+2$:	ASLB	@R1
+	MOVB	(R3)+,R0
+	BISB	L-1(R0),@R1
+	SOB	R2,2$		;contine for 8 bits
+	TSTB	(R1)+		;continue for 64 bits (8 steps)
+	CMP	R3,#FP+64.
+	BLO	1$
+CRXIT:	MOV	(SP)+,R4	;standard exit
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	MOV	(SP)+,R5
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+	.RADIX	10
+;
+; Tables and data from NBS FIPS 46
+;
+IP:	.BYTE	58,50,42,34,26,18,10, 2 ;initial permutation IP
+	.BYTE	60,52,44,36,28,20,12, 4
+	.BYTE	62,54,46,38,30,22,14, 6
+	.BYTE	64,56,48,40,32,24,16, 8
+	.BYTE	57,49,41,33,25,17, 9, 1
+	.BYTE	59,51,43,35,27,19,11, 3
+	.BYTE	61,53,45,37,29,21,13, 5
+	.BYTE	63,55,47,39,31,23,15, 7
+;
+FP:	.BYTE	40, 8,48,16,56,24,64,32 ;final permutation IP-inverse
+	.BYTE	39, 7,47,15,55,23,63,31
+	.BYTE	38, 6,46,14,54,22,62,30
+	.BYTE	37, 5,45,13,53,21,61,29
+	.BYTE	36, 4,44,12,52,20,60,28
+	.BYTE	35, 3,43,11,51,19,59,27
+	.BYTE	34, 2,42,10,50,18,58,26
+	.BYTE	33, 1,41, 9,49,17,57,25
+;
+PC1C:	.BYTE	57,49,41,33,25,17, 9 ;permuted choice PC-1 (C)
+	.BYTE	 1,58,50,42,34,26,18
+	.BYTE	10, 2,59,51,43,35,27
+	.BYTE	19,11, 3,60,52,44,36
+;
+PC1D:	.BYTE	63,55,47,39,31,23,15 ;permuted choice PC-1 (D)
+	.BYTE	 7,62,54,46,38,30,22
+	.BYTE	14, 6,61,53,45,37,29
+	.BYTE	21,13, 5,28,20,12, 4
+;
+SHIFTS:	.BYTE	1,1,2,2,2,2,2,2,1,2,2,2,2,2,2,1 ;shift schedule
+;
+PC2:	.BYTE	14,17,11,24, 1, 5 ;permuted choice PC-2
+	.BYTE	 3,28,15, 6,21,10
+	.BYTE	23,19,12, 4,26, 8
+	.BYTE	16, 7,27,20,13, 2
+	.BYTE	41,52,31,37,47,55
+	.BYTE	30,40,51,45,33,48
+	.BYTE	44,49,39,56,34,53
+	.BYTE	46,42,50,36,29,32
+;
+E:	.BYTE	32, 1, 2, 3, 4, 5 ;E-bit selection table
+	.BYTE	 4, 5, 6, 7, 8, 9
+	.BYTE	 8, 9,10,11,12,13
+	.BYTE	12,13,14,15,16,17
+	.BYTE	16,17,18,19,20,21
+	.BYTE	20,21,22,23,24,25
+	.BYTE	24,25,26,27,28,29
+	.BYTE	28,29,30,31,32, 1
+;
+; Primitive functions S1...S8
+;
+S1:	.BYTE	14, 4,13, 1, 2,15,11, 8, 3,10, 6,12, 5, 9, 0, 7
+	.BYTE	 0,15, 7, 4,14, 2,13, 1,10, 6,12,11, 9, 5, 3, 8
+	.BYTE	 4, 1,14, 8,13, 6, 2,11,15,12, 9, 7, 3,10, 5, 0
+	.BYTE	15,12, 8, 2, 4, 9, 1, 7, 5,11, 3,14,10, 0, 6,13
+;
+S2:	.BYTE	15, 1, 8,14, 6,11, 3, 4, 9, 7, 2,13,12, 0, 5,10
+	.BYTE	 3,13, 4, 7,15, 2, 8,14,12, 0, 1,10, 6, 9,11, 5
+	.BYTE	 0,14, 7,11,10, 4,13, 1, 5, 8,12, 6, 9, 3, 2,15
+	.BYTE	13, 8,10, 1, 3,15, 4, 2,11, 6, 7,12, 0, 5,14, 9
+;
+S3:	.BYTE	10, 0, 9,14, 6, 3,15, 5, 1,13,12, 7,11, 4, 2, 8
+	.BYTE	13, 7, 0, 9, 3, 4, 6,10, 2, 8, 5,14,12,11,15, 1
+	.BYTE	13, 6, 4, 9, 8,15, 3, 0,11, 1, 2,12, 5,10,14, 7
+	.BYTE	 1,10,13, 0, 6, 9, 8, 7, 4,15,14, 3,11, 5, 2,12
+;
+S4:	.BYTE	 7,13,14, 3, 0, 6, 9,10, 1, 2, 8, 5,11,12, 4,15
+	.BYTE	13, 8,11, 5, 6,15, 0, 3, 4, 7, 2,12, 1,10,14, 9
+	.BYTE	10, 6, 9, 0,12,11, 7,13,15, 1, 3,14, 5, 2, 8, 4
+	.BYTE	 3,15, 0, 6,10, 1,13, 8, 9, 4, 5,11,12, 7, 2,14
+;
+S5:	.BYTE	 2,12, 4, 1, 7,10,11, 6, 8, 5, 3,15,13, 0,14, 9
+	.BYTE	14,11, 2,12, 4, 7,13, 1, 5, 0,15,10, 3, 9, 8, 6
+	.BYTE	 4, 2, 1,11,10,13, 7, 8,15, 9,12, 5, 6, 3, 0,14
+	.BYTE	11, 8,12, 7, 1,14, 2,13, 6,15, 0, 9,10, 4, 5, 3
+;
+S6:	.BYTE	12, 1,10,15, 9, 2, 6, 8, 0,13, 3, 4,14, 7, 5,11
+	.BYTE	10,15, 4, 2, 7,12, 9, 5, 6, 1,13,14, 0,11, 3, 8
+	.BYTE	 9,14,15, 5, 2, 8,12, 3, 7, 0, 4,10, 1,13,11, 6
+	.BYTE	 4, 3, 2,12, 9, 5,15,10,11,14, 1, 7, 6, 0, 8,13
+;
+S7:	.BYTE	 4,11, 2,14,15, 0, 8,13, 3,12, 9, 7, 5,10, 6, 1
+	.BYTE	13, 0,11, 7, 4, 9, 1,10,14, 3, 5,12, 2,15, 8, 6
+	.BYTE	 1, 4,11,13,12, 3, 7,14,10,15, 6, 8, 0, 5, 9, 2
+	.BYTE	 6,11,13, 8, 1, 4,10, 7, 9, 5, 0,15,14, 2, 3,12
+;
+S8:	.BYTE	13, 2, 8, 4, 6,15,11, 1,10, 9, 3,14, 5, 0,12, 7
+	.BYTE	 1,15,13, 8,10, 3, 7, 4,12, 5, 6,11, 0,14, 9, 2
+	.BYTE	 7,11, 4, 1, 9,12,14, 2, 0, 6,10,13,15, 3, 5, 8
+	.BYTE	 2, 1,14, 7, 4,10, 8,13,15,12, 9, 0, 3, 5, 6,11
+;
+P:	.BYTE	16, 7,20,21	;primitive function P
+	.BYTE	29,12,28,17
+	.BYTE	 1,15,23,26
+	.BYTE	 5,18,31,10
+	.BYTE	 2, 8,24,14
+	.BYTE	32,27, 3, 9
+	.BYTE	19,13,30, 6
+	.BYTE	22,11, 4,25
+;
+BITS:	.BYTE	128,64,32,16,8,4,2,1 ;bit masks
+SEL:	.BYTE	0,32		;(<<5) bit wiggles
+	.BYTE	0,8		;(<<3)
+	.BYTE	0,4		;(<<2)
+	.BYTE	0,2		;(<<1)
+	.BYTE	0,1		;(<<0)
+	.BYTE	0,16		;(<<4)
+	.EVEN
+INDEX:	.WORD	48*0,48*1,48*2,48*3,48*4,48*5,48*6,48*7 ;fast multiply
+	.WORD	48*8,48*9,48*10,48*11,48*12,48*13,48*14,48*15
+;
+	.PSECT	$ERAS,RW,I
+;
+; Variables
+;
+CYCLE:	.BLKW	1		;cycle counter
+L:	.BLKB	32		;current block left half
+R:	.BLKB	32		;current block right half
+C	=	L		;c array
+D	=	L+28.		;d array
+TEMPL:	.BLKB	32		;temporary
+F:	.BLKB	32		;constructed function
+PRES:	.BLKB	48		;mashed key/block
+	.EVEN
+;
+	.END
+                                                                                                                                                                                                                                                                                                                                                                      

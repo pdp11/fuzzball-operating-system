@@ -1,0 +1,2333 @@
+	.TITLE	SUP	System supervisor
+	.SBTTL	System and module definitions
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Deck us all with Boston Charlie, Walla Walla, Wash., an' Kalamazoo!
+; Nora's freezin' on the trolley, Swaller dollar cauliflower alleygaroo!
+; Don't we know archaic barrel, Lullaby Lilla Boy, Louisville Lou.
+; Trolley Molly don't love Harold, Boola boola Pensacola hullabaloo!
+;
+;					- Walt Kelly (1948)
+;
+; Conditional assembly switches
+;
+DUMP	=	1		;include panic-dump code (1) or not (0)
+;
+; CPU and memory configuration
+;
+; CPU	PS	Memory
+; -----------------------------------------------------------------
+; 0	no	16	LSI-11/2 (without PS), 16-bit bus
+; 1	yes	16	PDP11, LSI-11/2/23/73 (with PS), 16-bit bus
+; 2	yes	18	PDP11, LSI-11/23/73 18-bit bus (default)
+; 3	yes	22	LSI-11/23/73 22-bit bus
+; 4	yes	22	LSI-11/73 22-bit bus with coincident i/d space
+; 5	yes	22	LSI-11/73 22-bit bus with separate i/d space
+;
+.IIF NDF,CPU CPU == 2		;cpu/bus type
+	.IF	GE,CPU-4
+.IIF NDF,TOPMEM TOPMEM == 160000 ;default 11/73
+	.IFF
+	.IF	GE,CPU-2
+.IIF NDF,TOPMEM TOPMEM == 140000 ;default 11/23
+	.IFF
+.IIF NDF,TOPMEM TOPMEM == 170000 ;default 11/2
+	.ENDC
+	.ENDC
+;
+; The following symbol can be used to enable or disable the memory-
+; parity feature. The symbol has no effect if the feature is not
+; present.
+;
+.IIF NDF,PARITY PARITY == 1	;memory parity disable (0) enable (1)
+;
+; Hardware clocks
+;
+; For UNIBUS systems the interval timer and system clock functions
+; can be provided by the KW11-L or KW11-P. For Q-BUS systems these
+; functions can be provided by the integral LTC or KWV11-A/C. For the
+; highest accuracy and lowest overhead, the combination of LTC as the
+; interval timer plus KWV11-A/C as the system clock is recommended.
+;
+; HDWCLK Timer		Clock
+; --------------------------------------------------------------
+; 0	KW11-L/LTC	KW11-L/LTC	UNIBUS and Q-BUS
+; 1	KW11-P		KW11-P		UNIBUS only
+; 2	KWV11-A/C	KWV11-A/C	Q-BUS only
+; 3	LTC		KWV11-A/C	Q-BUS only
+;
+.IIF NDF,HDWCLK HDWCLK == 0	;hardware clock
+	.IF	EQ,HDWCLK-3	;conditional assembly for clock type
+.IIF NDF,KWVCLK KWVCLK == 40145	;clock register (KWV11)
+	.ENDC
+;
+; The LINFRQ symbol establishes the clock interrupt frequency. If this
+; symbol is not defined the INCRM1/2 symbols can be defined for an
+; arbitrary clock period. If none of these three symbols are defined the
+; default is 60 Hz.
+;
+	.IF	DF,LINFRQ	;include for specified frequency
+	.IF	EQ,LINFRQ-60.	;include for 60-Hz
+INCRM1	==	16.		;(mod(1000/60))
+INCRM2	==	43691.		;(rem(1000/60)/60*65536)
+	.IFF			;include for other frequencies
+INCRM1	==	1000./LINFRQ	;(mod(1000/linfrq))
+INCRM2	==	0		;(rem(1000/linfrq)/linfrq*65536)
+	.ENDC
+	.IFF			;include for unspecified frequency
+	.IF	DF,INCRM1	;include for specified period
+.IIF NDF,INCRM2 INCRM2 == 0	;default even milliseconds
+	.IFF			;include for default (60 Hz)
+INCRM1	==	16.		;(mod(1000/60))
+INCRM2	==	43691.		;(rem(1000/60)/60*65536)
+	.ENDC
+	.ENDC
+;
+; Clock watch
+;
+; A feature useful for real-time applications may be a call to a user-
+; supplied routine each time the interval timer causes an interrupt. The
+; $TICK symbol defines the entry point of that routine, which must save
+; and restore its environment, with the exception of registers r0 and
+; r1, which are alreadypreserved).
+;
+.IIF NDF,TICK TICK == 0		;timer interrupt routine (none if zero)
+;
+; Bootstrap address
+;
+; The following address is where to go when the lights go out.
+; Ordinarily, this is the address of the resident bootstrap ROM.
+;
+.IIF NDF,RIPTRP RIPTRP == 173000 ;specify bootstrap address
+;
+; The following symbols define the maximum size of system tables. The
+; values can be increased to the maximum shown.
+;
+.IIF NDF,INTMAX INTMAX == 15.	;max interrupt vectors
+.IIF NDF,PRIMAX PRIMAX == 5.	;max priority levels (max 32.)
+.IIF NDF,SMFMAX SMFMAX == 8.	;max semaphores (max 32.)
+.IIF NDF,CIDMAX	CIDMAX == 40.	;max processes (max 128.)
+;
+; External symbols
+;
+	.GLOBL	PGMBGN,PGMEND,USEBGN,USEADR,ERSBGN,STOBGN,CFGTAB
+	.GLOBL	CFGEND,HOSPAR,$PDREG,ISPACE,DSPACE,$IPHID,$GATPT
+	.GLOBL	PREMPT,QUENCH,PRECED,$CLKID,$CKHID
+;
+; Entry symbols
+;
+	.GLOBL	$ONLIN,$CKCNT,$ROUTE ;event synchronization flags
+	.GLOBL	.WAIT,.SKED,.DLAY,.STIM,.ASYN,.HALT ;emt shortcuts
+	.GLOBL	CPUPSA		;hook for dz11 driver
+	.GLOBL	PMPPTR		;preemptable buffer thread head
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.ERR,.PSA,.CLP,.SUP,.TRDEF ;definitions
+	.MCALL	.SKED,.VSEM	;supervisor calls
+	.MCALL	.DATE,.GTIM,.GVAL ;rt-11 calls
+	.COM			;define common data
+	.ERR			;define error codes
+	.PSA			;define process data areas
+	.CLP			;define rt-11 emulator areas
+	.TRDEF			;define trap codes
+;
+; Module definitions
+;
+	.MACRO	BUGHLT	ERR,F	;cadaver disposal
+	.IF	GT,DUMP
+	JSR	PC,BGSPRY
+	.IF	B,F
+	JMP	.INIT
+	.IFF
+	HALT
+	.ENDC
+	.IFF
+	HALT
+	.ENDC
+	.ENDM	BUGHLT
+;
+	.MACRO	TABLE ARG	;generate month table
+..N	=	0
+	.IRP	X,<ARG>
+	.WORD	..N
+..N	=	..N+X
+	.ENDR
+	.ENDM	TABLE
+;
+; Time-dependent parameters
+;
+QUANTM	=	200./INCRM1	;timeslice quantum (200 ms)
+.IIF NDF,TS.FRX TS.FRX == -16.	;frequency gain (Kf)
+.IIF NDF,TS.WGT TS.WGT == -13.	;compliance weight (Kh)
+.IIF NDF,TS.CMP TS.CMP == -5.	;compliance minimum (Ks)
+.IIF NDF,TS.MUL TS.MUL == 14.	;compliance multiplier (Kt)
+.IIF NDF,TS.STP TS.STP == 60.*15. ;step-correction timeout (15 min)
+.IIF NDF,TS.DCC TS.DCC == 60.*60.*12. ;reference timeout (12 hr)
+	.IF	GE,HDWCLK-1	;include for crystal clock
+.IIF NDF,TS.ADJ TS.ADJ == 4	;adjust interval (4 sec)
+.IIF NDF,TS.PRX TS.PRX == -8.	;phase gain (Kg)
+.IIF NDF,TS.APX TS.APX == -8.	;reset aperture (+-128 ms)
+.IIF NDF,$CKPRE $CKPRE == -10.	;precision (1 ms)
+	.IFF			;include for line-frequency clock
+.IIF NDF,TS.ADJ TS.ADJ == 1	;adjust interval (1 sec)
+.IIF NDF,TS.PRX TS.PRX == -9.	;phase gain
+.IIF NDF,TS.APX TS.APX == -10.	;reset aperture (+-512 ms)
+.IIF NDF,$CKPRE $CKPRE == -6	;precision (16 ms)
+	.ENDC
+;
+; Status bits (psasts)
+;
+REVBIT	=	002		;receive bit
+DLYBIT	=	004		;receive timeout bit
+USEBIT	=	010		;user process bit
+RUNBIT	=	200		;process running bit
+;
+; Processor status word bits (ps)
+;
+C	=	01		;c bit
+V	=	02		;v bit
+Z	=	04		;z bit
+N	=	10		;n bit
+T	=	20		;t bit
+;
+; Processor priorities
+;
+PR0	=	000		;cpu priority 0 (interrupt enable)
+PR7	=	340		;cpu priority 7 (interrupt disable)
+;
+; Extended interrupt codes
+;
+SINT	=	000+EXTBAS	;synchronous interrupt
+AINT	=	001+EXTBAS	;asynchronous interrupt
+;
+; CPU registers
+;
+MEMCSR	=	172100		;memory-parity register block (8 words)
+SEGS	=	172200		;supervisor reloc register block (16/32 words)
+SEGK	=	172300		;kernel reloc register block (16/32 words)
+MMR3	=	172516		;memory-management register 3 (mem cfg)
+MMR0	=	177572		;memory-management register 0 (csr)
+MMR1	=	177574		;memory-management register 1 (reg inc/dec)
+MMR2	=	177576		;memory-management register 2 (abort pc)
+SEGU	=	177600		;user reloc register block (16/32 words)
+MSER	=	177744		;memory system error register
+CCR	=	177746		;cache control register
+MR	=	177750		;maintenance register
+HMR	=	177752		;cache hit/miss register
+PS	=	177776		;processor status word
+;
+; Access-control codes
+;
+AC.RO	=	077402		;resident read-only access
+AC.RW	=	077406		;resident read/write access
+;
+; Clock control/status registers
+;
+KW11L	=	177546		;kw11-l line-frequency clock
+KW11P	=	172540		;kw11-p programmable clock (unibus only)
+KWV11	=	170420		;kwv11-a/c programmable clock (q-bus only)
+;
+; Assembly parameters
+;
+TRPMAX	=	20		;min spare ipc message buffers
+REDZON	=	TRPMAX*SD.END	;storage allocation red zone
+RTCOMM	=	34		;beginning of rt-11 communication region
+	.IF	GE,CPU-4	;conditional assembly for i/d space
+SEGD	=	SEGK+20		;kernel d-space reloc register block
+SEGW	=	SEGS+20		;supervisor d-space reloc register block
+WS1	=	6		;window segment 1
+WS2	=	7		;window segment 2
+	.IFF
+SEGD	=	SEGK		;kernel reloc register block
+SEGW	=	SEGK		;supervisor reloc register block
+WS1	=	5		;window segment 1
+WS2	=	6		;window segment 2
+	.ENDC
+;
+; User process save area extension
+;
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+.	=	PSAEND
+PSASEG:	.BLKW	20		;i-space segment table
+	.IF	GE,CPU-4
+	.BLKW	20		;d-space segment table
+	.ENDC
+	.BLKW	REGEND/2	;registers r0-r5, pc, ps
+PSAENV	=	.		;end of user extension
+	.IFF
+.	=	PSAEND
+PSASEG:	.BLKW	12		;rt-11 communication region (cache)
+PSAENV	=	.		;end of user extension
+	.ENDC
+;
+; Parameter area extension (hostel process)
+;
+	.SUP
+	.PAGE
+	.SBTTL	PROCESSOR INTERRUPT AND DISPATCH
+;
+; Kernel-state procedure
+; Dsects: r3 = par, r4 = reg, r5 = psa
+;
+	.PSECT	$BOOT,RO,I
+;
+; .boot  system reboot
+; .init  system reset
+; 
+; .boot (ini) system reboot
+;
+.BOOT:	MOV	#STACK,SP	;set initial stack
+	RESET			;reset everything
+	MOV	@#26,-(SP)	;simulate power-fail trap
+	MOV	@#24,-(SP)
+	RTI
+;
+; .init (ini) system reset
+;
+.HALT:	HALT			;turn out the lights
+.INIT:	MOV	#STACK,SP	;set initial stack
+	RESET			;reset everything
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+	.IF	GE,CPU-4	;conditional assembly for i/d space
+	MOV	#27,@#MMR3	;set 22-bit mode, separate i/d spaces
+	.ENDC
+	.IF	EQ,CPU-3	;conditional assembly for 22-bit addressing
+	MOV	#20,@#MMR3	;set 22-bit mode
+	.ENDC
+	MOV	#1,@#MMR0	;turn on relocation
+	.ENDC
+	MOV	#PR7,-(SP)	;disable clock interrupts
+	MOV	#INITX,-(SP)
+	RTI
+;
+; Supervisor procedure
+;
+	.PSECT	$KERI,RO,I
+;
+; Cpu dispatch
+;
+; Note: all remaining i space may be reused in d space
+;
+	.IF	GE,CPU-1	;conditional assembly for cpu type
+DSP1:	CLRB	@#PS		;enable interrupts
+DSP1X:	WAIT			;system wait state
+	MOVB	#PR7,@#PS	;disable interrupts
+	.IFF
+DSP1:	MTPS	#0		;enable interrupts
+DSP1X:	WAIT			;system wait state
+	MTPS	#PR7		;disable interrupts
+	.ENDC
+DISPAT:	MOV	ACTIVE,R5	;is proc active
+	BNE	5$		;branch if yes
+	MOV	#PRIMAX*QD.LEN+CPUHED,R1 ;no. scan cpu queues
+1$:	SUB	#QD.LEN,R1	;is process pending
+	MOV	@R1,R5
+	BNE	2$		;branch if yes
+	CMP	R1,#CPUHED	;no. is this lowest priority
+	BHI	1$		;branch if no
+	BR	DSP1		;yes. go snooze in wait state
+;
+2$:	MOV	PSACPQ(R5),@R1	;unlink process
+	BNE	3$
+	CLR	2(R1)
+3$:	MOV	4(R1),TSLICE	;restore timeslice
+	CLR	4(R1)
+	MOV	R5,ACTIVE	;indicate active
+	.IF	GE,CPU-4	;conditional assembly for cpu type
+	MOV	PSASTK(R5),R0	;restore previous space
+	MOVB	REGPS+1(R0),R1
+	BICB	#^C060,R1
+	MOVB	R1,@#PS+1
+	MOV	PSASTP(R5),-(SP) ;restore virtual sp
+	MTPI	SP
+	.ENDC
+	BITB	#USEBIT,PSASTS(R5) ;is this user proc
+	BEQ	5$		;branch if no
+	MOV	CACHE,R1	;yes. is this the right cache
+	CMP	R1,ACTIVE
+	BEQ	5$		;branch if yes
+	MOV	ACTIVE,CACHE	;no. update cache pointer
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+	.IF	LE,CPU-3
+	BISB	#060,@#PS+1	;restore user space
+	MOV	PSASTP(R5),-(SP) ;restore virtual sp
+	MTPI	SP
+	.ENDC
+	MOV	R5,R0		;load user segment registers
+	ADD	#PSASEG,R0
+	MOV	#SEGU,R1
+	.IF	GE,CPU-4	;conditional assembly for cpu type
+	MOV	#20,R2		;i/d space
+	.IFF
+	MOV	#10,R2		;i space
+	.ENDC
+4$:	MOV	(R0)+,40(R1)	;address register
+	MOV	(R0)+,(R1)+	;descriptor register
+	SOB	R2,4$
+	.IFF
+	MOV	#PSASEG,R0	;exchange psa caches and rt-11 comm region
+	ADD	R0,R1
+	ADD	R5,R0
+	MOV	#RTCOMM,R2	;(note absolute loc)
+4$:	MOV	@R2,(R1)+	;copy word from cache
+	MOV	(R0)+,(R2)+	;copy word to cache
+	CMP	R2,#RTCOMM+24	;is block copied
+	BLO	4$		;branch if no
+	.ENDC
+5$:	CMP	TSLICE,#QUANTM	;has timeslice expired
+	BLO	6$		;branch if no
+	JSR	PC,.WAIT	;yes. link last on cpu queue
+	JSR	PC,.SKED
+	BR	DISPAT
+;
+6$:
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+	MOV	PSAWDW(R5),@#SEGW+40+<WS1*2> ;map window segments
+	MOV	PSAWDW+2(R5),@#SEGW+40+<WS2*2>
+	.ENDC
+	MOV	PSASTK(R5),SP	;restore kernel sp
+	TST	PSACOD(R5)	;is interrupt pending
+	BEQ	DSP4		;branch if no
+	TST	@PSASYN(R5)	;yes. is synch interrupt defined
+	BEQ	DSP80		;branch if no
+	MOV	(SP)+,R0	;yes. restore registers
+	MOV	(SP)+,R1
+	MOV	(SP)+,R2
+	MOV	(SP)+,R3
+	MOV	(SP)+,R4
+	MOV	@PSASYN(R5),PC	;razzle dazzle
+;
+DSP2:	CMP	REGPC(SP),#DSP1X ;is int on entry to wait state
+	BNE	DSP4		;branch if no
+	ADD	#2,REGPC(SP)	;yes. fiddle with pc
+DSP4:	MOV	(SP)+,R0	;restore registers
+	MOV	(SP)+,R1
+	MOV	(SP)+,R2
+	MOV	(SP)+,R3
+	MOV	(SP)+,R4
+	MOV	(SP)+,R5
+	RTI
+;
+DSP80:	BUGHLT	<"Unexpected trap">
+.BUGS:	BUGHLT	<"Requested restart">
+;
+; Emt trap (svc) supervisor-call interrupt
+;
+	.IF	LT,CPU-2	;conditional assembly for cpu type
+	.WORD	0		;*** awful for dec editors ***
+	.ENDC
+SVCTRP:	MOV	#ER.EMT,CODE	;set up for dump
+	MOV	@SP,TRPPC
+	JSR	R5,SAVE		;switch to supervisor state
+	MOV	R0,-(SP)	;extract emt code
+	MOV	REGPC(R4),R0
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+	MFPI	-(R0)
+	MOV	(SP)+,R0
+	.IFF
+	MOV	-(R0),R0
+	.ENDC
+SVC4:	MOVB	R0,CODE+1	;save for interested parties
+	BIC	#^C377,R0	;mask emt code prettily
+	ASL	R0		;multiply by two
+	CMP	R0,#SUPBAS*2	;is this supervisor emt
+	BLO	SVC6		;branch if no
+	CMP	R0,#SUPBAS*2+SYSTRT-SYSTRA
+	BHIS	SVC6		;branch if no
+	BIC	#17,REGPS(R4)	;yes. reset cc
+	MOV	SYSTRA-<SUPBAS*2>(R0),R0 ;get subroutine adr
+	BNE	SVC5		;branch if defined
+SVC6:	SUB	#EXTBAS*2,R0	;not supervisor emt. correct for extended emt
+	BMI	SVC9		;branch if no
+	MOV	R0,-(SP)	;maybe. is code in range
+	MOV	PSASYN(R5),R0	;get transfer vector adr
+	CMP	@SP,-2(R0)	;is code in range
+	BHIS	SVC9A		;branch if no
+	ADD	(SP)+,R0	;yes. compute subroutine adr
+	MOV	@R0,R0
+	BEQ	SVC9		;branch if not defined
+	MOV	PSAPAR(R5),R3	;restore base registers
+	MOV	PARREG(R3),R2
+SVC5:	RTS	R0		;call subroutine
+;
+; Invalid emt code (err) - simulate emt int to proc
+;
+SVC9A:	TST	(SP)+		;adjust stack
+SVC9:	MOV	(SP)+,R0	;restore temp
+	MOV	CODE,PSACOD(R5)	;insert interrupt code
+	RTS	PC
+;
+; Input/output interrupt entry
+;
+SVC3:	MOV	PSASTK(R5),R4	;complete sequence
+	MOV	PSAPAR(R5),R3
+	MOV	PARREG(R3),R2
+	RTS	PC		;dive! dive! dive!
+;
+; Error traps (err) cpu faults
+;
+ERRTRP:	MOV	#ER.ADR,CODE	;bus error/invalid or reserved instruction
+	BR	ERR1
+;
+IOTTRP:	MOV	#ER.IOT,CODE	;iot trap
+	BR	ERR1
+;
+TRPTRP:	MOV	#ER.TRP,CODE	;trap trap
+	BR	ERR1
+;
+MEMTRP:	MOV	#ER.MEM,CODE	;memory-parity trap
+	BUGHLT	<"Memory-parity trap">
+;
+FPNTRP:	MOV	#ER.FPN,CODE	;floating-point trap
+	BR	ERR1
+;
+MMUTRP:	MOV	#ER.MMU,CODE	;memory-management abort
+	BIC	#160000,@#MMR0	;reset abort flags
+ERR1:	MOV	@SP,TRPPC
+	JSR	R5,SAVE		;switch to supervisor state
+	TST	R5		;is there someone to blame
+	BEQ	3$		;branch if no
+	MOV	CODE,PSACOD(R5)	;insert interrupt code
+	MOV	#STACK,SP	;amputate supervisor processing
+	JMP	DISPAT
+;
+3$:	BUGHLT	<"Trap in supervisor state">
+	.PAGE
+	.SBTTL	GERERAL SUPERVISOR PRIMITIVES
+;
+; Supervisor segments (subroutines called by emt traps)
+; R0-r2 = calling arguments, r3 = par ptr, r4 = stack-frame ptr, r5 = ps
+; Cpu priority = 7
+;
+; General process and processor routines
+;
+; .setv  construct interrupt linkage
+; .setc  set condition code
+; .prio  set process priority
+; .wait  enter wait state
+; .sked  schedule process
+; .psem  semaphore p-operation
+; .vsem  semaphore v-operation
+; .gpsa  get psa pointers
+; .trpid set trap process pid
+; .gmem  get free memory pointers
+; .gtad  get real address
+; .wind  peekaboo
+; .gpkt  get i/o packet
+; .ppkt  preempt i/o packet
+; .tpkt  scavenge i/o packet
+; .fpkt  free i/o packet
+;
+; Checksum read-only areas, clear the rest
+;
+INITX:	CLR	R0		;checksum read-only code/data
+	MOV	#CKSTAB,R2
+	MOV	(R2)+,R1	;block start
+2$:	MOV	(R2)+,R3	;block limit
+3$:	ADD	(R1)+,R0
+	CMP	R1,R3
+	BLO	3$		;branch if not end of block
+	MOV	(R2)+,R1	;step to next block start
+	BNE	2$
+	TST	SECURE		;is this ipl
+	BEQ	4$		;branch if yes
+	CMP	R0,SECURE	;does checksum
+	BEQ	4$		;branch if yes
+	HALT			;"Checksum discrepancy" (always fatal)
+;
+4$:	MOV	R0,SECURE	;reset checksum
+	MOV	#ERSBGN,R0	;zero erasable storage
+6$:	CLR	(R0)+
+	CMP	R0,HOSPAR+PARMAX
+	BLO	6$
+	MOV	#HOSPAR+PARLDN,R0 ;zero statistics
+7$:	CLR	(R0)+
+	CMP	R0,#HOSPAR+PARCLK
+	BLO	7$
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+	MOV	INISEG,SEGPTR
+	.IFF
+	MOV	#RTCOMM-PSASEG,CACHE ;initialize for first cache load
+	.ENDC
+;
+; Create system and user processes
+;
+	MOV	#STOBGN,STOPTR	;initialize storage pointers
+	.IF	GE,CPU-5	;conditional assembly for cpu type
+	MOV	#DSPACE,INTPTR	;initialize interrupt linkage pointer
+	.IFF
+	MOV	#INTLNK,INTPTR	;initialize interrupt linkage pointer
+	.ENDC
+	MOV	#CFGTAB,R2	;initialize to create procs
+INI4:	CMP	R2,#CFGEND	;is table done
+	BLO	44$		;branch if no
+	JMP	INI7		;yes. do something useful
+;
+44$:	MOV	(R2)+,R3	;set up psas
+	MOV	(R2)+,R1
+	BEQ	INI4		;skip non-loaded procs
+	MOV	STOPTR,R5	;establish addressability
+	INC	HOSPAR+PARPRO	;create new cid
+	MOV	HOSPAR+PARPRO,R4
+	CMP	R4,#CIDMAX
+	BLOS	21$
+	BUGHLT	<"Too many processes">,F
+;
+21$:	ASL	R4
+	MOV	R5,CPUPSA(R4)	;store psa pointer
+	MOVB	R4,PSAPID(R5)	;store proc id
+	MOV	R1,PSASYN(R5)	;store asynch vect
+	ADD	#10,PSASYN(R5)	;correct for offset
+	MOV	(R1)+,R4	;compute stack pointer
+	ADD	R5,R4
+	MOVB	(R1)+,PSAPRI(R5) ;store proc priority
+	MOVB	(R1)+,PSASTS(R5) ;store initial flags
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+	MOV	KERTAB+<WS1*4>,PSAWDW(R5) ;initialize window segments
+	MOV	KERTAB+<WS2*4>,PSAWDW+2(R5)
+	BITB	#USEBIT,PSASTS(R5) ;is this user proc
+	BNE	INI57		;branch if yes
+	MOV	R4,STOPTR	;no. update storage pointer
+	.IF	GE,CPU-4	;conditional assembly for cpu type
+	MOV	R4,PSASTP(R5)	;supervisor pc
+	SUB	#20,PSASTP(R5)	;leave room for registers r0-r5, pc, ps
+	MOV	#050000,-(R4)	;ps (supervisor space)
+	.IFF
+	CLR	-(R4)		;ps (kernel space)
+	.ENDC
+	MOV	@R1,-(R4)	;pc
+	MOV	R5,-(R4)	;r5 (psa pointer)
+	MOV	HOSPAR+PAROPT,-(R4) ;r4
+	MOV	R3,-(R4)	;r3 (par pointer)
+	BR	INI55
+;
+INI57:	ADD	#PSAENV,R4	;user proc. update storage pointer
+	MOV	R4,STOPTR
+	MOV	#170000,-(R4)	;ps (user space)
+	MOV	@R1,-(R4)	;pc
+	CLR	-(R4)		;r5 (relocation constant)
+	MOV	HOSPAR+PAROPT,-(R4) ;r4
+	MOV	R3,-(R4)	;r3 (par pointer)
+	ADD	#USEADR-USEBGN,@R4
+	MOV	PARMAX(R3),R0	;user sp
+	MOV	R0,PSASTP(R5)
+	MOV	SEGPTR,PARVEC(R3)
+	MOV	R5,R1		;initialize unshared user segments
+	ADD	#PSASEG,R1
+1$:	CMP	R0,#200*100	;is less than one segment left
+	BLO	2$		;branch if yes
+	SUB	#200*100,R0	;no. allocate another
+	.IF	GE,CPU-4	;conditional assembly for i/d space
+	MOV	SEGPTR,40(R1)	;par user d space
+	MOV	#AC.RW,42(R1)	;pdr
+	.ENDC
+	MOV	SEGPTR,(R1)+	;par user i space
+	MOV	#AC.RW,(R1)+	;pdr
+	ADD	#200,SEGPTR
+	BR	1$
+;
+2$:	ASH	#-6,R0		;allocate last segment
+	BEQ	3$		;branch if none
+	MOV	SEGPTR,(R1)+
+	ADD	R0,SEGPTR
+	DEC	R0
+	MOVB	#AC.RW,(R1)+
+	MOVB	R0,(R1)+
+3$:	CMP	SEGPTR,ENDPTR	;is memory full
+	BLO	4$		;branch if yes
+	BUGHLT	<"Insufficient blocks">,F
+;
+4$:	MOV	R5,R1		;initalize shared user segments
+	ADD	#PSASEG+24,R1
+	MOV	#USETAB,R0
+5$:	.IF	GE,CPU-4	;conditional assembly for cpu type
+	MOV	(R0)+,40(R1)	;d par 
+	MOV	(R0)+,42(R1)	;d pdr
+	MOV	(R0)+,(R1)+	;i par
+	MOV	(R0)+,(R1)+	;i pdr
+	.IFF
+	CMP	(R0)+,(R0)+	;skip d space
+	MOV	(R0)+,(R1)+	;par
+	MOV	(R0)+,(R1)+	;pdr
+	.ENDC
+	TST	@R0		;is this end of table
+	BNE	5$		;branch if yes
+INI55:
+	.IFF
+	MOV	R5,R0		;get psa pointer
+	BITB	#USEBIT,PSASTS(R5) ;is this user proc
+	BEQ	INI56		;branch if no
+	ADD	#PSAENV,R4	;yes. update storage
+	TST	PARMAX(R3)	;is psa length zero
+	BNE	INI55		;branch if no
+	MOV	R4,STOPTR	;yes. update storage pointer
+	MOV	#PGMBGN,R4	;stash loot in .sav segment
+	CLR	R0		;set relocation factor
+	BR	INI55B
+;
+INI55:	ADD	PARMAX(R3),R4	;update storage pointer
+	ADD	#PSAENV,R0	;set relocation factor
+INI56:	MOV	R4,STOPTR	;update storage pointer
+INI55B:	CMP	STOPTR,HOSPAR+PARMAX ;check for overflow
+	BLO	23$
+	BUGHLT	<"Insufficient storage">,F
+;
+23$:	CLR	-(R4)		;ps
+	MOV	@R1,-(R4)	;pc
+	MOV	R0,-(R4)	;r5 (psa pointer)
+	MOV	HOSPAR+PAROPT,-(R4) ;r4
+	MOV	R3,-(R4)	;r3 (par pointer)
+	.ENDC
+	MOV	PARREG(R3),-(R4) ;r2 (device register pointer)
+	MOVB	PSAPID(R5),R1
+	CLRB	-(R4)		;r1 (port id)
+	MOVB	R1,-(R4)
+	MOVB	R1,PARPID(R3)	;set port id in par
+	MOV	PARVEC(R3),-(R4) ;r0 (interrupt vector pointer)
+	MOV	R4,PSASTK(R5)	;set proc initial stack pointer
+	MOV	R3,PSAPAR(R5)	;store parameter area pointer
+	.SKED			;schedule proc
+	JMP	INI4
+;
+; Complete initialization
+;
+INI7:	CLR	R1		;initialize semaphores
+1$:	.VSEM
+	ADD	#QD.LEN,R1
+	CMP	R1,#SMFMAX*QD.LEN
+	BLO	1$
+	CLRB	$IPHID		;initialize routing switch
+	MOV	STOPTR,R0	;initialize freespace
+	ADD	#17,R0
+	BIC	#17,R0
+	MOV	R0,STOPTR
+	MOV	HOSPAR+PARMAX,R1
+	SUB	R0,R1
+	BIS	#7,R1		;(key)
+	MOV	R1,(R0)+	;give freespace to storage pool
+	JSR	PC,.FBLK
+	.IF	GE,CPU-5	;conditional assembly for cpu type
+	MOV	STOPTR,R1	;initialize dspace
+	MOV	#DSPACE-2,R0
+	BIC	#17,R0
+	SUB	R0,R1
+	BIS	#7,R1		;(key)
+	MOV	R1,@R0
+	MOV	R0,R1		;initialize ispace
+	MOV	#ISPACE+17,R0
+	BIC	#17,R0
+	SUB	R0,R1
+	BIS	#7,R1		;(key)
+	MOV	R0,STOPTR
+	MOV	R1,(R0)+
+	JSR	PC,.FBLK	;give ispace to storage pool
+	.ENDC
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+	MOV	@#SEGD,-(SP)	;enable read/write segment 0
+	MOV	#AC.RW,@#SEGD
+	.ENDC
+	MOV	#INI13,@#4	;disable bus-timeout trap
+	.IF	DF,PARITY	;conditional assembly for memory parity
+	MOV	#MEMCSR,R1	;enable memory parity
+	MOV	#10,R2		;(banks 0 through 7)
+2$:	MOV	#1,(R1)+
+	SOB	R2,2$
+	.ENDC
+	.IF	EQ,HDWCLK-0	;conditional assembly for clock type
+	MOV	#100,@#KW11L	;start kw11-l timer/clock
+	.ENDC
+	.IF	EQ,HDWCLK-1	;conditional assembly for clock type
+	MOV	#1,@#KW11P+2	;start kw11-p timer/clock
+	MOV	#115,@#KW11P	;(line frequency)
+	.ENDC
+	.IF	EQ,HDWCLK-2	;conditional assembly for clock type
+	MOV	#-<INCRM1*1000.>,@#KWV11+2 ;set clock rate
+	MOV	#113,@#KWV11	;start kwv11-a/c timer/clock (1 MHz mode 1)
+	.ENDC
+	.IF	GE,HDWCLK-3	;conditional assembly for clock type
+	MOV	#100,@#KW11L	;start kw11-l timer
+	MOV	#KWVCLK,@#KWV11	;start kwv11-a/c clock (1 kHz mode 2)
+	.ENDC
+	MOV	#ERRTRP,@#4	;enable bus-timeout trap
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+	MOV	(SP)+,@#SEGD	;restore segment 0 access
+	.ENDC
+	MOV	#$CKPRE,HOSPAR+CLKPRE ;initialize precision
+	MOV	#1318.,MIDNIT	;(24*60*60*1000)
+	MOV	#23552.,MIDNIT+2
+	BIS	#140000,DATE	;initialize clock tracking and synch
+	CLRB	DLTCNT
+	CLR	CLKLST
+	MOV	#DELTA,DLTPTR
+	MOV	#1,R0		;reset compliance
+	ASH	#-TS.CMP,R0
+	MOV	R0,COMPLY
+	JMP	DISPAT		;start collecting taxes
+;
+INI13:	RTI			;now you see it, now you don't
+;
+; .setv (sin) construct interrupt linkage
+; R0 = interrupt vector ptr, r1 = int code
+;
+.SETV:	CMP	R0,#60		;is vector in range
+	BLO	2$		;branch if no
+	CMP	R0,#1000
+	BHIS	2$		;branch if no
+	CMP	HOSPAR+PARINT,#INTMAX ;yes. are blocks left
+	BHIS	2$		;branch if no
+	INC	HOSPAR+PARINT	;yes. up the tally
+	MOV	INTPTR,R2	;get interrupt area pointer
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+	MOV	@#SEGD,-(SP)	;enable read/write segment 0
+	MOV	#AC.RW,@#SEGD
+	MOV	R2,(R0)+	;(pc) construct interrupt vector
+	MOV	#PR7,@R0	;(ps)
+	MOV	(SP)+,@#SEGD	;restore segment 0 access
+	.IFF
+	MOV	R2,(R0)+	;(pc) construct interrupt vector
+	MOV	#PR7,@R0	;(ps)
+	.ENDC
+	MOV	R5,TVCTAB+6	;psa pointer
+	BIC	#^C377,R1	;entry code
+	MOV	R1,TVCTAB+12
+	ASL	R1		;entry point
+	SUB	#EXTBAS*2,R1
+	ADD	PSASYN(R5),R1
+	MOV	@R1,TVCTAB+16
+	MOV	#TVCTAB,R0	;copy code block
+1$:	.IF	GE,CPU-5	;conditional assembly for cpu type
+	MOV	(R0)+,-(SP)	;put it in ispace
+	MTPI	(R2)+
+	.IFF
+	MOV	(R0)+,(R2)+	;put it in dspace
+	.ENDC
+	CMP	R0,#TVCEND
+	BLO	1$
+	MOV	R2,INTPTR	;save new interrupt area pointer
+	RTS	PC
+;
+2$:	BUGHLT	<"Invalid vector or too many vectors">,F
+;
+; .setc (stc) set condition code
+; R0 = new ps
+;
+.SETC:	MOVB	R0,REGPS(R4)	;simple, wasn't it
+	RTS	PC
+;
+; .wait (wat) enter wait state
+;
+.WAIT:	CMP	R5,ACTIVE	;is this active proc
+	BNE	1$		;branch if no
+	TSTB	PSASTS(R5)	;(runbit) is process running
+	BPL	1$		;branch if no
+	BICB	#RUNBIT+DLYBIT+REVBIT,PSASTS(R5) ;clear status
+	ADD	TSLICE,PSACPU(R5)
+	CLR	ACTIVE
+	RTS	PC
+;
+1$:	BUGHLT	<"Invalid .wait call">
+;
+; .prio (prt) change proc priority
+; R0 = priority change (signed)
+;
+.PRIO:	MUL	#QD.LEN,R0	;is this default
+	BNE	1$		;branch if no
+	MOV	PSASYN(R5),R0	;yes. reset to default
+	MOVB	-6(R0),R0
+	BR	3$
+;
+1$:	MOVB	PSAPRI(R5),R0	;update priority
+	ADD	R1,R0		;clip at min/max
+	BGE	2$
+	CLR	R0
+2$:	CMP	R0,#<PRIMAX-1>*QD.LEN
+	BLOS	3$
+	MOV	#<PRIMAX-1>*QD.LEN,R0
+3$:	MOVB	R0,PSAPRI(R5)	;assume clout
+	BR	SKD2
+;
+; .tsem (top) semaphore t-operation
+; R1 = port id, returns cc(c) = 1 if busy, cc(z) = 1 if this proc
+;
+.TSEM:	TSTB	SMFHED+4(R1)	;is semaphore blocked
+	BLE	1$		;branch if yes
+	DECB	SMFHED+4(R1)	;no. decrement count
+	MOVB	PSAPID(R5),SMFHED+5(R1) ;leave tracks
+	BR	2$
+;
+1$:	BIS	#C,REGPS(R4)	;blocked. return cc(c) = 1
+2$:	CMPB	PSAPID(R5),SMFHED+5(R1) ;is it this proc
+	BNE	3$		;branch if no
+	BIS	#Z,REGPS(R4)	;yes. return cc(z) = 1
+3$:	RTS	PC
+;
+; .psem (pop) semaphore p-operation
+; R1 = port id
+;
+.PSEM:	DECB	SMFHED+4(R1)	;is semaphore blocked
+	BLT	1$		;branch if yes
+	MOVB	PSAPID(R5),SMFHED+5(R1) ;no. leave tracks
+	RTS	PC
+;
+1$:	JSR	PC,.WAIT	;blocked. suspend process
+	CLR	PSACPQ(R5)	;link process last on semaphore queue
+	MOV	SMFHED+2(R1),R0
+	BNE	2$
+	MOV	R5,SMFHED(R1)
+	BR	3$
+;
+2$:	MOV	R5,PSACPQ(R0)
+3$:	MOV	R5,SMFHED+2(R1)	
+	BISB	#RUNBIT,PSASTS(R5) ;mark running
+POP1:	RTS	PC
+;
+; .vsem (vop) semaphore v-operation
+; R1 = port id
+;
+.VSEM:	INCB	SMFHED+4(R1)	;are processes waiting
+	BGT	POP1		;branch if no
+	MOV	SMFHED(R1),R5	;yes. unlink process
+	MOV	PSACPQ(R5),SMFHED(R1)
+	BNE	1$
+	CLR	SMFHED+2(R1)
+1$:	MOVB	PSAPID(R5),SMFHED+5(R1) ;leave tracks
+SKD1:	BICB	#RUNBIT+DLYBIT+REVBIT,PSASTS(R5) ;clear status
+;
+; .sked (skd) schedule nonactive proc
+; R5 = psa ptr of proc to be scheduled
+;
+.SKED:	TSTB	PSASTS(R5)	;(runbit) is process suspended
+	BPL	1$		;branch if yes
+	BUGHLT	<"Invalid .sked call">
+;
+1$:	CLR	PSACPQ(R5)	;link process last on cpu queue
+	MOVB	PSAPRI(R5),R0
+	MOV	CPUHED+2(R0),R1
+	BNE	2$
+	MOV	R5,CPUHED(R0)
+	BR	3$
+;
+2$:	MOV	R5,PSACPQ(R1)
+3$:	MOV	R5,CPUHED+2(R0)	
+	BISB	#RUNBIT,PSASTS(R5) ;mark running
+SKD2:	MOV	ACTIVE,R5	;is there an active process
+	BEQ	2$		;branch if no
+	MOVB	PSAPRI(R5),R1	;yes. is it higher priority
+	CMP	R1,R0
+	BHIS	2$		;branh if yes
+	CLR	ACTIVE		;no. link it first on cpu queue
+	MOV	CPUHED(R1),PSACPQ(R5)
+	BNE	1$
+	MOV	R5,CPUHED+2(R1)
+1$:	MOV	R5,CPUHED(R1)
+	MOV	TSLICE,CPUHED+4(R1)
+2$:	RTS	PC
+;
+; .gblk (gbk) get kernel storage block
+; R0 = size, returns r0 = block address, cc(c) = 1 if none
+;
+.GBLK:	MOV	R1,-(SP)	;save
+	ADD	#17+2,R0	;align to nibble boundary
+	BIC	#17,R0
+	MOV	STOPTR,R1	;search block list
+1$:	CMP	R1,HOSPAR+PARMAX ;is this end of list
+	BHIS	3$		;branch if yes
+	CMP	@R1,#20		;no. is block format correct
+	BLO	8$		;branch if no
+	BIT	#17,@R1		;yes. is block free
+	BNE	2$		;branch if no
+	CMP	@R1,R0		;yes. compare block size
+	BEQ	4$		;branch if same
+	BHI	5$		;branch if greater
+2$:	ADD	@R1,R1		;less. link to next block
+	BIC	#17,R1
+	BR	1$
+;
+3$:	SEC			;no block found
+	BR	7$
+;
+4$:	DEC	HOSPAR+PARPKT	;same size. update free blocks
+	BR	6$
+;
+5$:	MOV	R0,-(SP)	;greater size. split block
+	ADD	R1,R0
+	MOV	@R1,@R0
+	SUB	@SP,@R0
+	MOV	(SP)+,@R1
+6$:	SUB	@R1,HOSPAR+PARPKT+2 ;update free bytes
+	BIS	#7,(R1)+	;insert key
+	MOV	R1,R0	
+	CLC
+7$:	MOV	(SP)+,R1	;evas
+	RTS	PC
+;
+8$:	BUGHLT	<"Invalid .gblk storage block">
+;
+; Subroutine to verify storage chain
+;
+VRFY:	MOV	R0,-(SP)	;save
+	MOV	STOPTR,R0	;search block list
+1$:	CMP	R0,HOSPAR+PARMAX ;is this end of list
+	BEQ	2$		;branch if yes
+	BHI	3$		;branch if broken list
+	CMP	@R0,#20		;no. is block format correct
+	BLO	3$		;branch if no
+	ADD	@R0,R0		;yes. link to next block
+	BIC	#17,R0
+	BR	1$
+;
+2$:	MOV	(SP)+,R0	;evas
+	RTS	PC		;all okay here
+;
+3$:	BUGHLT	<"Invalid storage block">	
+;
+; .fblk (fbk) free kernel storage block
+; R0 = block address
+;
+.FBLK:	MOV	R1,-(SP)	;save
+	MOV	-(R0),R1	;is key valid
+	BIC	#^C17,R1
+	CMP	R1,#7
+	BNE	6$		;branch if no
+	BIC	#17,@R0		;yes. mark block free
+	INC	HOSPAR+PARPKT	;update free blocks
+	ADD	@R0,HOSPAR+PARPKT+2 ;update free bytes
+	MOV	STOPTR,R1	;search block list
+1$:	CMP	R1,HOSPAR+PARMAX ;is this end of list
+	BHIS	4$		;branch if yes
+	CMP	@R1,#20		;no. is block format correct
+	BLO	5$		;branch if no
+	MOV	R1,R0		;yes. point to block
+	BIT	#17,@R1		;is block free
+	BNE	3$		;branch if no
+2$:	ADD	@R0,R0		;yes. point to next block
+	CMP	R0,HOSPAR+PARMAX ;is this end of list
+	BHIS	4$		;branch if yes
+	CMP	@R0,#20		;no. is block format correct
+	BLO	5$		;branch if no
+	BIT	#17,@R0		;yes. is next block free
+	BNE	3$		;branch if no
+	ADD	@R0,@R1		;yes. combine blocks
+	DEC	HOSPAR+PARPKT	;update free blocks
+	BR	2$
+
+3$:	ADD	@R0,R0		;link to next block
+	BIC	#17,R0
+	MOV	R0,R1
+	BR	1$
+;
+4$:	MOV	(SP)+,R1	;evas
+	RTS	PC
+;
+5$:	BUGHLT	<"Invalid .fblk storage block">
+6$:	BUGHLT	<"Invalid .fblk call">
+;
+; .gpkt (gpk) get packet buffer
+; R0 = ip datagram min length (octets), R1 = current allocation,
+; returns r0 = buffer address, cc(z) = 1 if none
+;
+.GPKT:	ADD	#BUFLDR+BUFTLR,R0 ;include leader/trailer
+	ADD	R0,R1		;is variable threshold exceeded
+	ADD	#REDZON,R1
+	CMP	R1,HOSPAR+PARPKT+2
+	BHIS	GPK1		;branch if yes
+	JSR	PC,.GBLK	;no. allocate block
+	BCS	GPK1		;branch if cant
+	MOV	R0,@R4
+	INC	HOSPAR+PARCNG
+	RTS	PC
+;
+GPK1:	BIS	#Z,REGPS(R4)	;insufficient resources. set cc
+	RTS	PC
+;
+; .ppkt (fpk) preempt packet buffer
+; R0 = ip datagram min length (octets), returns r0 = buffer address,
+; cc(z) = 1 if none
+;
+.PPKT:	MOV	@R4,R0		;include leader/trailer
+	ADD	#BUFLDR+BUFTLR,R0
+	MOV	R0,R1		;is fixed threshold exceeded
+	ADD	#REDZON,R1
+	CMP	R1,HOSPAR+PARPKT+2
+	BHIS	1$		;branch if yes
+	JSR	PC,.GBLK	;no. allocate block
+	BCS	1$		;branch if cant
+	MOV	R0,@R4
+	INC	HOSPAR+PARCNG
+	RTS	PC
+;
+1$:	MOV	#PMPPTR,R0	;find preemptable buffer
+	JSR	PC,PREMPT
+	BEQ	GPK1		;branch if none
+	JSR	PC,.FPKT	;found. give it back
+	BR	.PPKT
+;
+; .tpkt (fpk) scavenge packet buffer
+; R0 = buffer address, r1 = ip datagram min length (octets)
+;
+.TPKT:	ADD	#BUFLDR+BUFTLR+17+2,R1 ;compute buffer size
+	BIC	#17,R1		;align to nibble boundary
+	MOV	-(R0),R2	;is key valid
+	BIC	#^C17,R2
+	CMP	R2,#7
+	BNE	2$		;branch if no
+	MOV	@R0,R2		;yes. is residual large enough
+	BIC	#17,R2
+	SUB	R1,R2
+	BLE	1$		;branch if no
+	CMP	R2,#PKTSIZ+BUFLDR+BUFTLR+2
+	BLO	1$		;branch if no
+	SUB	R2,@R0		;yes. update sizes
+	ADD	R1,R0
+	BIS	#7,R2		;insert key
+	MOV	R2,(R0)+
+	JSR	PC,.FBLK	;return residual block		
+1$:	RTS	PC
+;
+2$:	BUGHLT	<"Invalid .tpkt call">
+;
+; .fpkt (fpk) free packet buffer
+; R0 = buffer address
+;
+.FPKT:	JSR	PC,.FBLK	;free block
+	DEC	HOSPAR+PARCNG
+	RTS	PC
+;
+; .gpsa (gps) get psa pointers
+; R1 = pid, returns r0 = psa length, r1 = psa pointer
+;
+.GPSA:	BIC	#^C377,R1	;get psa pointer
+	MOV	CPUPSA(R1),R1
+	MOV	R1,REGR1(R4)
+	MOV	PSASYN(R1),R0	;get psa length
+	MOV	-10(R0),@R4
+	RTS	PC
+;
+; .gqnc (qnc) get quench packet
+; returns r0 = quench packet pointer, cc(z) = 1 if none
+;
+.GQNC:	JSR	PC,QUENCH	;do the deed
+	MOV	R0,@R4		;save results
+	MOV	R1,REGR1(R4)
+	BNE	1$		;branch if okay
+	BIS	#Z,REGPS(R4)	;indicate none found
+1$:	RTS	PC
+;
+; .trpid (trp) set trap process pid
+; R1 = pid
+;
+.TRPID:	MOVB	R1,HOSPAR+PARTRP ;stash for later
+	BNE	1$		;branch if elsewhere
+	MOVB	PSAPID(R5),HOSPAR+PARTRP ;right here
+1$:	RTS	PC
+;
+; .gmem (mem) get free memory pointers
+; Returns r0 = size (blocks), r1 = pointer to first block (blocks)
+; (r1 = 0 if nonvirtual system)
+;
+.GMEM:	MOV	SEGPTR,REGR1(R4) ;get the stuff
+	MOV	ENDPTR,@R4
+	SUB	SEGPTR,@R4
+	RTS	PC
+;
+; .gtad (gta) get real address
+; r0 = pid/segment, r1 = virtual address, returns r0-r1 = real address
+;
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+.GTAD:	JSR	PC,LRA		;get physical address
+	BCS	PEE2		;branch if invalid
+	MOV	R0,@R4		;return real address
+	MOV	R1,REGR1(R4)
+	RTS	PC
+	.IFF
+.GTAD:	RTS	PC		;trivial translate
+	.ENDC
+;
+; .wind (pee) set virtual window (kernel segment ws2/user segment 7)
+; r0 = pid/segment, r1 = virtual address, returns r1 = window address
+;
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+.WIND:	JSR	PC,LRA		;normal segment get physical address
+	BCS	PEE2		;branch if invalid
+	BIC	#^C7,R2
+	MOV	R1,REGR1(R4)	;stash offset
+	BIC	#^C77,REGR1(R4)
+	ASHC	#10.,R0		;get block number
+	BITB	#USEBIT,PSASTS(R5) ;is this kernel proc
+	BNE	2$		;branch if no
+	TST	R2		;is this alternate window
+	BNE	1$		;branch if yes
+	ADD	#WS2*20000,REGR1(R4) ;no. map into window segment
+	MOV	R0,PSAWDW+2(R5)
+	MOV	R0,@#SEGW+40+<WS2*2>
+	BR	6$
+;
+1$:	ADD	#WS1*20000,REGR1(R4) ;map into alternate window segment
+	MOV	R0,PSAWDW(R5)
+	MOV	R0,@#SEGW+40+<WS1*2>
+	BR	6$
+;
+2$:	TST	R2		;user process. is this segment zero
+	BNE	3$		;branch if no
+	MOV	#7,R2		;no. fold onto segment seven
+3$:	MOV	R2,R1		;map into selected segment
+	ASH	#13.,R1
+	ADD	R1,REGR1(R4)
+	ASL	R2		;(*2)
+	MOV	R2,R1
+	ASL	R1		;(*4)	
+	ADD	R5,R1
+	.IF	GE,CPU-4	;conditional assembly for cpu type
+	MOV	R0,PSASEG+40(R1) ;d space
+	MOV	R0,SEGU+60(R2)
+	.IFF
+	MOV	R0,PSASEG+0(R1)	;i space
+	MOV	R0,SEGU+40(R2)
+	.ENDC
+	NEG	R0		;compute blocks remaining
+	BEQ	4$		;branch if full house
+	CMP	R0,#200		;is last block visible (includeds ps)
+	BLOS	5$		;branch if yes
+4$:	MOV	#201,R0		;no. blind last block
+5$:	SUB	#2,R0
+	BMI	PEE2		;branch if completely blind
+	SWAB	R0		;assemble pdr
+	BIS	#6,R0		;(resident read/write)
+	.IF	GE,CPU-4	;conditional assembly for cpu type
+	MOV	R0,PSASEG+42(R1) ;d space
+	MOV	R0,SEGU+20(R2)
+	.IFF
+	MOV	R0,PSASEG+2(R1)	;i space
+	MOV	R0,SEGU+0(R2)
+	.ENDC
+6$:	RTS	PC
+;
+PEE2:	BIS	#C,REGPS(R4)	;bad virtual address
+	RTS	PC
+	.IFF
+.WIND:	RTS	PC		;trivial translate
+	.ENDC
+;
+; Supervisor subroutines
+;
+; Save (sav) save registers
+; Nonstandard call
+; Jsr r5,save
+; Returns r4 = stack frame ptr, r5 = psa pointer
+;
+SAVE:	MOV	R4,-(SP)	;save registers r4-r0
+	MOV	R3,-(SP)
+	MOV	R2,-(SP)
+	MOV	R1,-(SP)
+	MOV	R0,-(SP)
+	MOV	SP,R4		;set stack frame pointer
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+	.IF	LE,CPU-3
+	MOV	KERTAB+<WS1*4>,@#SEGW+40+<WS1*2> ;restore window segments
+	MOV	KERTAB+<WS2*4>,@#SEGW+40+<WS2*2>
+	.ENDC
+	.ENDC
+	.IF	LE,CPU-1	;conditional assembly for cpu type
+	CMP	SP,#PGMBGN	;is this background process
+	BLO	1$		;branch if yes
+	.ENDC
+	CMP	SP,#STACK	;is this superstate
+	BLO	2$		;branch if yes
+1$:	MOV	#STACK,SP	;run state. use supervisor stack
+	MOV	#DISPAT,-(SP)
+	MOV	R5,-(SP)
+	MOV	ACTIVE,R5
+	MOV	R4,PSASTK(R5)
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+	MFPI	SP		;save virtual sp
+	MOV	(SP)+,PSASTP(R5)
+	.ENDC
+	CLR	PSACOD(R5)	;initialize return code
+	JSR	PC,VRFY		;*** bugcatcher ***
+	RTS	PC
+;
+2$:	MOV	#DSP2,-(SP)	;set shortcut for superstate
+	MOV	R5,-(SP)
+	MOV	16(SP),R5
+	RTS	PC
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+;
+; Subroutine to translate virtual to real addresses
+; r0 = pid/segment, r1 = virtual address, returns r0-r1 = real address,
+; r2 = segment
+;
+LRA:	MOV	R0,R2		;save segment
+	SWAB	R2
+	MOVB	R2,-(SP)	;is this physical address
+	BPL	1$		;branch if yes
+	BIC	#^C376,R0	;no. is this supervisor space
+	BNE	2$		;branch if no
+	CMP	R1,#160000	;yes. correct for i/o (4k) page
+	BLO	1$
+	COM	R0
+1$:	BIC	#^C77,R0	;yes. just flip flop
+	BR	3$
+;
+2$:	MOV	CPUPSA(R0),R0	;is this user proc
+	BITB	#USEBIT,PSASTS(R0)
+	BEQ	4$		;branch if no
+	MOV	R1,R2		;yes. extract segment offset
+	BIC	#^C17777,R2
+	ASH	#-11.,R1	;extract block number
+	BIC	#^C34,R1
+	ADD	R0,R1
+	.IF	GE,CPU-4	;conditional assembly for cpu type
+	MOV	PSASEG+42(R1),R0 ;d space. is address valid
+	.IFF
+	MOV	PSASEG+2(R1),R0 ;i space. is address valid
+	.ENDC
+	BEQ	4$		;branch if no
+	ASH	#-8.,R0
+	INC	R0
+	ASH	#6,R0
+	CMP	R2,R0
+	BHIS	4$		;branch if no
+	.IF	GE,CPU-4	;conditional assembly for cpu type
+	MOV	PSASEG+40(R1),R1 ;d space. yes. compute real address
+	.IFF
+	MOV	PSASEG(R1),R1	;i space. yes. compute real address
+	.ENDC
+	CLR	R0
+	ASHC	#6,R0
+	ADD	R2,R1
+	ADC	R0
+3$:	CLC			;normal return
+	BR	5$
+;
+4$:	SEC			;error return
+5$:	MOVB	(SP)+,R2
+	RTS	PC
+	.ENDC
+	.PAGE
+	.SBTTL	INTERPROCESS COMMUNICATION PRIMITIVES
+;
+; Message-transmission routines
+;
+; Name   function
+; .asyn  send asynchronous interrupt to port
+; .getda wait for message
+; .putda send message
+;
+; Return condition codes
+; V - buffer overflow or nonexistent port
+; Z - msg count zero or buffer empty
+; N - timeout
+;
+; .asyn (asy) send asynchronous interrupt to port
+; R1 = pid, sends r0 = send pid, r1 = relay-port id to proc
+;
+.ASYN:	BIC	#^C377,R1	;fool so r1 appears in r0
+	MOV	R1,-(SP)
+	MOV	CPUPSA(R1),R5	;fetch psa pointer
+	MOV	PSASTK(R5),R4	;set stack-frame ptr (r0)
+	MOV	#AINT,R0	;set extended interrupt code
+	JMP	SVC4		;nosedive
+;
+; .getda (rcv) wait for message
+; R0 = timeout interval, r1 = message pointer, returns r0 = residual time
+;
+.GETDA:	MOV	PSAMSG(R5),R2	;is message waiting
+	BNE	1$		;branch if yes
+	JSR	PC,.WAIT	;no. suspend process
+	BISB	#RUNBIT+REVBIT,PSASTS(R5) ;mark in message-wait state
+	TST	R0		;was timeout specified
+	BEQ	4$		;branch if no
+	JMP	DLY1		;yes. go to enable timeout
+;
+1$:	MOV	@R2,PSAMSG(R5)	;message waiting. unlink it
+	BNE	2$
+	CLR	PSAMSG+2(R5)
+2$:	MOV	REGR1(R4),R0	;get pointer
+	MOV	R2,-(SP)
+	TST	(R2)+
+	MOV	#SD.END/2,R3
+3$:
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+	MOV	(R2)+,-(SP)
+	MTPD	(R0)+
+	.IFF
+	MOV	(R2)+,(R0)+
+	.ENDC
+	SOB	R3,3$
+	MOV	(SP)+,R0	;return nibble to pool
+	ADD	#2,-2(R0)	;*** mousetrap
+	JSR	PC,.FBLK
+	DEC	HOSPAR+PARNIB
+4$:	RTS	PC
+;
+; .putda (put) send message
+; R0 = message pointer, returns cc(c) = 1 if exception
+;
+.PUTDA:	MOV	R0,R2		;save pointer
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+	MFPD	(R2)+		;get destination pid
+	.IFF
+	MOV	(R2)+,-(SP)	;get destination pid
+	.ENDC
+	MOVB	@SP,R1
+	MOVB	PSAPID(R5),@SP	;(sd.dst,sd.ctl) insert source pid
+	TSTB	R1		;is this trap
+	BNE	10$		;branch if no
+	CMPB	#TR.CLK+TRPCTL,1(SP) ;yes. is this clock update
+	BNE	5$		;branch if no
+	TSTB	$CKCNT		;yes. has clock recently been set
+	BNE	6$		;branch if yes
+	MOV	#HOSPAR+PARCLK,R0 ;no. copy to special area
+	MOV	@SP,(R0)+	
+	MOV	R2,-(SP)
+	JSR	PC,7$		;copy message data
+	MOV	HOSPAR+CLKREF+2,R0 ;update time offset
+	MOV	HOSPAR+CLKREF+4,R1
+	JSR	PC,STCLK
+	JSR	PC,GTCLK	;save reference time
+	MOV	R0,HOSPAR+CLKREF+2
+	MOV	R1,HOSPAR+CLKREF+4
+	MOV	(SP)+,R2
+	MOV	HOSPAR+CLKREF,R0 ;is local clock consistent
+	CMP	R0,DATE
+	BNE	2$		;branch if no
+	TSTB	DLTCNT
+	BEQ	4$		;branch if no
+	CMP	HOSPAR+CLKTYP,TYPSTR ;yes. has type/stratum changed
+	BNE	5$		;branch if yes
+	BIT	#CLKTRC,HOSPAR+PAROPT ;no. is trace requested
+	BNE	5$		;branch if yes
+	TST	(SP)+		;no. suppress trap
+	RTS	PC
+;
+2$:	MOV	R0,DATE		;update date
+	MOV	#1318.,MIDNIT	;(24*60*60*1000) reset midnight
+	MOV	#23552.,MIDNIT+2
+	ROL	R0		;is leap-down set
+	BCC	3$		;branch if no
+	SUB	#1000.,MIDNIT+2	;yes. subtract one second (no overflow)
+3$:	ROL	R0		;is leap-up set
+	BCC	4$		;branch if no
+	ADD	#1000.,MIDNIT+2	;yes. add one second (no overflow)
+4$:	BISB	$ONLIN,$CKCNT	;force clock resynch
+	BISB	$ONLIN,$ROUTE	;spread news
+	BIS	#C,REGPS(R4)
+5$:	MOV	HOSPAR+CLKTYP,TYPSTR ;update type/stratum
+	MOVB	HOSPAR+PARTRP,R1 ;has trap process been specified
+	BEQ	6$		;branch if no
+	CMP	HOSPAR+PARPKT+2,#REDZON ;yes. get a nibble
+	BLOS	6$		;branch if cant
+	MOV	#SD.END+2,R0
+	JSR	PC,.GBLK
+	BCC	11$		;branch if ok
+6$:	INC	HOSPAR+PARTRL	;cant. account for lost trap
+	MOV	#HOSPAR+PARTRB,R0 ;copy to special area
+	MOV	(SP)+,(R0)+	
+7$:	MOV	#SD.END/2-1,R3
+8$:				;copy message data
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+	MFPD	(R2)+
+	MOV	(SP)+,(R0)+
+	.IFF
+	MOV	(R2)+,(R0)+
+	.ENDC
+	SOB	R3,8$
+9$:	RTS	PC
+;
+10$:	MOV	#SD.END+2,R0	;get a nibble
+	JSR	PC,.GBLK
+	BCS	14$		;branch if unable
+11$:	INC	HOSPAR+PARNIB	;assemble message
+	SUB	#2,-2(R0)	;*** mousetrap
+	CLR	(R0)+
+	MOV	(SP)+,(R0)+
+	MOV	#SD.END/2-1,R3
+12$:				;copy message data
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+	MFPD	(R2)+
+	MOV	(SP)+,(R0)+
+	.IFF
+	MOV	(R2)+,(R0)+
+	.ENDC
+	SOB	R3,12$
+	BIC	#^C377,R1	;get psa pointers
+	MOV	CPUPSA(R1),R5
+	MOV	PSASTK(R5),R4
+	SUB	#SD.END+2,R0
+	MOV	R5,R1		;link on message queue
+	ADD	#PSAMSG,R1
+	JSR	PC,PRECED
+	BITB	#REVBIT,PSASTS(R5) ;is proc waiting for message
+	BEQ	9$		;branch if no
+	SUB	#2,REGPC(R4)	;yes. back up to repeat this
+	BITB	#DLYBIT,PSASTS(R5) ;is receive timeout running
+	BEQ	13$		;branch if no
+	MOV	R5,-(SP)	;yes. clear it
+	JSR	PC,.CTIM	;(call direct to save time)
+	MOV	(SP)+,R5
+13$:	JMP	SKD1		;schedule proc
+;
+14$:	BUGHLT	<"Message queue overflow">
+	.PAGE
+	.SBTTL	REAL-TIME CLOCK AND TIMER PRIMITIVES
+;
+; Interval timer routines
+; Uses real-time clock to simulate interval timer at power-line freq
+;
+; .dlay  set interval timer
+; .stim  set interval interrupt
+; .ctim  clear interval timer
+; .gdat  get system date
+; .gclk  get system clock
+;
+	.IF	GE,HDWCLK-3	;conditional assembly for clock type
+;
+; Update time-of-day clock
+;
+CLKTRP:	MOV	R0,-(SP)	;save
+	MOV	R1,-(SP)
+	MOV	@#KWV11,-(SP)	;save interrupt flag
+	JSR	PC,GTCLK	;update local clock
+	TST	(SP)+		;is interrupt flag set
+	BPL	1$		;branch if no
+	DIV	#10000.,R0	;yes. reduce modulo 1000 ms
+	CLR	R0
+	DIV	#1000.,R0
+	CMP	R1,#500.	;is it greater than 500 ms
+	BLO	2$		;branch if no
+	SUB	#1000.,R1
+2$:	MOV	R1,ONTIME	;save offset
+	CMPB	$CKHID,$CLKID	;is this from selected clock
+	BNE	1$		;branch if no
+	MOVB	#60./TS.ADJ,PPSFLG ;yes. (valid offset lives a minute)
+1$:	MOV	(SP)+,R1	;evas
+	MOV	(SP)+,R0
+	RTI
+;
+TIMTRP:
+	.IFF
+	.IF	EQ,HDWCLK-2	;conditional assembly for clock type
+TIMTRP:	RTI			;ignore if it can't be shut off
+;
+CLKTRP:	BIC	#000200,@#KWV11	;process overflow
+	.IF	NE,INCRM2	;conditional assembly for timer interval
+	SUB	#INCRM2,TIME+2	;compute next interval
+	SBC	TIME
+	.ENDC
+	SUB	#INCRM1*1000.,TIME
+	MOV	TIME,@#KWV11+2
+	CLR	TIME
+	.IFF
+TIMTRP:
+	.ENDC
+	.IF	NE,INCRM2	;conditional assembly for timer interval
+	ADD	#INCRM2,CLOCK+4	;up the tick
+	ADC	CLOCK+2
+	ADC	CLOCK
+	.ENDC
+	ADD	#INCRM1,CLOCK+2
+	ADC	CLOCK
+	.ENDC
+	MOV	R0,-(SP)	;open wide, insert foot
+	MOV	R1,-(SP)
+	.IF	NE,TICK		;conditional assembly for user routine
+	.GLOBL	$TICK,CLOCK
+	JSR	PC,$TICK	;call timer interrupt routine
+	.ENDC
+	INC	TSLICE		;update timeslice
+;
+; Clock tracking and glitch suppression
+;
+	DEC	CLKCNT		;clock-adjust cycle
+	BGT	4$		;branch if not yet
+	MOV	#TS.ADJ*1000./INCRM1,CLKCNT ;from the top
+	TSTB	PPSFLG		;is atom smashing
+	BEQ	1$		;branch if no
+	DECB	PPSFLG		;yes. decay an electron
+1$:	CMP	CLKLST,#TS.DCC
+	BLO	2$		;branch if okay
+	BIS	#140000,DATE	;reference timeout. set unsynchronized
+	BR	3$
+;
+2$:	ADD	#TS.ADJ,CLKLST	;bump poll interval
+3$:	MOV	HOSPAR+PARINC,R0 ;offset phase. determine adjustment
+	MOV	HOSPAR+PARINC+2,R1
+	ASHC	#TS.PRX,R0
+	SUB	R1,HOSPAR+PARINC+2 ;update for offset
+	SBC	HOSPAR+PARINC
+	SUB	R0,HOSPAR+PARINC
+	MOV	R0,-(SP)
+	MOV	R1,-(SP)
+	MOV	HOSPAR+CLKDRF,R0 ;update for trim
+	MOV	LSBDRF,R1
+	ASHC	#TS.FRX,R0
+	ADD	(SP)+,R1
+	ADC	R0
+	ADD	(SP)+,R0
+	.IF	EQ,HDWCLK-2	;conditional assembly for clock type
+	ASHC	#10.,R0		;*** (approx 1000 X)
+	ADD	R1,TIME+2	;add increment
+	ADC	TIME
+	ADD	R0,TIME
+	.IFF
+	ADD 	R1,CLOCK+4	;add low-order increment
+	ADC	CLOCK+2
+	ADC	CLOCK
+	ADD	R0,CLOCK+2
+	ADC	CLOCK
+	TST	R0		;add high-order increment
+	SXT	R0
+	ADD	R0,CLOCK
+	.ENDC
+4$:	MOV	(SP)+,R1
+	MOV	(SP)+,R0
+;
+; Update timer
+;
+	.IF	NE,INCRM2	;conditional assembly for timer interval
+	ADD	#INCRM2,LSBUPT ;downdate uptimer
+	ADC	HOSPAR+PARUPT+2
+	ADC	HOSPAR+PARUPT
+	SUB	#INCRM2,TIMER+2	;update downtimer
+	SBC	TIMER
+	BCS	5$		;branch if timer underflow
+	.ENDC
+	ADD	#INCRM1,HOSPAR+PARUPT+2
+	ADC	HOSPAR+PARUPT
+	SUB	#INCRM1,TIMER
+	BCS	5$		;branch if timer underflow
+	CMP	TSLICE,#QUANTM	;has timeslice expired
+	BHIS	6$		;branch if yes
+	RTI			;no. resume thinking
+;
+; Timer interrupt
+;
+5$:	CLR	TIMER		;clear residual
+6$:	JSR	R5,SAVE		;suspend running process
+CLK5:	TST	TIMER		;is timer frozen
+	BNE	CLKRTN		;branch if no
+	MOV	TIMERQ,R5	;yes. is there another process on queue
+	BEQ	CLKRTN		;branch if no
+	MOV	PSASTK(R5),R4	;yes. get stack pointer
+	MOV	PSATIM(R5),R0	;thaw timer
+	CLR	PSATIM(R5)
+	MOV	R0,TIMER	;test for overflow
+	BNE	CLKRTN		;branch if no overflow
+	MOV	PSATMQ(R5),TIMERQ ;unlink entry
+	MOV	#CLK5,-(SP)	;set return to scan timer queue
+	BITB	#DLYBIT,PSASTS(R5) ;is receive timeout running
+	BEQ	1$		;branch if no
+	BIS	#N,REGPS(R4)	;yes. set n bit in cc
+	JMP	SKD1		;shortcut to reshedule proc
+;
+1$:	CLR	-(SP)		;(flag for timer interrupt)
+	MOV	PSASYN(R5),R0	;get async entry address
+	MOV	2(R0),R0
+	MOV	PSASTK(R5),R4
+	MOV	PSAPAR(R5),R3
+	MOV	PARREG(R3),R2
+	RTS	R0		;dive! dive! dive!
+;
+; .dlay (dly) wait for interval timer
+; R0 = time interval
+;
+.DLAY:	JSR	PC,.WAIT	;suspend calling process
+DLY1:	BISB	#RUNBIT+DLYBIT,PSASTS(R5) ;mark in time-wait state
+;
+; .stim (stm) set interval timer
+; R0 = time interval
+;
+.STIM:	JSR	PC,FREEZE	;freeze timer
+	MOV	#TIMERQ-PSATMQ,R2
+1$:	MOV	R2,R1		;point to successor
+	MOV	PSATMQ(R1),R2
+	BEQ	2$		;branch if none
+	CMP	R2,R5		;is it this entry
+	BEQ	3$		;branch if yes
+	SUB	PSATIM(R2),R0	;no. correct interval
+	BHI	1$		;branch if no overflow
+	ADD	PSATIM(R2),R0	;overflow. correct intervals
+	SUB	R0,PSATIM(R2)
+2$:	MOV	R0,PSATIM(R5)	;store interval
+	MOV	PSATMQ(R1),PSATMQ(R5) ;link on timer queue
+	MOV	R5,PSATMQ(R1)
+	BR	CLK5		;clean out queues
+;
+3$:	BUGHLT	<"Invalid .stim call">
+;
+; .ctim (ctm) clear interval timer
+; Returns r0 = residual time interval, cc = n if already cleared
+;
+.CTIM:	JSR	PC,FREEZE	;freeze timer
+	CLR	@R4
+	MOV	#TIMERQ-PSATMQ,R2
+1$:	MOV	R2,R1		;point to successor
+	MOV	PSATMQ(R1),R2
+	BEQ	3$		;branch if none
+	ADD	PSATIM(R2),@R4
+	CMP	R2,R5		;is it this entry
+	BNE	1$		;branch if no
+	MOV	PSATMQ(R5),R2	;yes. point to successor
+	BEQ	2$		;branch if none
+	ADD	PSATIM(R5),PSATIM(R2) ;update residual time
+2$:	MOV	R2,PSATMQ(R1)	;unlink entry
+	BR	CLK5		;clean out queues
+;
+3$:	BIS	#N,REGPS(R4)	;not found. set n bit
+	BR	CLK5		;clean out queues
+;
+; Subroutine to freeze timer
+;
+FREEZE:	MOV	TIMER,R2	;make timer run positive
+	BEQ	CLKRTN		;branch if already frozen
+	CLR	TIMER
+	MOV	TIMERQ,R1	;is timer queue empty
+	BEQ	CLKRTN		;branch if yes
+	MOV	R2,PSATIM(R1)	;no. store interval there
+CLKRTN:	RTS	PC		;back to mother
+;
+; .gdat (gdt) get system date
+; Returns r0 = date
+;
+.GDAT:	JSR	PC,GTCLK	;make sure date/time are consistent
+	MOV	DATE,@R4	;fetch date
+	RTS	PC
+;
+; .gclk (gck) get system clock
+; Returns r0-r1 = time
+;
+.GCLK:	JSR	PC,GTCLK	;read local clock
+	MOV	R0,@R4
+	MOV	R1,REGR1(R4)
+	RTS	PC
+;
+; .uniq (gck) get unique number
+; Returns r0-r1 = time (milliseconds) + fudge for uniqueness
+;
+.UNIQ:	JSR	PC,GTCLK	;read local clock
+	CMP	R0,UNIQUE	;is it greater than old number
+	BHI	2$		;branch if yes
+	BLO	1$		;branch if no
+	CMP	R1,UNIQUE+2
+	BHI	2$		;branch if yes
+1$:	MOV	UNIQUE,R0	;no. make sure it is
+	MOV	UNIQUE+2,R1
+	ADD	#1,R1
+	ADC	R0
+2$:	MOV	R0,UNIQUE	;save new number
+	MOV	R1,UNIQUE+2
+	MOV	R0,@R4
+	MOV	R1,REGR1(R4)
+	RTS	PC
+;
+; Subroutine to latch local clock
+; Returns r0-r1 = time (milliseconds)
+;
+GTCLK:
+	.IF	LT,HDWCLK-3	;conditional assembly for clock type
+	MOV	CLOCK,R0	;fetch latest clock value
+	MOV	CLOCK+2,R1
+	.IFF
+	TST	@#KWV11		;is clock buffer already latched
+	BMI	2$		;branch if yes
+	BIS	#001000,@#KWV11	;no. request counter transfer to buffer
+1$:	TST	@#KWV11		;wait for response
+	BPL	1$
+2$:	MOV	@#KWV11+2,R1	;read clock buffer
+	BIC	#100000,@#KWV11
+	MOV	CLOCK,R0	;resolve latest clock value
+	ADD	CLOCK+2,R1
+	ADC	R0
+	TSTB	@#KWV11		;is overflow pending
+	BPL	3$		;branch if no
+	BIC	#000200,@#KWV11	;yes. process overflow
+	INC	CLOCK		;up the tick by 65.556 sec
+	BR	GTCLK
+;
+3$:
+	.ENDC
+	TST	R0		;did clock underflow
+	BPL	4$		;branch if no
+	ADD	MIDNIT+2,CLOCK+2 ;yes. reduce modulo 2400 hours
+	ADC	CLOCK
+	ADD	MIDNIT,CLOCK
+	DEC	DATE		;roll back date
+	RTS	PC		;let the user beware...
+;
+4$:	CMP	R0,MIDNIT	;(mod(86400*1000/65536)) did clock overflow
+	BLO	CLKRTN		;branch if no
+	CMP	R1,MIDNIT+2	;(rem(86400*1000/65536)*65536)
+	BLO	CLKRTN		;branch if no
+	SUB	MIDNIT+2,CLOCK+2 ;yes. reduce modulo 2400 hours
+	SBC	CLOCK
+	SUB	MIDNIT,CLOCK
+	INC	DATE		;roll forward date
+	CLR	UNIQUE		;reset unique number
+	CLR	UNIQUE+2
+	CMP	DATE,#140000	;is clock synchronized
+	BHIS	GTCLK		;branch if no
+	BIT	#140000,DATE	;yes. are leap bits set
+	BEQ	GTCLK		;branch if no
+	BIC	#140000,DATE	;yes. kill leaps
+	BIS	#CLKHLD,HOSPAR+PAROPT ;flash assasin
+	CLRB	DLTCNT		;flush clock filter
+	BR	GTCLK
+;
+; stclk (sck) increment system clock
+; R0-r1 = increment (milliseconds)
+;
+STCLK:	MOV	DLTPTR,R2	;save increment in median filter
+1$:	MOV	R0,@R2
+	MOV	R1,2(R2)
+	CMPB	DLTCNT,#2	;is filter full
+	BHIS	2$		;branch if yes
+	INCB	DLTCNT		;no. use most recent entry
+	BR	3$
+;
+2$:	CMPB	HOSPAR+CLKTYP,#CK.NTP ;is this filtered update
+	BHIS	3$		;branch if no
+	CLR	R2		;yes. find median pointer
+	MOV	DELTA,R0	;0 : 1
+	CMP	DELTA+2,DELTA+6
+	SBC	R0
+	SUB	DELTA+4,R0
+	ROL	R0
+	ROL	R2
+	MOV	DELTA+4,R0	;1 : 2
+	CMP	DELTA+6,DELTA+12
+	SBC	R0
+	SUB	DELTA+10,R0
+	ROL	R0
+	ROL	R2
+	MOV	DELTA+10,R0	;2 : 0
+	CMP	DELTA+12,DELTA+2
+	SBC	R0
+	SUB	DELTA,R0
+	ROL	R0
+	ROL	R2
+	MOVB	MEDCOD(R2),R2
+	ADD	#DELTA,R2
+;
+; Process update
+;
+3$:	MOV	@R2,R0		;is offset in bounds
+	MOV	2(R2),R1
+	ASHC	#TS.APX,R0
+	ADC	R1
+	BNE	8$		;branch if no
+	ADC	R0
+	BNE	8$		;branch if no
+	MOV	2(R2),R0	;yes. fetch offset
+	SXT	R1
+	TSTB	PPSFLG		;is 1 pps adjust available
+	BEQ	4$		;branch if no
+	MOV	ONTIME,R0	;yes. use that instead
+	NEG	R0
+	SXT	R1
+	.IF	DF,PPS		;include for precision time
+	MOVB	#PPS,HOSPAR+CLKTYP ;reveal clock type
+	MOVB	#1,HOSPAR+CLKSTR ;(stratum 1)
+	MOV	#1,HOSPAR+CLKERR ;(dispersion)
+	.ENDC
+;
+; Local-clock dance
+;
+4$:	MOV	R0,-(SP)	;huffenpuff
+	MOV	R1,-(SP)
+	MOVB	HOSPAR+PARDCC,R2 ;(tau)
+	NEG	R2		;update compliance
+	ASHC	R2,R0
+	ASHC	#TS.MUL-10.,R0	;(Kt) (scale ms)
+	SUB	COMPLY+2,R1
+	SBC	R0
+	SUB	COMPLY,R0
+	ASHC	#TS.WGT,R0	;(Kh)
+	ADD	R1,COMPLY+2
+	ADC	COMPLY
+	ADD	R0,COMPLY
+	MOV	#TS.CMP-1,R0	;(Ks) compute compliance adjust
+	MOV	COMPLY,R2
+	BPL	5$		;branch if positive happening
+	NEG	R2		;negative happening
+5$:	INC	R0		;count trailing ones
+	BGE	6$		;clamp positive
+	ASR	R2
+	BNE	5$
+6$:	MOVB	R0,HOSPAR+PARDCC ;(tau) save compliance adjust
+	NEG	R0		;compute max poll
+	MOV	#64.,R2
+	ASH	R0,R2
+	MOV	#-6-1,R0	;compute poll adjust
+	CMP	R2,CLKLST	;is poll interval too long
+	BLOS	7$		;branch if yes
+	MOV	CLKLST,R2	;no. use it instead
+7$:	INC	R0		;count trailing ones
+	ASR	R2
+	BNE	7$
+	MOVB	R0,HOSPAR+PARDCC+1 ;(mu) save poll adjust
+	MOV	(SP)+,R1	;puffenhuff
+	MOV	(SP)+,R0
+	MOVB	HOSPAR+PARDCC,R2 ;(tau)
+	ASHC	R2,R0		;update phase
+	MOV	R0,HOSPAR+PARINC
+	MOV	R1,HOSPAR+PARINC+2
+	ASHC	R2,R0		;update frequency
+	MOVB	HOSPAR+PARDCC+1,R2 ;(mu)
+	ASHC	R2,R0
+	ADD	R1,LSBDRF
+	ADC	HOSPAR+CLKDRF
+	ADD	R0,HOSPAR+CLKDRF
+	BR	10$
+;
+8$:	CMP	DATE,#140000	;is this priority update
+	BHIS	9$		;branch if yes
+	CMPB	HOSPAR+CLKTYP,#CK.NTP
+	BHI	9$		;branch if yes
+	CMP	CLKLST,#TS.STP	;no. has timeout expired
+	BLO	11$		;branch if no
+9$:	ADD	2(R2),CLOCK+2	;yes. zap all 32 bits
+	ADC	CLOCK
+	ADD	@R2,CLOCK
+	CLR	HOSPAR+PARINC
+	CLR	HOSPAR+PARINC+2
+	BIS	#140000,DATE	;initialize clock tracking and synch
+	CLRB	DLTCNT
+10$:	CLR	CLKLST
+11$:	ADD	#4,DLTPTR	;bump filter pointer
+	CMP	DLTPTR,#DLTEND
+	BLO	12$
+	MOV	#DELTA,DLTPTR
+12$:	RTS	PC
+;
+	.IF	GT,DUMP		;define for bugspray
+;
+; Subroutine to save machine status in panic-dump area
+;
+BGSPRY:	INC	$PDREG		;sequence number
+	CMP	$PDREG,#100.
+	BLO	1$
+	HALT			;halt if too many dumps
+1$:	MOV	CODE,$PDREG+2	;interrupt code
+	MOV	ACTIVE,$PDREG+4	;active process
+	MOV	TRPPC,$PDREG+6	;interrupt pc
+	MOV	R0,$PDREG+10	;registers
+	MOV	R1,$PDREG+12
+	MOV	R2,$PDREG+14
+	MOV	R3,$PDREG+16
+	MOV	R4,$PDREG+20
+	MOV	R5,$PDREG+22
+	MOV	(SP)+,$PDREG+26	;pc
+	MOV	SP,$PDREG+24	;sp
+	MOV	#$PDREG+30,R1	
+	MOV	SP,R0		;stack
+	MOV	#10,R2
+2$:	MOV	(R0)+,(R1)+
+	SOB	R2,2$
+	MOV	R5,R0		;psa
+	MOV	#30,R2
+3$:	MOV	(R0)+,(R1)+
+	SOB	R2,3$
+4$:	JMP	@$PDREG+26	;return
+	.ENDC
+	.PAGE
+	.SBTTL	SUPERVISOR WORKING STORAGE
+;
+; Data segments
+;
+	.PSECT	$KERD,RO,D
+;
+; Supervisor-call branch table
+;
+SYSTRA:	.WORD	.INIT		;000 system reset
+	.WORD	.PSEM		;001 semaphore p-operation
+	.WORD	.VSEM		;002 semaphore v-operation
+	.WORD	.SKED		;003 scedule process
+	.WORD	.SETC		;004 set process condition code
+	.WORD	.PRIO		;005 set process priority
+	.WORD	.SETV		;006 attach interrupt
+	.WORD	.WAIT		;007 wait for interrupt
+	.WORD	.GPKT		;010 get packet
+	.WORD	.FPKT		;011 free packet
+	.WORD	.TSEM		;012 semaphore t-operation
+	.WORD	.PPKT		;013 preempt buffer
+	.WORD	.PUTDA		;014 send message to port
+	.WORD	.GETDA		;015 wait for message on port
+	.WORD	.ASYN		;016 send interrupt to port
+	.WORD	.STIM		;017 set interval timer
+	.WORD	.CTIM		;020 clear interval timer
+	.WORD	.DLAY		;021 wait for interval timer
+	.WORD	.TPKT		;022 scavenge packet
+	.WORD	.GCLK		;023 get system clock
+	.WORD	.BUGS		;024 force logout/restart
+	.WORD	.GDAT		;025 get current date
+	.WORD	.GMEM		;026 get free memory pointers
+	.WORD	.GTAD		;027 get real address
+	.WORD	.WIND		;030 map virtual window
+	.WORD	.UNIQ		;031 get unique number
+	.WORD	.GPSA		;032 get psa pointers
+	.WORD	.GQNC		;033 get quench packet
+	.WORD	.TRPID		;034 set trap process pid
+	.WORD	.BOOT		;035 system reboot
+SYSTRT	=	.		;end of table
+;
+; Checksum table (initialization)
+;
+CKSTAB:	.WORD	0,VECEND	;interrupt vectors
+	.IF	GE,CPU-5	;conditional assembly for cpu type
+	.WORD	PGMBGN,ISPACE	;boot/reset procedure only
+	.IFF
+	.WORD	PGMBGN,PGMEND	;procedure/data
+	.ENDC
+	.WORD	CFGTAB,ERSBGN	;data
+	.WORD	0		;end of table
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+;
+; Kernel/supervisor segment table (initialization)
+;
+KERTAB:
+	.IF	GE,CPU-5	;conditional assembly for cpu type
+	.WORD	000000,AC.RW	;0 000000-020000 procedure
+	.IFF
+	.WORD	000000,AC.RO	;0 000000-020000 procedure
+	.ENDC
+	.WORD	000200,AC.RW	;1 020000-040000 procedure/data
+	.WORD	000400,AC.RW	;2 040000-060000 procedure/data
+	.WORD	000600,AC.RW	;3 060000-100000 procedure/data
+	.WORD	001000,AC.RW	;4 100000-120000 data
+	.WORD	001200,AC.RW	;5 120000-140000 window/data
+	.WORD	001400,AC.RW	;6 140000-160000 window/data
+	.WORD	177600,AC.RW	;7 160000-200000 window/i/o page
+	.WORD	0		;end of table
+;
+; User segment table (initialization)
+;
+USETAB:	.WORD	000000,AC.RW	;5 120000-140000 shared data
+	.WORD	000000,AC.RW	;5 120000-140000 shared procedure
+	.WORD	000000,AC.RW	;6 140000-160000 shared data
+	.WORD	000000,AC.RW	;6 140000-160000 shared procedure
+	.WORD	0		;end of table
+	.ENDC
+;
+INISEG:	.WORD	0		;beginning of user memory (blocks)
+ENDPTR:	.WORD	0		;end of physical memory (blocks)
+;
+MEDCOD:	.BYTE	4*0,4*1,4*0,4*2,4*2,4*0,4*1,0 ;median index
+	.EVEN
+;
+	.PSECT	$TABL,RW,D
+;
+; Supervisor auxilliary storage
+; (not initialized at restart)
+;
+TVCTAB:	JSR	R5,@#SAVE	;interrupt linkage prototype
+	MOV	#0,R5		;psa pointer
+	MOV	#0,R0		;interrupt code
+	MOV	#0,-(SP)	;entry point
+	JMP	@#SVC3		;where it's happening
+TVCEND	=	.		;end of table
+;
+SECURE:	.WORD	0		;program checksum
+DATE:	.WORD	0		;system date
+CLOCK::	.WORD	0,0,0		;system clock
+ONTIME:	.WORD	0		;1 pps offset
+COMPLY:	.WORD	0,0		;compliance
+UNIQUE:	.WORD	0,0		;unique number
+TYPSTR:	.WORD	0		;last clock type/stratum
+LSBUPT:	.WORD	0		;low-order uptime
+LSBDRF:	.WORD	0		;low-order drift compensation
+	.IF	EQ,HDWCLK-2	;conditional assembly for clock type
+TIME:	.WORD	0,0		;timer interval
+	.ENDC
+;
+; Supervisor data
+; (initialized at restart)
+;
+	.PSECT	$ERAS,RW,I
+;
+STOPTR:	.BLKW	1		;beginning of freespace
+PMPPTR:	.BLKW	1		;preemptable buffer thread head
+SEGPTR:	.BLKW	1		;end of allocated memory (blocks)
+INTPTR:	.BLKW	1		;interrupt linkage pointer
+TRPPC:	.BLKW	1		;interrupt pc
+ACTIVE:	.BLKW	1		;active psa pointer
+CACHE:	.BLKW	1		;active cache pointer
+TSLICE:	.BLKW	1		;active timeslice
+TIMERQ:	.BLKW	1		;timer queue head
+TIMER:	.BLKW	2		;interval timer
+MIDNIT:	.BLKW	2		;midnight
+CLKCNT:	.BLKW	1		;clock-adjust counter (incrm1 increments)
+CLKLST:	.BLKW	1		;poll interval (seconds)
+DLTPTR:	.BLKW	1		;clock filter pointer
+CODE:	.BLKW	1		;interrupt code
+DELTA:	.BLKW	2*3		;clock filter
+DLTEND	=	.		;end of clock filter
+$ONLIN:	.BLKB	1		;online mask
+$CKCNT:	.BLKB	1		;clock synch flags
+$ROUTE:	.BLKB	1		;route synch flags
+DLTCNT:	.BLKB	1		;samples in clock filter
+PPSFLG:	.BLKB	1		;1 pps adjust available
+	.EVEN
+	.BLKW	100		;supervisor stack
+STACK	=	.
+;
+; CPU tables and chairs
+;
+	.IF	LT,CPU-5	;conditional assembly for cpu type
+INTLNK:	.BLKW	INTMAX*10.	;interrupt linkage blocks
+	.ENDC
+CPUHED:	.BLKW	PRIMAX*3	;cpu queue heads
+SMFHED:	.BLKW	SMFMAX*3	;semaphore queue heads
+CPUPSA:	.BLKW	CIDMAX+1	;psa pointer table
+	.PAGE
+	.SBTTL	INITIAL PROGRAM LOAD INITIALIZATION
+;
+	.PSECT	$END,RW,D	;this will be overlaid
+;
+; Initialization to defeat rt-11 low-core masks
+;
+START:	MOV	#PGMBGN,SP	;point stack inbounds
+	CMP	@#0,#040000	;is entry from rt-11
+	BNE	7$		;branch if no
+	.DATE			;yes. get year
+	MOV	R0,R2		;convert to system format
+	ASH	#-2,R0
+	BIC	#^C7,R0
+	MUL	#1461.,R0	;(4*365+1)
+	MOV	#STDYER-2,R3	;assume standard year
+	MOV	R2,R0
+	BIC	#^C3,R0
+	BNE	1$
+	MOV	#LEPYER-2,R3	;assume leap year
+1$:	ASL	R0
+	ADD	YEAR(R0),R1
+	MOV	R2,R0		;convert month
+	ASH	#-10.,R0
+	BIC	#^C17,R0
+	ASL	R0
+	ADD	R3,R0
+	ADD	@R0,R1
+	MOV	R2,R0		;convert day
+	ASH	#-5,R0
+	BIC	#^C37,R0
+	DEC	R0
+	ADD	R1,R0
+	MOV	R0,DATE
+	.GTIM	#ERSBGN,#CLOCK	;get time-of-day
+	MOV	#-60.,R4	;convert to system clock
+	.GVAL	#ERSBGN,#CONFIG
+	BIT	#CLK50$,R0
+	BEQ	2$
+	MOV	#-50.,R4
+2$:	MOV	CLOCK,R0	;convert to milliseconds
+	MOV	CLOCK+2,R1
+	CLR	R2		;initialize
+	MOV	#33.,R3
+3$:	ROL	R2		;shift partial remainder left
+	ADD	R4,R2
+	BCS	4$		;branch if no underflow
+	SUB	R4,R2		;underflow. restore partial remainder
+4$:	ROL	R1		;rotate partial quotient left
+	ROL	R0
+	DEC	R3
+	BNE	3$
+	CLR	R2		;initialize
+	MOV	#33.,R3
+5$:	ASR	R2		;shift partial product right
+	ROR	R0
+	ROR	R1
+	BCC	6$		;branch if lsb = 0
+	ADD	#1000.,R2	;lsb ~= 0. add multiplier
+6$:	DEC	R3
+	BNE	5$
+	MOV	R0,CLOCK
+	MOV	R1,CLOCK+2
+7$:	MOV	#PR7,-(SP)	;disable interrupts
+	MOV	#STR74,-(SP)
+	RTI
+;
+STR74:	MOV	#STR76,@#4	;set mousetrap
+	MOV	#PR7,@#6
+	CLR	R0		;poke at storage
+1$:	MOV	HOSPAR+PARMAX,R1 ;is max specified
+	BNE	2$		;branch if yes
+	MOV	#TOPMEM,R1	;no. assume all available memory
+2$:	CMP	R0,R1		;is this max
+	BHIS	STR72		;branch if yes
+	MOV	@R0,@R0		;no. poke memory (this recomputes parity)
+	TST	(R0)+
+	BR	2$
+;
+STR76:	CMP	(SP)+,(SP)+	;discard old pc/ps
+STR72:	MOV	R0,HOSPAR+PARMAX ;() store max
+	MOV	#COPBGN,R0	;copy vector area
+	CLR	R1
+1$:	MOV	(R0)+,(R1)+
+	CMP	R0,#COPEND
+	BLO	1$
+	MOV	#USR$+FUZZY$+FBMON$,HOSPAR+PAROPT ;configuration bits
+	.IF	GE,HDWCLK-1	;include for crystal clock
+	BIS	#KW11P$,HOSPAR+PAROPT ;crystal clock
+	.ENDC
+	.IF	GE,CPU-2	;conditional assembly for cpu type
+	BIS	#KT11$,HOSPAR+PAROPT ;memory management
+	.IF	GE,CPU-3
+	BIS	#BIT22$,HOSPAR+PAROPT ;22 bit
+	.ENDC
+	MOV	#KERTAB,R0	;kernel/supervisor segments
+	CLR	R1
+2$:
+	.IF	GE,CPU-4	;conditional assembly for i/d space
+	MOV	@R0,SEGS+60(R1)	;d-par supervisor space
+	MOV	@R0,SEGS+40(R1)	;i-par
+	MOV	@R0,SEGK+60(R1)	;d-par kernel space
+	MOV	(R0)+,SEGK+40(R1) ;i-par
+	MOV	@R0,SEGS+20(R1)	;d-pdr supervisor space
+	MOV	@R0,SEGS(R1)	;i-pdr
+	MOV	@R0,SEGK+20(R1)	;d-pdr kernel space
+	MOV	(R0)+,SEGK(R1)	;i-pdr
+	.IFF
+	MOV	(R0)+,SEGK+40(R1) ;par kernel space
+	MOV	(R0)+,SEGK(R1)	;pdr
+	.ENDC
+	ADD	#2,R1
+	TST	@R0
+	BNE	2$
+	MOV	#USEBGN,R0	;user shared segments
+	ASH	#-6,R0
+	BIC	#^C1777,R0
+	MOV	R0,USETAB
+	MOV	R0,USETAB+4
+	ADD	#200,R0
+	MOV	R0,USETAB+10
+	MOV	R0,USETAB+14
+	MOV	HOSPAR+PARMAX,R0 ;initial segment pointer
+	ADD	#77,R0
+	ASH	#-6,R0
+	BIC	#^C1777,R0
+	MOV	R0,INISEG
+	.IF	GE,CPU-3	;conditional assembly for 22-bit addressing
+	MOV	#20,@#MMR3	;set 22-bit mode
+	.ENDC
+	MOV	@#SEGK,-(SP)	;turn on relocation
+	MOV	#AC.RW,@#SEGK	;enable read/write access to segment zero
+	MOV	#1,@#MMR0
+	MOV	@#4,-(SP)	;save trap
+	MOV	#STR71,@#4
+	MOV	#SEGK+40+<WS1*2>,R1 ;search to end of memory
+	MOV	@R1,-(SP)
+	MOV	#1600,@R1
+3$:	MOV	WS1*200*100,WS1*200*100 ;(verify read/write)
+	ADD	#200,@R1
+	BR	3$
+;
+STR71:	CMP	(SP)+,(SP)+	;discard old pc/ps
+	MOV	@R1,ENDPTR	;save max blocks
+	MOV	(SP)+,@R1
+	MOV	(SP)+,@#4	;restore trap
+	CMP	#ALTBGN,#ALTEND	;is table segment empty
+	BEQ	STR33		;branch if yes
+	MOV	INISEG,R1	;no. compute segment physical address
+	CLR	R0
+	ASHC	#6,R0
+	MOV	$GATPT+2,R2	;is gateway table in segment
+	SUB	#ALTBGN+4,R2
+	BMI	1$		;branch if no
+	MOV	R0,$GATPT	;yes. install physical address
+	MOV	R1,$GATPT+2
+	ADD	R2,$GATPT+2
+	ADC	$GATPT
+1$:	MOV	INISEG,@#SEGK+40+<WS1*2> ;copy table segment
+	MOV	#WS1*200*100,R1
+	MOV	#ALTBGN,R0
+2$:	MOV	R0,R3		;copy next block
+	MOV	(R3)+,R4
+	MOV	(R3)+,R5
+3$:	MOV	R3,R0
+4$:	MOV	(R0)+,(R1)+
+	CMP	R0,R4
+	BLO	4$
+	SOB	R5,3$
+	CMP	R0,#ALTEND
+	BLO	2$
+	SUB	#WS1*200*100,R1 ;include segments
+	ADD	#77,R1
+	ASH	#-6,R1
+	ADD	R1,INISEG
+STR33:
+	.IF	GE,CPU-5	;conditional assembly for cpu type
+	MOV	INISEG,R3
+	ADD	R3,USETAB+4	;move user shared i space
+	ADD	R3,USETAB+14
+	CLR	R0		;copy procedure segments
+1$:	MOV	INISEG,@#SEGK+40+<WS1*2>
+	MOV	#WS1*200*100,R1
+	MOV	#40,R2
+2$:	MOV	(R0)+,(R1)+
+	SOB	R2,2$
+	INC	INISEG
+	CMP	R0,#INTMAX*10.*2+DSPACE
+	BLO	1$
+	CLR	@#MMR0		;turn off relocation
+	MOV	KERTAB+<WS1*4>,@#SEGK+40+<WS1*2> ;restore window segment
+	CLR	R1		;load kernel/supervisor i segments
+3$:	MOV	R3,SEGK+40(R1)
+	MOV	R3,SEGS+40(R1)
+	ADD	#2,R1
+	ADD	#200,R3
+	CMP	R3,INISEG
+	BLO	3$
+	.IFF
+	CLR	@#MMR0		;turn off relocation
+	MOV	KERTAB+<WS1*4>,@#SEGK+40+<WS1*2> ;restore window segment
+	.ENDC
+	MOV	(SP)+,@#SEGK	;restore segment zero access
+	.ENDC
+	JMP	.INIT		;bonzai!!
+;
+; Date conversion tables
+;
+;		 xx0  xx1  xx2  xx3
+YEAR:	TABLE	<366.,365.,365.,365.>
+;		 jan feb mar apr may jun jul aug sep oct nov dec
+STDYER:	TABLE	<31.,28.,31.,30.,31.,30.,31.,31.,30.,31.,30.,31.,999.>
+LEPYER:	TABLE	<31.,29.,31.,30.,31.,30.,31.,31.,30.,31.,30.,31.,999.>
+;
+; Cpu interrupt vectors
+;
+COPBGN:	JMP	@#.INIT		;000 system startup
+	.WORD	ERRTRP,PR7	;004 bus error/invalid instruction
+	.WORD	ERRTRP,PR7	;010 reserved instruction
+	.WORD	ERRTRP,PR7	;014 trace trap
+	.WORD	IOTTRP,PR7	;020 iot trap
+	.WORD	RIPTRP,PR7	;024 power-fail trap
+	.WORD	SVCTRP,PR7	;030 emt trap
+VECEND	=	.-COPBGN	;end of cpu interrupt vectors
+	.WORD	TRPTRP,PR7	;034 trap trap
+;
+.	=	COPBGN+100	;kw11-l clock
+	.WORD	TIMTRP,PR7	;timer interrupt
+;
+.	=	COPBGN+104	;kw11-p clock
+	.WORD	TIMTRP,PR7	;timer interrupt
+;
+.	=	COPBGN+114	;kdf11 parity check
+	.WORD	MEMTRP,PR7	;memory-parity trap
+;
+.	=	COPBGN+244	;kef11/kev11 floating-point
+	.WORD	FPNTRP,PR7	;floating-point trap
+;
+.	=	COPBGN+250	;kt11 memory management unit
+	.WORD	MMUTRP,PR7	;memory-management abort
+;
+	.IF	GE,HDWCLK-2	;conditional assembly for clock type
+.	=	COPBGN+440	;kwv11-a/c clock
+	.WORD	CLKTRP,PR7	;clock overflow interrupt
+	.WORD	CLKTRP,PR7	;clock on-time interrupt
+	.ENDC
+COPEND	=	.		;end of rt-11 fiddle
+;
+	.END	START
+                                                                                                                                                                                                                                                                                                                                                                                               

@@ -1,0 +1,962 @@
+	.TITLE	RNAME	Domain name resolver subroutine
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Domain name resolver subroutine
+;
+; This program queries a domain name server for resources associated with
+; a given host name. It is designed to conform with RFC-883.
+;
+; Note: control-c interrupts are disabled upon entry to this program, but
+; are restored upon exit. A few queue elements (.QSET) must be allocated
+; by the caller in the root segment. Also note caller must not allow this
+; segment to be overlayed while timer and/or net traps are pending.
+;
+; Conditional assembly switches
+;
+.IIF NDF,CS.DBG CS.DBG == 0	;0: no debug trace, 1: debug trace
+;
+; External symbols
+;
+	.GLOBL	CTRL,TYPE	;utility routines
+;
+; Entry symbols
+;
+	.GLOBL	RNAME		;domain name resolver
+	.GLOBL	XNAME		;local domain name resolver
+	.GLOBL	ADDR		;host address resolver
+	.GLOBL	XADDR		;local host address resolver
+	.GLOBL	GTHOST		;local name/address resolver
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.PSA,.SUP,.WIND,.GCLK ;dcnlib macros
+	.MCALL	.SPND,.RSUM,.MRKT,.CMKT,.SCCA ;rt-11 macroni
+	.MCALL	.LOOKU,.READW,.PURGE,.GVAL,.DSTAT
+	.MCALL	$DFIH,$DFUH,$DFSIG ;moslib macroni
+	.MCALL	CALL,DFSRV	;netlib macros
+	.COM			;define common data
+	.PSA			;define process storage area
+	.SUP			;define host parameter area
+	$DFIH			;define internet header
+	$DFUH			;define user datagram header
+	$DFSIG			;define interprocess signals
+	DFSRV			;define host table entry format
+;
+; Module definitions
+;
+; Assembly parameters
+;
+DOMPRT	=	53.*400		;domain name server
+RTXTIM	=	5*60.		;retry timeout (five seconds)
+USETIM	=	60.*1000.	;user timeout (one minute)
+CHAN	=	14.		;host table channel
+CONFIG	=	300		;monitor offset of configuration word
+FUZZY$	=	000002		;0: rt-11, 1: fuzzball
+TCBSIZ	=	256.		;connection block size
+HOSMAX	=	20		;max number of host/server addresses
+RTXMAX	=	3		;max retries
+;
+; Domain name header format
+;
+.	=	0
+HD.ID:	.BLKW	1		;query id
+HD.OP:	.BLKB	1		;operation code and flags
+OP.QUE	=	0*10		;standard query (QUERY)
+OP.INV	=	1*10		;inverse query (IQUERY)
+OP.CQM	=	2*10		;completion query, multiple answers (CQUERYM)
+OP.CQS	=	3*10		;completion query, single answer (CQUERYU)
+OP.AA	=	004		;authoritative answer bit
+OP.TC	=	002		;truncation bit
+OP.RD	=	001		;recursion desired bit
+HD.RSP:	.BLKB	1		;response code and flags
+OP.RA	=	200		;recursion available bit
+OR.OK	=	000		;no error condition
+OR.FMT	=	001		;format error
+OR.BUG	=	002		;server failure
+OR.NAM	=	003		;unknown name
+OR.NYP	=	004		;not implemented
+OR.REF	=	005		;refused
+HD.QCT:	.BLKW	1		;count of question entries
+HD.ACT:	.BLKW	1		;count of answer records
+HD.NCT:	.BLKW	1		;count of authority records
+HD.RCT:	.BLKW	1		;count of additional records
+HD.LEN	=	.		;length of header
+;
+; Procedure segment
+;
+	.PSECT	$BOSI,RO,I
+;
+; Domain name resolver subroutines
+;
+; Note: the following ulp/c-callable subroutines all have a common calling
+; sequence: code = sub(namptr,adrptr,flgptr). Ordinarily, calling programs
+; specify namptr as a pointer to a host name and adrptr a pointer to a
+; host address; however, the operation of the subroutines can modify these
+; arguments, for instance, by overwriting the host-name string with the
+; principal host name. Also, note that the adrptr and flgptr arguments can
+; be zero, indicating no modifications.
+;
+; Local host-address resolver
+; Ulp/c calling sequence: code = gthost(namptr,adrptr,flgptr)
+;
+; This subroutine finds the local host address and calls the general
+; host-address resolve subroutine to find the host name.
+;
+GTHOST:	.GVAL	#ARGBLK,#CONFIG	;fetch configuration word
+	MOV	R0,CONWRD
+	.DSTAT	#TCB,#HOSPAR	;get host address
+	MOV	TCB+4,R0
+	ADD	#PARIDS,R0
+	ADD	@R0,R0
+	BR	ADR18
+;
+; Host-address resolver
+; Ulp/c calling sequence: code = raddr(namptr,adrptr,flgptr)
+;
+; This subroutine converts adrptr string to "[n.n.n.n]" format, then
+; calls the host-name resolver subroutine to find the host name.
+;
+XADDR:	CLR	CONWRD		;name-server entry
+	BR	ADR19
+;
+ADDR:	.GVAL	#ARGBLK,#CONFIG	;fetch configuration word
+	MOV	R0,CONWRD
+ADR19:	MOV	4(SP),R0	;(adrptr) copy host address
+ADR18:	MOVB	(R0)+,ADDRES
+	MOVB	(R0)+,ADDRES+1
+	MOVB	(R0)+,ADDRES+2
+	MOVB	(R0)+,ADDRES+3
+	MOV	2(SP),NAMPTR
+	JSR	PC,DCODE	;convert to [n.n.n.n] format
+	BR	NAM19
+;
+; Host-name resolver
+; Ulp/c calling sequence: code = rname(namptr,adrptr,flgptr)
+;
+; This subroutine first converts namptr string to standard form. If host
+; address, it exits with host address in adrptr. If domain name, it looks up
+; name in local host table. If found, it exits with host address in adrptr. If
+; not, it calls each of a list of domain-name servers in turn. The subroutine
+; returns the first host address found in adrptr.
+;
+XNAME:	CLR	CONWRD		;name-server entry
+	BR	NAM19
+;
+RNAME:	.GVAL	#ARGBLK,#CONFIG	;fetch configuration word
+	MOV	R0,CONWRD
+NAM19:	MOV	R1,-(SP)	;save
+	MOV	4(SP),NAMPTR	;initialize
+	CLRB	INVFLG
+	MOV	#PK.NTF,RTNCOD
+	MOVB	#TELNET+SMTP+FTP,FLAGS
+	MOV	#HOSADR,HOSPTR
+	MOV	#HOSADR,HOSNXT
+	JSR	PC,NCODE	;encode name string
+	ADD	R0,PC
+	BR	6$		;0 syntax error
+	BR	3$		;2 host address
+	MOV	NAMPTR,R1	;4 domain name. try local host table
+	MOV	SIZE,ISIZE
+1$:
+	.IF	NE,CS.DBG	;include for debug trace
+	.GLOBL	FORMAT,RTNMSG
+	MOV	#DBG0,R0	;display trace line
+	JSR	PC,FORMAT
+	.ENDC
+	JSR	PC,LNAME
+	ADD	R0,PC
+	BR	8$		;0 local file error
+	BR	2$		;2 name not found
+	BITB	#D,FLAGS	;4 name found. determine type
+	BNE	RNM20		;name server
+	BR	7$		;no. host name
+;
+2$:	DEC	SIZE		;not found. nip off initial domain
+	BEQ	4$		;branch if none
+	CMPB	#'.,(R1)+
+	BNE	2$
+	BR	1$		;try again
+;
+3$:	COMB	INVFLG		;host address. remember that
+	JSR	PC,LADDR	;try local host table
+	ADD	R0,PC
+	BR	8$		;0 local file error
+	BR	4$		;2 name not found
+	BR	7$		;4 name found
+;
+4$:	MOV	#DEFDOM,R1	;not found. try default domain
+	MOV	#1,SIZE
+	MOV	#2,ISIZE	;(force name servers only)
+	.IF	NE,CS.DBG	;include for debug trace
+	.GLOBL	FORMAT,RTNMSG
+	MOV	#DBG0,R0	;display trace line
+	JSR	PC,FORMAT
+	.ENDC
+	JSR	PC,LNAME
+	ADD	R0,PC
+	BR	8$		;0 local file error
+	BR	5$		;2 name not found
+	BR	RNM20		;4 name found. (must be name server)
+;
+5$:	MOV	#PK.NEX,RTNCOD	;name does not exist
+	BR	8$
+;
+6$:	MOV	#PK.SYN,RTNCOD	;syntax error
+	BR	8$
+;
+7$:	CLR	RTNCOD		;name found
+8$:	BR	RNM10
+;
+RNM20:	BIT	#FUZZY$,CONWRD	;is this fuzzball
+	BEQ	RNM10		;branch if no
+	CLR	SCCA		;yes. disable control-c
+	.SCCA	#ARGBLK,#SCCA
+	MOV	R0,SCCADR
+	.GCLK			;save time of original request
+	MOV	R0,REQTIM
+	MOV	R1,REQTIM+2
+	MOV	#PK.NTO,RTNCOD	;presume not responding
+1$:	MOVB	#RTXMAX,RETRY	;initialize for next server
+	MOV	HOSPTR,R1
+2$:	MOV	(R1)+,CCBADR	;have all servers this level been tried
+	BNE	3$		;branch if no
+	MOV	(R1)+,R1	;yes. is this level zero
+	BNE	2$		;branch if no (pop to previous level)
+	BR	7$		;yes. ain't nothing left
+;
+3$:	MOV	(R1)+,CCBADR+2	;try next server this level
+	MOV	R1,HOSPTR
+4$:	TST	SCCA		;is control-c pending
+	BNE	7$		;branch if yes
+	.GCLK			;no. is time exceeded
+	MOV	R1,REQID
+	SUB	REQTIM+2,R1
+	SBC	R0
+	SUB	REQTIM,R0
+	BNE	7$		;branch if yes
+	CMP	R1,#USETIM
+	BHIS	7$		;branch if yes
+	CLR	TCB		;no. open connection
+	CALL	CTRL,#CM.OPN,#CCB,#TCB
+	TST	R0
+	BEQ	5$		;branch if ok
+	MOV	R0,RTNCOD
+	BR	6$
+;
+5$:	.SPND			;lots happen in there
+6$:
+	.IF	NE,CS.DBG	;include for debug trace
+	MOV	#DBG1,R0	;display trace line
+	MOV	#CCBADR,R1
+	JSR	PC,FORMAT
+	MOV	RTNCOD,R0
+	JSR	PC,RTNMSG
+	.ENDC
+	TST	RTNCOD		;did it definitely succeed
+	BEQ	7$		;branch if yes
+	CMP	RTNCOD,#PK.NEX	;no. did it definitely fail
+	BEQ	7$		;branch if yes
+	DECB	RETRY		;no. is retry count exceeded
+	BGT	4$		;branch if no (try same server again)
+	BR	1$		;yes (try next server)
+;
+7$:	.SCCA	#ARGBLK,SCCADR	;restore control-c
+RNM10:	TSTB	INVFLG		;is this remote inverted access
+	BEQ	1$		;branch if no
+	CLR	RTNCOD		;yes. this always works
+	MOV	#ADDRES,HOSPTR
+1$:	TST	RTNCOD		;is return ok
+	BNE	3$		;branch if no
+	MOV	6(SP),R1	;yes. host address
+	BEQ	2$
+	MOV	HOSPTR,R0
+	MOVB	(R0)+,(R1)+
+	MOVB	(R0)+,(R1)+
+	MOVB	(R0)+,(R1)+
+	MOVB	(R0)+,(R1)+
+2$:	MOV	10(SP),R1	;copy service indicators
+	BEQ	3$
+	MOVB	FLAGS,@R1
+3$:	MOV	(SP)+,R1	;evas
+	MOV	RTNCOD,R0
+	RTS	PC
+;
+; Net trap routine
+;
+; This routine is called as the result of an asynchronous trap when something
+; interesting happens at the network level. On open a request message is
+; encoded and sent to the designated name server. A response message is
+; decoded and the data copied for later. When this or timeout occurs, a close
+; is signalled. On close complete the main-line processing is unlocked.
+;
+; R0 = control-block pointer
+;
+NCA:	MOV	SD.ADR(R0),R1	;get signal particulars
+	MOV	SD.CHN(R0),R0
+	BIC	#^C17,R0
+	CMP	R0,#SG.CC	;is signal close complete
+	BNE	1$		;branch if no
+	.RSUM			;yes. unlock mainline
+	RTS	PC
+;
+1$:	CMP	R0,#SG.EST	;is signal open
+	BNE	4$		;branch if no
+	CALL	CTRL,#CM.GET,#TEMP,#TCB ;yes. allocate and init ip datagram
+	TST	R0
+	BNE	2$		;branch if error
+	MOV	TEMP,R1		;get packet pointers
+	MOV	R1,R3
+	ADD	PH.OFS(R1),R3
+	MOV	R3,-(SP)
+	ADD	#UH.LEN,R3
+	JSR	PC,ENCOD	;encode request
+	SUB	(SP)+,R3	;compute packet length
+	MOV	R3,PH.LNG(R1)
+	CALL	CTRL,#CM.UDP,R1,#TCB ;send udp packet
+	TST	R0
+	BEQ	3$		;branch if no error
+2$:	MOV	R0,RTNCOD	;stash return code
+3$:	.MRKT	#ARGBLK,#TIME1,#SIGERY,#1 ;arm watchdog bark
+	RTS	PC
+;
+4$:	CMP	R0,#SG.DAT	;is signal data
+	BNE	SIGERR		;branch if no
+	CLR	R0		;yes. map packet into user space
+	.WIND
+	MOV	R1,R3		;get packet pointers
+	ADD	PH.OFS(R1),R3
+	ADD	#UH.LEN,R3
+	BIT	#IH.MF+IH.OFF,IH.FRG(R1) ;is packet a fragment
+	BNE	5$		;branch if yes
+	CMP	PH.LNG(R1),#UH.LEN+HD.LEN ;no. is packet long enough
+	BLO	5$		;branch if no
+	CMP	HD.ID(R3),REQID	;yes. does response match request
+	BEQ	6$		;branch if yes
+5$:	CALL	CTRL,#CM.FRE,R1,#TCB ;no. free ip packet
+	RTS	PC
+;
+6$:	.CMKT	#ARGBLK,#1,#0	;kill timeout
+	CLRB	RETRY
+	JSR	PC,DECOD	;decode contents
+	CALL	CTRL,#CM.FRE,R1,#TCB ;free ip packet
+SIGERY:	CALL	CTRL,#CM.CLS,#0,#TCB ;close
+	RTS	PC
+;
+SIGERR:	MOV	#PK.NET,RTNCOD	;net error
+	RTS	PC
+;
+; Subroutine to encode name-server request
+; r3 = header pointer, namptr = domain-name pointer
+;
+ENCOD:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	REQID,(R3)+	;(hd.id)
+	TSTB	INVFLG		;is this inverted
+	BNE	8$		;branch if yes
+	MOV	#HDR1,R1	;no. copy normal header
+1$:	MOVB	(R1)+,(R3)+
+	CMP	R1,#HDR1E
+	BLO	1$
+	MOV	NAMPTR,R2
+2$:	CLRB	(R3)+		;insert count field
+	MOV	R3,R1
+3$:	MOVB	(R2)+,R0	;get next byte
+	BEQ	5$		;branch if empty
+	CMPB	R0,#'.		;is this domain delimiter
+	BEQ	4$		;branch if yes
+	MOVB	R0,(R3)+	;no. copy char
+	BR	3$
+;
+4$:	MOV	R3,R0		;domain delimiter. insert length
+	SUB	R1,R0
+	BEQ	3$		;branch if empty field (ignore)
+	MOVB	R0,-(R1)
+	BR	2$
+;
+5$:	MOV	R3,R0		;insert length
+	SUB	R1,R0
+	BEQ	6$		;branch if empty field (ignore)
+	MOVB	R0,-(R1)
+	CLRB	(R3)+		;backstop
+6$:	MOV	#HDR3,R1	;complete header
+7$:	MOVB	(R1)+,(R3)+
+	CMP	R1,#HDR3E
+	BLO	7$
+	BR	10$
+;
+8$:	MOV	#HDR2,R1	;inverted. copy header
+9$:	MOVB	(R1)+,(R3)+
+	CMP	R1,#HDR2E
+	BLO	9$
+	MOVB	ADDRES,(R3)+	;insert address
+	MOVB	ADDRES+1,(R3)+
+	MOVB	ADDRES+2,(R3)+
+	MOVB	ADDRES+3,(R3)+
+10$:	MOV	(SP)+,R2	;evas
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to decode name-server reply
+; R3 = header pointer
+;
+DECOD:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R4,-(SP)
+	MOVB	HD.RSP(R3),R0	;decode response field
+	BIC	#^C7,R0
+	ASL	R0
+	MOV	RSLTXT(R0),RTNCOD
+	MOV	R3,R1		;set pointers
+	ADD	#HD.LEN,R1
+	MOV	HOSNXT,R2
+	MOV	R3,R4
+	ADD	#HD.QCT,R4	;is there a question field
+	SWAB	@R4
+	BEQ	2$		;branch if no
+1$:	JSR	PC,SKPNAM	;yes. decode question field
+	TSTB	INVFLG		;is this inverted query
+	BNE	4$		;branch if yes
+	ADD	#4,R1		;no. gobble and git
+	DEC	@R4
+	BNE	1$
+2$:	JSR	PC,DEC1		;process answer (a) records
+	TSTB	INVFLG		;is this inverted query
+	BEQ	3$		;branch if no
+	MOV	HOSNXT,R2	;yes. forget em
+3$:	CMP	R2,HOSNXT	;were any records present
+	BEQ	6$		;branch if no
+	MOV	HOSNXT,HOSPTR	;yes. it's a wrap
+4$:	MOV	#HOSNAM,R0	;copy principal name
+	MOV	NAMPTR,R1
+5$:	MOVB	(R0)+,(R1)+
+	BNE	5$
+	CLR	RTNCOD
+	BR	13$
+;
+6$:	JSR	PC,DEC1		;skip authority (ns) records
+	JSR	PC,DEC1		;process additional (a) records
+	MOV	HOSNXT,R4	;were any records present
+	CMP	R4,R2
+	BEQ	13$		;branch if no
+	MOV	R2,-(SP)	;yes. initialize
+	MOV	R4,R2
+7$:	MOV	#ADDRES,R0	;scan for existing entry
+8$:	CMP	R0,R2
+	BHIS	11$		;branch if done
+	CMP	@R0,@R4		;do entries match
+	BNE	9$		;branch if no	
+	CMP	2(R0),2(R4)
+	BEQ	10$		;branch if yes
+9$:	ADD	#4,R0		;no. keep going
+	BR	8$
+;
+10$:
+	.IF	NE,CS.DBG	;include for debug trace
+	MOV	#DBG3,R0
+	MOV	R4,R1
+	JSR	PC,FORMAT
+	.ENDC
+	CMP	(R4)+,(R4)+	;dupe. skip it
+	BR	12$
+;
+11$:
+	.IF	NE,CS.DBG	;include for debug trace
+	MOV	#DBG2,R0
+	MOV	R4,R1
+	JSR	PC,FORMAT
+	.ENDC
+	MOV	(R4)+,(R2)+	;not dupe. save it
+	MOV	(R4)+,(R2)+
+12$:	CMP	R4,@SP		;is search complete
+	BLO	7$		;branch if no
+	CLR	(R2)+		;yes. push a level
+	MOV	HOSPTR,(R2)+
+	MOV	HOSNXT,HOSPTR
+	TST	(SP)+
+13$:	MOV	R2,HOSNXT
+	MOV	(SP)+,R4	;evas
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to process resource records
+; R1 = field pointer, r2 = host/server address vector, r4 = count pointer
+;
+DEC1:	TST	(R4)+		;skip to next section
+	SWAB	@R4		;swab deck
+	BEQ	3$		;branch if no records
+1$:	JSR	PC,SKPNAM	;decode name string
+	TSTB	(R1)+		;fetch record type
+	MOVB	(R1)+,R0
+	BIC	#^C17,R0
+	ADD	#6,R1
+	MOVB	(R1)+,TEMP+1	;point to next record
+	MOVB	(R1)+,TEMP
+	ADD	R1,TEMP
+	CMPB	R0,#1		;is this host/server address (a)
+	BNE	2$		;branch if no
+	CMP	R2,#HOSEND-4	;yes. copy and align
+	BHIS	2$
+	MOVB	(R1)+,(R2)+
+	MOVB	(R1)+,(R2)+
+	MOVB	(R1)+,(R2)+
+	MOVB	(R1)+,(R2)+
+2$:	MOV	TEMP,R1		;advance to next field
+	DEC	@R4		;are there more records
+	BNE	1$		;branch if yes
+3$:	RTS	PC
+;
+; Subroutine to decode domain names
+; R1 = field pointer, r3 = header pointer
+;
+SKPNAM:	MOV	R2,-(SP)	;save
+	MOV	#HOSNAM,R2	;point somewhere useful
+	JSR	PC,SKP1
+	MOV	(SP)+,R2	;evas
+	RTS	PC
+;
+SKP1:	MOVB	(R1)+,R0	;get initial count
+1$:	TSTB	R0		;examine count
+	BEQ	4$		;branch if end of field
+	BMI	3$		;branch if real count
+2$:	MOVB	(R1)+,(R2)+	;copy label
+	SOB	R0,2$
+	MOVB	(R1)+,R0	;get next count
+	BEQ	4$		;branch if end of field
+	MOVB	#'.,(R2)+	;flag for next label	
+	BR	1$
+;
+3$:	BIC	#^C77,R0	;pointer. munge away
+	SWAB	R0
+	BISB	(R1)+,R0
+	MOV	R1,-(SP)
+	MOV	R0,R1
+	ADD	R3,R1
+	JSR	PC,SKP1
+	MOV	(SP)+,R1
+4$:	CLRB	(R2)+		;backstop
+	RTS	PC
+;
+; Subroutine to encode name string
+;
+; This subroutine trims leading special chars and then looks at the first
+; nonspace char. If not a digit, it and remaining chars are converted to upper
+; case and indicated as domain name. If a digit, it and remaining chars in the
+; form "n.n.n.n", where n an integer less than 256, are converted to a 32-bit
+; value indicated as a host address.
+;
+; Namptr = domain-name pointer, returns r0 =
+; 0	syntax error
+; 2	host address (in addres)
+; 4	domain name (at namptr)
+;
+NCODE:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	NAMPTR,R2	;trim leading special chars
+1$:	MOVB	(R2)+,R0	;get next char
+	JSR	PC,TYPE
+	BEQ	NCD19		;branch if end (syntax error)
+	BMI	NCD06		;branch if digit
+	CMPB	#<' >,R0
+	BEQ	1$		;branch if <sp>
+	CMPB	#<'[>,R0
+	BEQ	1$		;branch if "["
+	MOV	NAMPTR,R3	;sanitize string
+2$:	MOVB	R0,(R3)+	;get next char
+	MOVB	(R2)+,R0
+	JSR	PC,TYPE
+	BNE	2$		;branch if more
+	CLRB	(R3)+		;plant backstop
+	MOV	#4,R0		;indicate domain name
+	BR	NCD18
+;
+NCD06:	MOV	#ADDRES,R1	;digit. set output pointer
+	MOV	#4,TEMP		;edge clippers
+1$:	CLR	R3		;convert next field
+2$:	BIC	#^C17,R0	;assemble digit
+	MUL	#10.,R3
+	ADD	R0,R3
+	CMP	R3,#256.	;is assembled value in range
+	BHIS	NCD19		;branch if no (syntax error)
+	MOVB	(R2)+,R0	;yes. get next char
+	JSR	PC,TYPE
+	BEQ	3$		;branch if end
+	BMI	2$		;branch if digit
+	BVS	NCD19		;branch if letter (syntax error)
+	DEC	TEMP		;special. stash field
+	BMI	NCD19		;branch if overflow (syntax error)
+	MOVB	R3,(R1)+
+	MOVB	(R2)+,R0	;get next char
+	JSR	PC,TYPE
+	BEQ	4$		;branch if end
+	BMI	1$		;branch if numeric
+	BR	NCD19		;neither (syntax error)
+;
+3$:	DEC	TEMP		;end. stash field
+	BMI	NCD19		;branch if overflow (syntax error)
+	MOVB	R3,(R1)+
+4$:	TST	TEMP		;were there exactly four fields
+	BNE	NCD19		;branch if no (syntax error)
+	MOV	#2,R0		;indicate host address
+	BR	NCD20
+;
+NCD18:	SUB	NAMPTR,R3	;compute string size
+	DEC	R3
+	MOV	R3,SIZE
+	BNE	NCD20		;branch if nontrivial
+NCD19:	CLR	R0		;indicate syntax error
+NCD20:	MOV	(SP)+,R3	;evas
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to convert first entry in address vector to [n.n.n.n] format
+; Namptr = domain-name pointer
+;
+DCODE:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	NAMPTR,R3	;convert to [n.n.n.n] format
+	MOVB	#'[,(R3)+	;insert "["
+	MOV	#ADDRES,R1
+	MOV	#4,R2
+1$:	MOVB	(R1)+,R0	;convert next field
+	JSR	PC,PRDEC
+	DEC	R2
+	BEQ	2$		;branch if done
+	MOVB	#'.,(R3)+	;insert "."
+	BR	1$
+;
+2$:	MOVB	#'],(R3)+	;insert "]"
+	CLRB	(R3)+		;insert backstop
+	MOV	(SP)+,R3	;evas
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to search host table
+; R1 = domain-name pointer, hosnxt = host-address pointer, returns r0 =
+; 0	local file error
+; 2	name not found
+; 4	name found
+;
+LNAME:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	.PURGE 	#CHAN		;open host-table file
+	.LOOKU	#ARGBLK,#CHAN,#FILNAM
+	BCS	LERR		;branch if error
+	MOV	R0,MAXBLK
+	MOV	SIZE,R0		;hash name to block number
+	JSR	PC,HASHY
+	MOV	R0,SAVBLK
+	MOV	R0,BLOCK
+1$:	MOV	#TCB,R3		;read next block
+	.READW	#ARGBLK,#CHAN,R3,#256.,BLOCK
+	BCS	LERR		;branch if error
+	INC	BLOCK		;update block number
+	CMP	BLOCK,MAXBLK
+	BLO	2$
+	CLR	BLOCK
+2$:	CMP	BLOCK,SAVBLK
+	BEQ	10$		;branch if wrap
+3$:	BITB	#N,HT.FLG(R3)	;is this name entry
+	BNE	4$		;branch if yes
+	ADD	#HT.LEN+4,R3	;no. skip address entry
+	BR	9$
+;
+4$:	MOV	R3,R4		;name entry. save pointer
+	ADD	#HT.LEN,R4
+	CMP	SIZE,ISIZE	;is this full name
+	BNE	5$		;branch if no
+	BITB	#D,HT.FLG(R3)	;yes. is this host name
+	BNE	8$		;branch if no
+	BR	6$
+;
+5$:	BITB	#D,HT.FLG(R3)	;partial name. is this name server
+	BEQ	8$		;branch if no
+6$:	MOV	R1,R0		;do names match
+7$:	CMPB	(R0)+,@R4
+	BNE	8$		;branch if no
+	TSTB	(R4)+
+	BNE	7$		;branch if no
+	BR	LPTR		;yes. continue elsewhere
+;
+8$:	TSTB	(R4)+		;skip to next entry
+	BNE	8$
+	MOV	R4,R3
+9$:	TSTB	@R3		;is this end of block
+	BNE	3$		;branch if no
+	MOV	#TCB+511.-<HT.LEN+1>,R0 ;yes. compute remaining space
+	SUB	SIZE,R0		;is there room for entry
+	CMP	R3,R0
+	BHI	1$		;branch if no
+10$:	MOV	#2,R0		;yes. indicate name not found
+	BR	LRTN
+;
+LERR:	CLR	R0		;indicate local file error
+LRTN:	MOV	(SP)+,R4	;evas
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+LPTR:	MOVB	HT.FLG(R3),FLAGS ;copy service indicators
+	BITB	#P,FLAGS	;is this header
+	BEQ	2$		;branch if no
+	MOVB	HT.ADR(R3),BLOCK ;yes. read header
+	MOVB	HT.ADR+1(R3),BLOCK+1
+	MOVB	HT.ADR+2(R3),TEMP
+	MOVB	HT.ADR+3(R3),TEMP+1
+	MOV	#TCB,R3
+	.READW	#ARGBLK,#CHAN,R3,#256.,BLOCK
+	BCS	LERR		;branch if error
+	ADD	TEMP,R3		;point to entry
+	BITB	#D,HT.FLG(R3)	;is this host name
+	BNE	2$		;branch if no
+	MOV	R3,R0		;yes. copy principal name
+	ADD	#HT.LEN,R0
+	MOV	NAMPTR,R1
+1$:	MOVB	(R0)+,(R1)+
+	BNE	1$	
+2$:	MOV	HOSNXT,R1	;set output pointer
+3$:	BITB	#M,HT.FLG(R3)	;is this last entry
+	BEQ	4$		;branch if yes
+	MOVB	HT.LNK(R3),BLOCK ;no. read next link
+	MOVB	HT.LNK+1(R3),BLOCK+1
+	MOVB	HT.LNK+2(R3),TEMP
+	MOVB	HT.LNK+3(R3),TEMP+1
+	MOV	#TCB,R3		;no. read next block
+	.READW	#ARGBLK,#CHAN,R3,#256.,BLOCK
+	BCS	LERR		;branch if error
+	ADD	TEMP,R3		;point to entry
+	BITB	#N,HT.FLG(R3)	;is this address
+	BNE	3$		;branch if no
+	MOV	R3,R0		;yes. copy address
+	ADD	#HT.LEN,R0
+	MOVB	(R0)+,(R1)+
+	MOVB	(R0)+,(R1)+
+	MOVB	(R0)+,(R1)+
+	MOVB	(R0)+,(R1)+
+	.IF	NE,CS.DBG	;include for debug trace
+	MOV	#DBG2,R0
+	CMP	-(R1),-(R1)
+	JSR	PC,FORMAT
+	CMP	(R1)+,(R1)+
+	.ENDC
+	BR	3$
+;
+4$:	CLR	(R1)+		;zero-level backstop
+	CLR	(R1)+
+	MOV	R1,HOSNXT
+5$:	MOV	#4,R0		;indicate found
+	BR	LRTN
+;
+; Subroutine to search inverted host table
+; Namptr = domain-name pointer, returns r0 =
+; 0	local file error
+; 2	name not found
+; 4	name found
+;
+LADDR:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	.PURGE 	#CHAN		;open host-table file
+	.LOOKU	#ARGBLK,#CHAN,#FILNAM
+	BCS	30$		;branch if error
+	MOV	R0,MAXBLK
+	MOV	#4,R0		;hash address to block
+	MOV	#ADDRES,R1
+	JSR	PC,HASHY
+	MOV	R0,SAVBLK
+	MOV	R0,BLOCK
+1$:	MOV	#TCB,R3		;read next block
+	.READW	#ARGBLK,#CHAN,R3,#256.,BLOCK
+	BCS	30$		;branch if error
+	INC	BLOCK		;update block number
+	CMP	BLOCK,MAXBLK
+	BLO	2$
+	CLR	BLOCK
+2$:	CMP	BLOCK,SAVBLK
+	BEQ	9$		;branch if wrap
+3$:	BITB	#N,HT.FLG(R3)	;is this name entry
+	BEQ	5$		;branch if no
+	ADD	#HT.LEN,R3	;yes. skip name entry
+4$:	TSTB	(R3)+
+	BNE	4$
+	BR	8$
+;
+5$:	BITB	#D,HT.FLG(R3)	;address entry. is this domain server
+	BNE	7$		;branch if yes
+	MOV	R3,R1		;no. save pointer
+	ADD	#HT.LEN,R1
+	MOV	#ADDRES,R0	;do entries match
+	MOV	#4,R2
+6$:	CMPB	(R0)+,(R1)+
+	BNE	7$		;branch if no
+	SOB	R2,6$
+	JMP	LPTR		;yes. continue elsewhere
+;
+7$:	ADD	#HT.LEN+4,R3	;skip to next entry
+8$:	TSTB	@R3		;is this end of block
+	BNE	3$		;branch if no
+	CMP	R3,#TCB+511.-<HT.LEN+4> ;yes. is there room for entry
+	BHI	1$		;branch if no
+9$:	MOV	#2,R0		;yes. indicate address not found
+	JMP	LRTN
+;
+30$:	JMP	LERR
+;
+; Subroutine to convert decimal number
+; R0 = number, r3 = output pointer
+;
+PRDEC:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	BIC	#^C377,R0
+	MOV	#5.,R2		;initialize
+1$:	MOV	R0,R1		;move quotient to dividend
+	CLR	R0
+	DIV	#10.,R0		;divide by radix
+	MOV	R1,-(SP)	;save remainder
+	SOB	R2,1$
+	MOV	#4.,R2		;initialize to print string
+	CLR	R1
+2$:	MOV	(SP)+,R0	;is this leading zero
+	BEQ	3$		;branch if yes
+	INC	R1		;no. set switch
+3$:	TST	R1		;is lz switch on
+	BEQ	4$		;branch if no
+	ADD	#'0,R0		;yes. output digit
+	MOVB	R0,(R3)+
+4$:	DEC	R2
+	BNE	2$
+	MOV	(SP)+,R0	;output final digit
+	ADD	#'0,R0
+	MOVB	R0,(R3)+
+	MOV	(SP)+,R2	;restore registers
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to hash string
+; Hash function: (x^10 + x^9 + x^8 + x^6 + x^2 + x + 1)
+; R0 = length, r1 = pointer, returns r0 = hash value
+;
+HASHY:	MOV	R1,-(SP)	;preserve registers
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	MOV	R5,-(SP)
+	MOV	R1,R5		;initialize
+	CLR	R1
+	MOV	#3507,R3	;(x^10 + x^9 + x^8 + x^6 + x^2 + x + 1)
+1$:	MOVB	(R5)+,R4	;get octet
+	MOV	#8.,R2		;galois gallop
+2$:	RORB	R4
+	ROL	R1
+	BIT	#2000,R1
+	BEQ	3$
+	XOR	R3,R1
+3$:	SOB	R2,2$		;for 8 bits
+	SOB	R0,1$		;for that many octets
+	MOV	R1,R0
+	MUL	MAXBLK,R0
+	ASHC	#6,R0
+	MOV	(SP)+,R5	;restore registers
+	MOV	(SP)+,R4
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Data segments
+;
+	.PSECT	$BOSD,RO,D	;read-only data
+;
+RSLTXT:	.WORD	PK.NTF		;0 normal return
+	.WORD	PK.SYN		;1 format error
+	.WORD	PK.SYN		;2 server failure
+	.WORD	PK.NEX		;3 unknown name
+	.WORD	PK.SYN		;4 not implemented
+	.WORD	PK.SYN		;5 refused
+	.WORD	PK.SYN		;6 invalid
+	.WORD	PK.SYN		;7 invalid
+;
+TIME1:	.WORD	0,RTXTIM	;reply timeout
+HOSPAR:	.RAD50	/HOS/		;name of host process
+FILNAM:	.RAD50	'SY HOSTS DAT'	;host table file name
+;
+HDR1:	.BYTE	OP.QUE+OP.RD,0	;(hd.op,hd.rsp) normal header
+	.BYTE	0,1		;(hd.qct)
+	.BYTE	0,0		;(hd.act)
+	.BYTE	0,0		;(hd.nct)
+	.BYTE	0,0		;(hd.rct)
+HDR1E	=	.
+;
+HDR2:	.BYTE	OP.INV+OP.RD,0	;(hd.op,hd.rsp) inverted header
+	.BYTE	0,0		;(hd.qct)
+	.BYTE	0,1		;(hd.act)
+	.BYTE	0,0		;(hd.nct)
+	.BYTE	0,0		;(hd.rct)
+	.BYTE	0		;(QNAME = NULL)
+HDR3:	.BYTE	0,1		;(qtype = A)
+	.BYTE	0,1		;(qclass = IN)
+HDR3E	=	.
+	.BYTE	0,0,0,0		;(ttl = 0)
+	.BYTE	0,4		;(rdlen = 4)
+HDR2E	=	.
+;
+DEFDOM:	.ASCIZ	'*'		;default domain
+	.IF	NE,CS.DBG	;include for debug trace
+DBG0:	.ASCIZ	'^LT Resolving ^A'<0>
+DBG1:	.ASCIZ	'^LT Server	^C'<0>'	^+'
+DBG2:	.ASCIZ	'      New entry	^C'<0>
+DBG3:	.ASCIZ	'      Duplicate	^C'<0>
+	.ENDC
+	.EVEN
+;
+	.PSECT	$DATA,RW,I	;initialized read/write data
+;
+; Connection control block
+;
+CCB:	.WORD	TCBSIZ		;connection block size
+	.WORD	NCA		;completion routine
+	.BYTE	P.UDP,0		;protocol, flags
+	.WORD	0,0,0		;local socket (default)
+CCBADR:	.WORD	0,0,DOMPRT	;remote socket
+	.WORD	0,0		;max datagram size, options (default)
+;
+	.PSECT	$ERAS,RW,I	;read/write data
+;
+TEMP:	.BLKW	1		;temporary
+CONWRD:	.BLKW	1		;configuration word
+SCCA:	.BLKW	1		;control-c switch
+SCCADR:	.BLKW	1		;scca save address
+NAMPTR:	.BLKW	1		;domain-name pointer
+ISIZE:	.BLKW	1		;full name length
+SIZE:	.BLKW	1		;domain substring length
+RTNCOD:	.BLKW	1		;return code
+REQID:	.BLKW	1		;request id
+MAXBLK:	.BLKW	1		;host table size (blocks)
+SAVBLK:	.BLKW	1		;initial host table block number
+BLOCK:	.BLKW	1		;host table block number
+HOSPTR:	.BLKW	1		;pointer to current address
+HOSNXT:	.BLKW	1		;pointer to next available address
+FLAGS:	.BLKB	1		;service indicators
+INVFLG:	.BLKB	1		;direct/invert access flag
+RETRY:	.BLKB	1		;retry count
+	.EVEN
+ARGBLK:	.BLKW	5		;rt-11 argument block
+REQTIM:	.BLKW	2		;time of original request
+ADDRES:	.BLKW	2		;address
+HOSADR:	.BLKW	HOSMAX*2	;host/server address vector
+HOSEND	=	.		;end of host/server address vector
+TCB:	.BLKW	256.		;connection block/host table buffer
+HOSNAM	=	TCB+TCBSIZ	;host/server name buffer (256 - tcbsiz max)
+;
+	.END
+                                                                                                                                                         

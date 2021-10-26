@@ -1,0 +1,1499 @@
+	.TITLE	SBNPKT	Packet radio leader processing
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn - packet radio leader processing
+;
+; This module is an interface between the baseline network processes and the
+; Tuscon Amateur Packet Radio 6809-based processor, commonly called the TAPR-1
+; board (or simply TAPR), which includes a 202-type modem and transceiver
+; control circuits. The 6809 runs firmware derived from a program written by
+; Ron Raikes (WA8DED) identified as version 1.0.
+;
+; This module sends and receives raw IP datagrams (datagram mode) and ASCII
+; text (direct-access mode). Both modes can be active at the same time, but
+; not on the same channel. Operation can be in connection or connectionless
+; mode, depending on an option bit (mbfbit).
+;
+; Monitor headers are scanned upon receipt for routing information, which is
+; then added to the routing data base. A shortest-path-first (spf) algorithm
+; is used to construct routes when required.
+;
+; Option bits:
+; xlpbit	external-loopback bit (games with source-route)
+; hdrbit	log monitor headers
+; datbit	log monitor data
+; spfbit	periodic (0) or demand (1) route calculation
+; dgpbit	connection (0) or connectionless (1)
+;
+; External symbols
+;
+	.GLOBL	$OFSET		;process pointer table
+	.GLOBL	CHKSUM		;ip header checksum routine
+	.GLOBL	NTIHLO		;routing update
+;
+; Entry symbols
+;
+	.GLOBL	SBNPKT		;transfer vector
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.PSA,.GAT,.TAP ;dcnlib definitions
+	.MCALL	.GETDA,.PUTDA,.GCLK ;dcnlib macros
+	.MCALL	$DFIH		;moslib definitions
+	.COM			;define common data
+	.CHR			;define ascii code
+	.PSA			;define process storage areas
+	.GAT			;define gateway/bridge storage areas
+	.TAP			;define tapr storage areas
+	$DFIH			;define internet header
+;
+; Module definitions
+;
+TTLMAX	=	15.		;max speculative (unheard) link age (min)
+CALMIN	=	4		;min callsign length
+;
+; Option bits (PAROPT)
+;
+HDRBIT	=	000001		;log monitor headers
+DATBIT	=	000002		;log monitor data
+SPFBIT	=	000004		;periodic (0) or demand (1) route calculation
+DGPBIT	=	000010		;datagram mode
+;
+; TAPR (WA8DED) leader
+;
+.	=	0
+PK.CHN:	.BLKB	1		;channel number
+PK.COD:	.BLKB	1		;control code
+; codes host -> tapr
+PX.DAT	=	0		;data
+PX.CMD	=	1		;command
+; codes tapr -> host
+PM.NUL	=	0		;success (no message)
+PM.SUC	=	1		;success
+PM.ERR	=	2		;failure
+PM.STA	=	3		;link status
+PM.MH4	=	4		;monitor header
+PM.MH5	=	5		;monitor header
+PM.MON	=	6		;monitor data
+PM.DAT	=	7		;channel data
+PK.LEN	=	.		;end of tapr leader
+;
+; Event codes
+;
+ST.NUL	=	0*4		;no-op
+ST.CON	=	1*4		;connect request
+ST.EST	=	2*4		;connect complete
+ST.DIS	=	3*4		;disconnect request
+ST.CLZ	=	4*4		;disconnect complete
+ST.TIM	=	5*4		;timeout complete
+ST.ERR	=	6*4		;failure message
+;
+; Procedure segment
+;
+; Process-state procedure
+; Dsects: r3 = par, r5 = psa
+;
+	.PSECT	$SUPI,RO,I
+;
+; Initialize input
+; Initialize output
+;
+DCNINI:	MOV	PARVEC(R3),R0	;initialize
+	EMT	INI+EXTBAS
+	RTS	PC
+;
+; Start input
+; R2 = data area length, r4 = buffer pointer, returns c(cc) = c if reset
+;
+DCNSIR:	MOV	R2,-(SP)	;save
+SIR30:	MOV	R4,R1		;set pointers
+	ADD	#BUFLDR-PK.LEN,R1
+	MOV	@SP,R0
+	ADD	#PK.LEN,R0
+	EMT	SIO+EXTBAS	;start i/o
+	SUB	#PK.LEN,R0	;is packet long enough
+	BLE	SIR30		;branch if no
+;
+; This section determines whether the packet contains data or contains
+; only status or monitor information. Several format and checksum checks
+; are performed on data packets to determine if they contain IP datagrams
+; or direct-access data. IP datgrams are returned to the basline process,
+; while dierect-access data are processed further in subsequent sections.
+;
+	CMPB	PK.COD(R1),#PM.MON ;no. is this real data
+	BLO	SIR10		;branch if no
+	MOV	R0,R2		;yes. is it ip datagram
+	CMP	R2,#IH.LEN-BUFLDR
+	BLO	1$		;branch if no (too short)
+	MOVB	IH.VER(R4),R1
+	MOV	R1,R0
+	BIC	#^C<17*20>,R0
+	CMP	R0,#P.IP*20
+	BNE	1$		;branch if no (wrong version)
+	ASH	#2,R1
+	BIC	#^C74,R1
+	CMP	R1,#IH.LEN-BUFLDR
+	BLO	1$		;branch if no (bad format)
+	CMP	R2,R1
+	BLO	1$		;branch if no (header too short)
+	MOV	R4,R1
+	JSR	PC,CHKSUM
+	BNE	1$		;branch if no (ip header checksum discrepancy)
+	MOV	R2,R0		;yes. datagrumble mode
+	MOV	(SP)+,R2
+	CLC
+	RTS	PC
+;
+1$:	MOV	R4,R1		;direct access. restore pointers
+	ADD	#BUFLDR-PK.LEN,R1
+	MOV	R2,R0
+	BR	SIR20
+;
+; This section is called only for status or monitor information packets. The
+; information text is saved in the channel table (for debugging) and state
+; event information sent to the output process. Finally, monitor data is
+; wiretapped to extract latent routing information.
+;
+SIR10:	INC	R0		;channel info. adjust count
+	MOV	R0,-(SP)
+	MOV	R1,-(SP)
+	MOV	R1,R2
+	MOVB	(R2)+,R1	;establish channel table pointer
+	MUL	#CT.LEN,R1
+	ADD	R3,R1
+	ADD	#PAXCTB+CT.TYP,R1
+	CMP	R0,#MSGMAX	;truncate beyond display window
+	BLOS	1$
+	MOV	#MSGMAX,R0
+1$:	MOVB	(R2)+,(R1)+	;copy message
+	SOB	R0,1$
+	CLRB	(R1)+		;backstop
+	MOV	@SP,R1		;insert <cr>/backstop for later
+	ADD	2(SP),R1	
+	INC	R1
+	MOVB	#CR,(R1)+
+	CLRB	(R1)+
+	MOV	@SP,R1		;recover pointer
+	MOVB	(R1)+,R2
+	MOVB	(R1)+,R0	;get message code
+	CMPB	R0,#PM.ERR	;is this failure message
+	BNE	2$		;branch if no
+	MOV	#M1,R0		;yes. decode message
+	BR	3$
+;
+2$:	CMPB	R0,#PM.STA	;is this link status message
+	BNE	4$		;branch if no
+	MOV	#M0,R0		;yes. decode message
+3$:	JSR	PC,DECODE
+	BCS	4$		;branch if error
+	MOV	R5,R1		;send to output side
+	ADD	#ASRMSG,R1
+	MOVB	PARPID(R3),(R1)+
+	MOVB	#STRCTL,(R1)+
+	MOVB	R2,(R1)+
+	MOVB	R0,(R1)+
+	MOV	R5,R1
+	ADD	#ASRMSG,R1
+	.PUTDA	R1
+4$:	MOV	@SP,R1		;is this monitor header
+	CMPB	PK.COD(R1),#PM.STA
+	BLOS	5$		;branch if no
+	ADD	#PK.LEN,R1	;yes. process routing info
+	JSR	PC,WIRTAP
+5$:	MOV	(SP)+,R1
+	MOV	(SP)+,R0
+;
+; This section filters and copies status and monitor information to the
+; direct-access (OPR) or monitor (MON) ports. Messages received on channel 0
+; are sent to MON, others to OPR. A <lf> is inserted after <cr> and a <cr> is
+; inserted before <lf>. Note that delays can occur due to queueing delays in
+; the associated processes, which can cause command responses to be lost in
+; direct-access (only) mode if the operator twinkles keyboard too far ahead.
+;
+SIR20:	MOV	#PARLDN+2,R2	;is this direct-access channel
+	CMPB	PK.CHN(R1),PAXCHN(R3)
+	BEQ	3$		;branch if yes
+	CMPB	PK.COD(R1),#PM.MON ;no. is this data
+	BLO	1$		;branch if no
+	BIT	#DATBIT,PAROPT(R3) ;yes. is log enabled
+	BEQ	9$		;branch if no
+	BR	2$
+;
+1$:	BIT	#HDRBIT,PAROPT(R3) ;info. is log enabled
+	BEQ	9$		;branch if no	
+2$:	ADD	#10,R2		;yes. use monitor port
+3$:	ADD	R3,R2		;find pid
+	MOVB	@R2,R2
+	BIC	#^C377,R2
+	ADD	#$OFSET,R2
+	ADD	@R2,R2
+	MOV	R0,-(SP)	;save header
+	MOVB	PARPID(R2),1(SP)
+	ADD	#PK.LEN,R1
+	MOV	R1,R2
+4$:	MOV	R5,R1		;initialize nibble header
+	ADD	#ASRMSG,R1
+	MOVB	1(SP),(R1)+
+	MOVB	#STRCTL,(R1)+
+	CLR	R0
+5$:	MOVB	(R2)+,(R1)+
+	DECB	@SP
+	INC	R0
+	CMPB	-1(R2),#CR	;is this <cr>
+	BEQ	6$		;branch if yes
+	CMPB	-1(R2),#LF	;no. is this <lf>
+	BNE	7$		;branch if no
+	MOVB	#CR,-1(R1)	;yes. stuff a <cr> in front
+6$:	MOVB	#LF,(R1)+
+	INC	R0
+7$:	TSTB	@SP		;is message complete
+	BEQ	8$		;branch if yes
+	CMP	R0,#9.		;no. is nibble full
+	BLO	5$		;branch if no
+8$:	MOV	R5,R1		;yes. set buffer pointer
+	ADD	#ASRMSG,R1
+	ASH	#2,R0		;insert count
+	BISB	R0,1(R1)
+	.PUTDA	R1
+	.GETDA	R1		;wait for reply
+	TSTB	@SP		;is message complete
+	BNE	4$		;branch if no
+	TST	(SP)+		;yes. continue
+9$:	JMP	SIR30
+;
+; Process leader
+; R4 = packet pointer
+;
+DCNSDR:	MOV	R4,R1		;set pointers
+	ADD	#BUFLDR-PK.LEN,R1
+	MOVB	@R1,R1		;establish channel table pointer
+	BEQ	1$		;skip if datagram
+	MUL	#CT.LEN,R1
+	ADD	R3,R1
+	ADD	#PAXCTB,R1
+	MOVB	#60.,CT.TTL(R1)	;reset idle timeout (10 min)
+1$:	CLC			;forward packet
+	RTS	PC
+;
+; Start output
+; R2 = data area length, r4 = buffer pointer, returns c(cc) = c if reset
+;
+DCNSIX:	MOV	R2,-(SP)	;save
+	CMPB	IH.PRO(R4),#P.LNP ;is this hello message
+	BNE	SIX10		;branch if no
+	JSR	PC,NTIHLO	;yes. update routing
+;
+; Hello messages arrive here every ten seconds. Each causes every nonzero TTL
+; field in the channel table to be decremented. If an entry decrements to
+; zero, a timeout event is declared. The TTL fields in the link table are
+; incremented at one-minute intervals if less than 60 and at one-hour
+; intervals if not. A link which is unheard after TTLMAX is deleted, while
+; all links are deleted after W6.
+;
+	MOV	R3,R1		;yes. scan channel table
+	ADD	#PAXCTB,R1
+	CLR	R2
+1$:	TSTB	CT.STA(R1)	;is channel active
+	BEQ	2$		;branch if no
+	TSTB	CT.TTL(R1)	;yes. is timeout complete
+	BEQ	2$		;branch if no
+	DECB	CT.TTL(R1)
+	BNE	2$		;branch if no
+	MOV	R1,-(SP)	;yes. declare event
+	MOV	#ST.TIM,R1
+	JSR	PC,FSA
+	MOV	(SP)+,R1
+2$:	ADD	#CT.LEN,R1	;advance to next channel	
+	INC	R2
+	CMP	R2,#CHNMAX
+	BLO	1$		;branch if another
+	BIT	#SPFBIT,PAROPT(R3) ;is route recalculation indicated
+	BNE	4$		;branch if no
+	MOV	R3,R1		;yes. recalculate all routes
+	ADD	#PAXSRC,R1
+	ADD	@R1,R1
+	CLR	R2
+3$:	ADD	#RT.LEN,R1	;skip default entry
+	INC	R2
+	TSTB	RT.SRC(R1)
+	BEQ	4$		;branch if complete
+	MOVB	PAXW7(R3),RT.WGT(R1) ;construct best route
+	MOV	R2,R0
+	JSR	PC,SPF
+	BR	3$
+;
+4$:	CMPB	PAXSRX+1(R3),#RUTMAX-1 ;is water level getting low
+	BLOS	40$		;branch if yes
+	CMPB	PAXLNX+1(R3),#RUTMAX-1
+	BHI	41$
+40$:	CLR	R0		;yes. boot somebody out
+	JSR	PC,GARBAG
+	BCS	41$		;branch if cant (?)
+	JSR	PC,DELET	;bash the link
+41$:	DECB	ASXLNT(R5)	;is it time to scan link table
+	BGE	11$		;branch if no
+	MOVB	#60./10.-1,ASXLNT(R5) ;yes. reinitialize minute countdown
+	DECB	ASXLHR(R5)	;update hour countdown
+	BGE	5$
+	MOVB	#60.-1,ASXLHR(R5)
+5$:	MOV	R3,R1		;update link table ttl fields
+	ADD	#PAXLNK,R1
+	ADD	@R1,R1
+6$:	TST	@R1		;is this end of table
+	BEQ	11$		;branch if yes
+	TSTB	ASXLHR(R5)	;is it time to update ttl field
+	BEQ	7$		;branch if yes
+	CMPB	LT.TTL(R1),#60.
+	BHIS	8$		;branch if no
+7$:	INCB	LT.TTL(R1)	;yes. update ttl field
+	BNE	8$
+	DECB	LT.TTL(R1)
+8$:	CMPB	LT.TTL(R1),PAXW6(R3) ;is link too old
+	BHIS	9$		;branch if yes
+	BITB	#LX.HRD,LT.TYP(R1)
+	BNE	10$		;branch if no
+	CMPB	LT.TTL(R1),#TTLMAX
+	BLO	10$		;branch if no
+9$:	MOV	R1,R0		;yes. bash the link
+	JSR	PC,DELET
+	BR	6$
+;
+10$:	ADD	#LT.LEN,R1	;advance to next entry
+	BR	6$
+;
+11$:	MOV	(SP)+,R2	;wander home
+	CLC
+	RTS	PC
+;
+; IP datagrams are sent here. The callsign associated with the IP address is
+; stored in the routing table and inserted in the buffer leader by the routing
+; algorithm. In this section the node table is searched for a match, which
+; establishes the nid, then the channel table is searched for a channel
+; active on this nid. If found the datagram is sent immediately. If not and
+; there is a free channel, an open event is declared on that channel and the
+; datagram is queued on that channel.
+;
+SIX10:	MOV	R4,R1		;find destination address
+	ADD	#PH.LDR,R1
+	JSR	PC,EDCALL
+	BCC	1$		;branch if ok
+	CLR	R0		;cant. use home address (*** temp ***)
+1$:	CLR	R2
+	BIT	#DGPBIT,PAROPT(R3) ;is this datagram mode
+	BNE	5$		;branch if yes
+	MOV	R3,R1		;no. search for active channel
+	ADD	#PAXCTB,R1
+	CLR	-(SP)
+2$:	TSTB	R2		;avoid monitor channel
+	BEQ	4$
+	CMPB	R2,PAXCHN(R3)	;avoid direct-access channel
+	BEQ	4$
+	TSTB	CT.STA(R1)	;is channel active
+	BNE	3$		;branch if yes
+	MOV	R2,@SP		;no. remember that
+	BR	4$
+;
+3$:	CMPB	CT.NID(R1),R0	;is station active on this channel
+	BNE	4$		;branch if no
+	MOVB	#60.,CT.TTL(R1)	;yes. reset idle timeout (10 min)
+	TST	(SP)+
+	BR	6$		;send direct
+;
+4$:	ADD	#CT.LEN,R1	;advance to next channel	
+	INC	R2
+	CMP	R2,#CHNMAX
+	BLO	2$		;branch if another
+	MOV	(SP)+,R2	;not found. are all channels active
+	BEQ	7$		;branch if yes
+5$:	MOV	#ST.CON,R1	;no. open sezme
+	JSR	PC,FSA
+6$:	MOV	R4,R1		;adjust for tapr leader
+	ADD	#BUFLDR-PK.LEN,R1
+	MOVB	R2,PK.CHN(R1)	;construct leader
+	MOVB	#PX.DAT,PK.COD(R1)
+	MOV	@SP,R0
+	ADD	#PK.LEN,R0
+	CCC
+	EMT	SIO+EXTBAS	;start i/o
+	BR	8$
+;
+7$:	SEC			;bridge out. refund tolls
+8$:	MOV	(SP)+,R2	;evas
+	RTS	PC
+;
+; Output reset
+;
+; This is a devious way to get text directly to the tapr. It uses the benign
+; feature of the network-output process that treats all non-packet ipc
+; messages as resets.
+;
+; Messages end with <cr><lf>. If first char is <esc>, message is command and
+; <esc>, <cr> and <lf> are removed; otherwise, it is data and only <lf> is
+; removed. If first char of command following <esc> is a digit, associated
+; direct-access channel is selected and digit is removed.
+;
+; R2 = message pointer
+;
+DCNRST:	MOV	R2,-(SP)	;save
+	MOVB	SD.CTL(R2),R0	;is this stream message
+	BIC	#^C3,R0
+	CMPB	R0,#STRCTL
+	BNE	1$		;branch if no
+	MOVB	SD.CTL(R2),R0	;yes. is it control message from input process
+	ASH	#-2,R0
+	BNE	2$		;branch if no
+	MOVB	3(R2),R1	;yes. crank protocol engine
+	MOVB	2(R2),R2
+	JSR	PC,FSA
+1$:	JMP	17$
+;
+2$:	ADD	#SD.CHN,R2	;stream message. set pointers
+	MOV	R0,-(SP)
+3$:	MOV	R5,R1
+	ADD	#ASXBUF,R1
+	ADD	ASXPTR(R5),R1
+4$:	TST	@SP		;is this end of nibble
+	BEQ	16$		;branch if yes
+	MOVB	(R2)+,(R1)+	;no. copy char
+	INC	ASXPTR(R5)
+	DEC	@SP
+	CMP	ASXPTR(R5),#CMDLEN ;did buffer overflow
+	BLO	5$		;branch if no
+	MOV	R5,R1		;yes. insert header
+	ADD	#ASXBUF,R1
+	MOVB	#PX.DAT,-(R1)
+	BR	14$
+;
+5$:	CMPB	-1(R1),#LF	;is this end of message
+	BNE	4$		;branch if no
+	CLRB	-(R1)		;yes. trim <lf>
+	DEC	ASXPTR(R5)
+	MOV	R5,R1		;reset pointer
+	ADD	#ASXBUF,R1
+	CMPB	@R1,#ESC	;is this command message
+	BEQ	6$		;branch if yes
+	MOVB	#PX.DAT,-(R1)	;no. insert header
+	BR	14$
+;
+; This section processes command messages (those preceeded with <esc>).
+; If the message begins with a C it is presumed a connect command and an
+; open event is declared.
+;
+6$:	DEC	ASXPTR(R5)	;command message. trim <cr>
+	INC	R1		;is second char digit
+	CMPB	@R1,#'0
+	BLO	7$		;branch if no
+	CMPB	@R1,#'9
+	BHI	7$		;branch if no
+	MOVB	(R1)+,PAXCHN(R3) ;yes. reset direct-access channel number
+	BICB	#^C17,PAXCHN(R3)
+	CMPB	PAXCHN(R3),#CHNMAX-1
+	BLO	7$
+	MOVB	#CHNMAX-1,PAXCHN(R3)
+7$:	MOV	R1,-(SP)	;decode command
+	MOV	R2,-(SP)
+	MOV	#X0,R0
+	JSR	PC,DECODE
+	BCS	12$		;branch if error
+	ADD	R0,PC
+	BR	13$		;0 no-op
+	BR	10$		;2 connect
+	BR	9$		;4 disconnect
+	BR	8$		;6 debug
+;
+8$:	JSR	PC,WIRTAP	;debug
+	BR	12$
+;
+9$:	MOV	#ST.DIS,R1	;disconnect
+	BR	11$
+;
+10$:	JSR	PC,EDCALL	;connect
+	BCS	12$		;branch if error
+	MOV	#ST.CON,R1
+11$:	MOVB	PAXCHN(R3),R2	;crank protocol engine
+	JSR	PC,FSA
+12$:	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	BR	15$
+;
+; This section constructs the tapr header and sends the data.
+;
+13$:	MOV	(SP)+,R2	;tapr command. insert header
+	MOV	(SP)+,R1
+	MOVB	#PX.CMD,-(R1)
+14$:	MOVB	PAXCHN(R3),-(R1)
+	MOV	R5,R0		;compute length
+	ADD	#ASXBUF,R0
+	ADD	ASXPTR(R5),R0
+	SUB	R1,R0	
+	CMP	R0,#PK.LEN	;is this runt
+	BLE	15$		;branch if yes
+	EMT	SIO+EXTBAS	;no. start i/o
+15$:	CLR	ASXPTR(R5)
+	BR	3$
+;
+16$:	TST	(SP)+		;send reply
+	MOV	@SP,R2
+	MOVB	#STRCTL,SD.CTL(R2)
+	.PUTDA	R2
+17$:	MOV	(SP)+,R2	;evas
+	CLC
+	RTS	PC
+;
+; Process redirect
+;
+DCNRDR:	SEC			;suppress
+	RTS	PC
+;
+; The following sections contain the finite-state automaton (fsa) which
+; controls the protocol on each channel separately.
+;
+; Subroutine to crank protocol engine
+; R1 = event code, r2 = channel (r0 preserved)
+;
+FSA:	MOV	R1,-(SP)	;fuddlefingers
+	MOV	R0,-(SP)
+	MOVB	R2,R1		;establish channel pointer
+	MUL	#CT.LEN,R1
+	ADD	R3,R1
+	ADD	#PAXCTB,R1
+	MOVB	CT.STA(R1),R0	;update state
+	MOV	STATAB(R0),R0
+	ADD	2(SP),R0
+	MOVB	@R0,CT.STA(R1)
+	MOV	2(R0),2(SP)
+	MOV	(SP)+,R0
+	JSR	PC,@(SP)+	;execute code segment
+NOOP:	RTS	PC
+;
+; FSA code segments
+; R1 = channel table pointer, r2 = channel number
+;
+; Open connection
+; R0 = nid
+;
+; This segment initializes the channel atable and constructs the C command for
+; the TAPR. It first computes the best path to the destination given existing
+; information. If no path is available, it collects speculative links between
+; known digipeaters and the destination and computes the best path again. It
+; then tries this path and, if that fails, tries the next best path and so
+; on until none are left. Finally, it tries direct and punts if that fails.
+;
+OPEN:	MOVB	R0,CT.NID(R1)	;initialize
+	CLRB	CT.WGT(R1)
+	MOV	#CMD01,R0	;set global pid = x'cc'
+	JSR	PC,CMD
+	TSTB	R2		;is this connectionless
+	BEQ	OPN10		;branch if yes
+	MOVB	#1*2,CT.STA(R1)	;no. start in state 1
+	MOV	R1,-(SP)	;lock node entry
+	MOVB	CT.NID(R1),R1
+	MUL	#RT.LEN,R1
+	ADD	#PAXSRC,R1
+	ADD	R3,R1
+	ADD	PAXSRC(R3),R1
+	INCB	RT.CNG(R1)
+	MOV	(SP)+,R1
+ROPN:	MOVB	#3,CT.TTL(R1)	;reset channel
+OPN10:	MOV	R2,-(SP)	;save
+	MOV	R1,-(SP)
+	CLRB	CT.TYP(R1)	;rassle pointers
+	MOVB	CT.NID(R1),R0
+	MOV	R0,R1
+	MUL	#RT.LEN,R1
+	ADD	#PAXSRC,R1
+	ADD	R3,R1
+	ADD	PAXSRC(R3),R1
+	MOV	R1,R2		
+	MOV	@SP,R1		;make a connect command
+	ADD	#CT.MSG,R1
+	MOVB	2(SP),(R1)+	;(pk.chn)
+	MOVB	#PX.CMD,(R1)+	;(pk.cod)
+	MOVB	#'C,(R1)+
+	BIT	#XLPBIT,PAROPT(R3) ;is this loopback
+	BEQ	20$		;branch if no
+	CLR	R0		;yes. the enemy is us
+20$:	JSR	PC,ENCALL	;encode destination callsign
+	MOV	@SP,R0		;is this first try
+	TSTB	CT.WGT(R0)
+	BNE	1$		;branch if no
+	MOVB	CT.NID(R0),R0	;yes. collect speculative links
+	JSR	PC,SPEC
+1$:	MOV	@SP,R0		;construct source route
+	MOVB	CT.WGT(R0),RT.WGT(R2)
+	INCB	CT.WGT(R0)
+	MOVB	CT.NID(R0),R0
+	JSR	PC,SPF
+	TSTB	2(SP)		;is this connectionless
+	BEQ	2$		;branch if yes
+	CMPB	RT.WGT(R2),#255. ;no. is a path available
+	BHIS	5$		;branch if no
+2$:	ADD	#RT.PEA,R2	;encode digipeater callsigns
+	MOV	R2,-(SP)
+3$:	MOVB	(R2)+,R0
+	BEQ	4$		;branch if complete
+	JSR	PC,ENCALL
+	BR	3$
+;
+4$:	BIT	#XLPBIT,PAROPT(R3) ;is this loopback
+	BEQ	21$		;branch if no
+	MOV	2(SP),R0	;yes. encode destination callsign
+	MOVB	CT.NID(R0),R0
+	JSR	PC,ENCALL
+	TSTB	-(R2)		;encode digipeater callsigns for return
+22$:	CMP	R2,@SP
+	BLOS	21$		;branch if complete
+	MOVB	-(R2),R0
+	JSR	PC,ENCALL
+	BR	22$
+;
+21$:	TST	(SP)+		;stackups
+	CLRB	-(R1)		;widget backstop
+	MOV	R1,R0		;establish transfer parameters
+	MOV	@SP,R1
+	ADD	#CT.MSG,R1
+	SUB	R1,R0
+	EMT	SIO+EXTBAS	;start i/o
+	MOV	(SP)+,R1	;evas
+	MOV	(SP)+,R2
+	RTS	PC
+;
+5$:	MOV	(SP)+,R1	;evas
+	MOV	(SP)+,R2
+	MOVB	#3*2,CT.STA(R1)	;abandon hope
+	JSR	PC,CLRQ
+	RTS	PC
+;
+; Connection established
+;
+RTTL:	MOVB	#60.,CT.TTL(R1)	;reset idle timeout (10 min)
+	RTS	PC
+;
+; Close request
+;
+CLRQ:	MOVB	#3,CT.TTL(R1)	;set close timeout (30 sec)
+	MOV	#CMD00,R0	;request close
+	JSR	PC,CMD
+	RTS	PC
+;
+; Close complete
+;
+CLOZ:	CLRB	CT.STA(R1)	;thath all, folks
+	CLRB	CT.TTL(R1)
+	MOVB	CT.NID(R1),R1	;thaw node table
+	MUL	#RT.LEN,R1
+	ADD	#PAXSRC,R1
+	ADD	R3,R1
+	ADD	PAXSRC(R3),R1
+	DECB	RT.CNG(R1)
+	RTS	PC
+;
+; The following sections contain subroutines called throughout the module.
+;
+; Subroutine to issue command
+; R0 = command pointer, r2 = channel number
+;
+CMD:	MOV	R1,-(SP)	;save
+	MOVB	R2,R1		;establish channel pointer
+	MUL	#CT.LEN,R1
+	ADD	R3,R1
+	ADD	#PAXCTB,R1
+	CLRB	CT.TYP(R1)	;leave tracks
+	ADD	#CT.MSG,R1	;set pointer
+	MOV	R1,-(SP)
+	MOVB	R2,(R1)+	;construct header
+	MOVB	#PX.CMD,(R1)+
+1$:	MOVB	(R0)+,(R1)+	;copy message
+	BNE	1$
+	MOV	R1,R0		;compute length
+	MOV	(SP)+,R1
+	SUB	R1,R0
+	EMT	SIO+EXTBAS	;start i/o
+	MOV	(SP)+,R1	;evas
+	RTS	PC
+;
+; Subroutine to parse monitor header
+; R1 = data pointer
+;
+; This routine and dependencies wiretaps received monitor headers in format:
+;
+; <chan><code>fm <call> to <call> via <callsignlist> ctl <type> pid <code>
+;
+; It saves each unique callsign in the node table and establishes a
+; node id (nid) for it. It then builds the route from source to destination
+; as a string of nids, extracts each intrinsic link and stores it along with
+; othr information in the link table.
+;
+WIRTAP:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	CLR	-(SP)
+	CLR	-(SP)
+	MOV	R3,R2		;set defaults
+	ADD	#PAXCTL,R2
+	MOVB	#LX.HRD+LX.SRC,(R2)+ ;type
+	MOVB	#-1,(R2)+	;heard
+	MOVB	#-1,(R2)+	;destination
+	CLRB	(R2)+		;source
+1$:	MOV	R1,@SP		;decode next string
+	MOV	#MF0,R0
+	JSR	PC,DECODE
+	BCS	WIR10		;branch if end
+	ADD	R0,PC
+	BR	2$		;0 fm {call}
+	BR	3$		;2 to {call}
+	BR	5$		;4 via {callsignlist}
+	BR	6$		;6 ctl {type}
+	BR	6$		;10 pid {code}
+	BR	4$		;12 not found (assume callsign)
+;
+2$:	JSR	PC,EDCALL	;fm. encode source nid
+	BCS	1$		;branch if error
+	MOVB	R0,PAXRUT(R3)
+	BR	1$
+;
+3$:	JSR	PC,EDCALL	;to. encode destination nid
+	BCS	1$		;branch if error
+	MOVB	R0,PAXDST(R3)
+	BR	1$
+;
+5$:	MOV	R3,R2		;via. reset route pointer
+	ADD	#PAXRUT+1,R2
+	CLR	2(SP)
+	BR	1$
+;
+4$:	CMP	2(SP),#RUTMAX-3	;not found. is route full
+	BHIS	1$		;branch if yes
+	MOV	@SP,R1		;no. encode digipeater nid
+	JSR	PC,EDCALL
+	BCS	1$		;branch if error
+	INC	2(SP)
+	MOVB	R0,(R2)+
+	CMPB	-1(R1),#'*	;is station heard direct
+	BNE	1$		;branch if no
+	MOVB	R0,PAXHRD(R3)	;yes. update last nid heard
+	BR	1$
+;
+6$:	MOV	#MF1,R0		;ctl/pid. assemble type bits
+	JSR	PC,DECODE
+	BCS	1$		;branch if error
+	BISB	R0,PAXCTL(R3)
+	BR	1$
+;
+WIR10:	MOVB	PAXDST(R3),(R2)+ ;end. complete list
+	MOVB	#-1,(R2)+	;backstop
+	TSTB	PAXHRD(R3)	;was source heard via digipeater
+	BPL	1$		;branch if yes
+	MOVB	PAXRUT(R3),PAXHRD(R3) ;no. assume heard from source
+1$:	MOV	R3,R1		;scan route list
+	ADD	#PAXRUT,R1
+	MOVB	PAXCTL(R3),R2
+	MOVB	(R1)+,R0
+2$:	CMPB	R0,PAXHRD(R3)	;is this heard direct
+	BNE	3$		;branch if no
+	MOV	R0,-(SP)	;yes. insert direct link
+	SWAB	R0
+	BIC	#377,R0
+	JSR	PC,LINK
+	BICB	#LX.HRD+LX.DIG,R2 ;subsquent hops unverified
+	MOV	(SP)+,R0
+3$:	SWAB	R0
+	BIC	#377,R0
+	BISB	(R1)+,R0	;insert next link
+	BMI	4$		;branch if done
+	JSR	PC,LINK
+	BICB	#LX.SRC,R2	;subsequent hops digipeated
+	BITB	#LX.HRD,R2
+	BEQ	2$
+	BISB	#LX.DIG,R2
+	BR	2$
+;
+4$:	CMP	(SP)+,(SP)+	;popups
+	MOV	(SP)+,R2	;evas
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to update link (called only by wiretap routine)
+; R0 = to/fm, r2 = flags, preserves r0
+;
+; This subroutine searches the link table for the argument and makes an entry
+; if not already there and room exists. It also resets the ttl field, OR's the
+; factor bits and updates the node entry of the source. The factor bits are
+; assigned as follows:
+;
+; LX.SRC	source originated the packet
+; LX.DIG	source digipeated the packet
+; LX.HRD	link heard in this direction (verified)
+; LX.SYN	packet was synchronized (I or R frame)
+; LX.RCL	link heard in both directions (reciprocal verified))
+; LX.END	last entry
+;
+LINK:	MOV	R1,-(SP)	;save
+	MOV	R0,-(SP)
+	CMPB	@SP,1(SP)	;is this nonsense
+	BEQ	5$		;branch if yes
+	MOV	R3,R0		;maybe not. search link table
+	ADD	#PAXLNK,R0
+	ADD	@R0,R0
+1$:	TST	@R0		;(lt.fm,lt.to) is this the end
+	BEQ	3$		;branch if yes
+	CMP	@R0,@SP		;no. is this forward link
+	BEQ	4$		;branch if yes
+	SWAB	@SP		;no. is this reciprocal link
+	CMP	@R0,@SP
+	BEQ	2$		;branch if yes
+	SWAB	@SP		;no. keep truckin
+	ADD	#LT.LEN,R0
+	BR	1$
+;
+2$:	SWAB	@SP		;reciprocal. was it heard both ways
+	BITB	#LX.HRD,LT.TYP(R0)
+	BEQ	4$		;branch if no
+	BITB	#LX.HRD,R2
+	BEQ	4$		;branch if no
+	BISB	#LX.RCL,LT.TYP(R0) ;yes. so indicate
+	BR	4$
+;
+3$:	TSTB	LT.TYP(R0)	;is table full
+	BMI	5$		;branch if yes
+	MOV	@SP,@R0		;no. insert new entry
+	MOVB	@SP,R1		;update use counts
+	MUL	#RT.LEN,R1
+	ADD	#PAXSRC,R1
+	ADD	R3,R1
+	ADD	PAXSRC(R3),R1
+	INCB	RT.CNG(R1)
+	MOVB	1(SP),R1
+	MUL	#RT.LEN,R1
+	ADD	#PAXSRC,R1
+	ADD	R3,R1
+	ADD	PAXSRC(R3),R1
+	INCB	RT.CNG(R1)
+	DECB	PAXLNX+1(R3)
+4$:	BISB	R2,LT.TYP(R0)	;update entry
+	CLRB	LT.TTL(R0)
+	MOVB	1(SP),R1	;update original source node
+	MUL	#RT.LEN,R1
+	ADD	#PAXSRC,R1
+	ADD	R3,R1
+	ADD	PAXSRC(R3),R1
+	BISB	R2,RT.TYP(R1)
+	BITB	#LX.HRD,R2	;is this on verified path
+	BEQ	5$		;branch if no
+	MOV	R2,-(SP)	;yes. save timestamp 
+	MOV	R1,R2
+	.GCLK
+	MOV	R0,RT.UPD(R2)
+	MOV	R1,RT.UPD+2(R2)
+	MOV	(SP)+,R2
+5$:	MOV	(SP)+,R0	;ybity, ybity
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to collect speculative links
+; R0 = destination nid
+;
+; This subroutine scans the node table for apparentl digipeaters and inserts
+; links between each and the destination specified.
+;
+SPEC:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	CLR	R2		;insert direct link
+	JSR	PC,LINK
+	MOV	R3,R1		;set pointers
+	ADD	#PAXSRC,R1
+	ADD	@R1,R1
+1$:	TSTB	RT.TYP(R1)	;is this end of table
+	BMI	3$		;branch if yes
+	TSTB	RT.CNG(R1)	;no. is this an active digipeater
+	BEQ	2$		;branch if no
+	BITB	#LX.DIG,RT.TYP(R1)
+	BEQ	2$		;branch if no
+	JSR	PC,LINK		;yes. insert indirect link
+2$:	ADD	#RT.LEN,R1	;advance to next entry	
+	ADD	#1*400,R0
+	BR	1$
+;
+3$:	MOV	(SP)+,R2	;evas
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to determine source route *or* the great spf algorithm
+; R0 = destination nid, returns route in node table
+;
+; This subroutine and dependencies calculates source routes to any destination
+; using the data base left by the wiretap routine. Its operation is modelled
+; after the Viterbi algorithm.
+;
+SPF:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R0,-(SP)	;initialize
+	MOV	#255.,ASXMIN(R5)
+	MOVB	#RUTMAX-1,ASXHOP(R5)
+	CLRB	ASXSPC(R5)
+	MOVB	R0,R1		;fetch path floor
+	MUL	#RT.LEN,R1
+	ADD	#PAXSRC,R1
+	ADD	R3,R1
+	ADD	PAXSRC(R3),R1
+	MOVB	RT.WGT(R1),ASXFLR(R5)
+	MOV	R5,R1		;initialize spf list
+	ADD	#ASXSPF,R1
+	MOV	R1,R2
+	MOVB	R0,(R2)+	;nid
+	CLRB	(R2)+		;hop
+	CLR	(R2)+		;distance
+	CLR	(R2)+		;pointer
+SPF20:	CMP	R1,R2		;get next list entry
+	BHIS	SPF10		;branch if end list
+	MOV	R1,ASXTMP+4(R5)
+	MOV	(R1)+,ASXSUC(R5) 
+	MOV	(R1)+,ASXSUC+2(R5)
+	TST	(R1)+
+	TSTB	ASXSUC(R5)	;is it complete path
+	BNE	2$		;branch if no
+	TSTB	ASXFLR(R5)	;are multiple paths required
+	BNE	1$		;branch if yes
+	CMP	ASXSUC+2(R5),ASXMIN(R5) ;no. save min distance
+	BHIS	1$
+	MOV	ASXSUC+2(R5),ASXMIN(R5)
+1$:	CMPB	ASXSUC+1(R5),ASXHOP(R5) ;save min hops
+	BHIS	SPF20
+	MOVB	ASXSUC+1(R5),ASXHOP(R5)
+	BR	SPF20
+
+2$:	TSTB	ASXSUC+1(R5)	;is this destination node
+	BEQ	4$		;branch if yes
+	MOV	R1,-(SP)	;no. update distance
+	MOVB	ASXSUC(R5),R1
+	MUL	#RT.LEN,R1
+	ADD	#PAXSRC,R1
+	ADD	R3,R1
+	ADD	PAXSRC(R3),R1
+	BITB	#LX.DIG,RT.TYP(R1) ;digipeater factor
+	BNE	3$
+	ADD	PAXW5(R3),ASXSUC+2(R5)
+3$:	MOVB	RT.CNG(R1),R1	;complexity factor
+	MUL	PAXW4(R3),R1
+	ADD	R1,ASXSUC+2(R5)
+	MOV	(SP)+,R1
+4$:	INCB	ASXSUC+1(R5)	;update hop count
+	CMP	ASXSUC+2(R5),ASXMIN(R5) ;test path
+	BHI	SPF20		;branch if max distance
+	MOVB	ASXSUC+1(R5),R0
+	INC	R0
+	CMPB	R0,ASXHOP(R5)
+	BHI	SPF20		;branch if max hops
+	MOV	R1,-(SP)	;search link table
+	MOV	R3,R1
+	ADD	#PAXLNK,R1
+	ADD	@R1,R1
+SPF30:	MOV	(R1)+,ASXTMP(R5) ;get next link
+	BEQ	4$		;branch if none
+	MOV	(R1)+,R0
+	CMPB	ASXTMP+1(R5),ASXSUC(R5) ;does nid match from-nid
+	BEQ	1$		;branch if yes
+	SWAB	ASXTMP(R5)	;no. use reciprocal link
+	CMPB	ASXTMP+1(R5),ASXSUC(R5) ;does nid match to-nid
+	BNE	SPF30		;branch if no
+1$:	SWAB	R0		;yes. compute link weight
+	JSR	PC,WEIGHT
+	ADD	PAXW0(R3),R0	;plus hop factor
+	ADD	ASXSUC+2(R5),R0
+	MOV	R0,ASXTMP+2(R5)
+	CMP	R0,ASXMIN(R5)	;is this possible path
+	BHIS	SPF30		;branch if no
+	MOV	R5,R0		;maybe. has source occured before
+	ADD	#ASXTMP,R0
+2$:	MOV	4(R0),R0
+	BEQ	3$		;branch if no
+	CMPB	ASXTMP(R5),@R0
+	BEQ	SPF30		;branch if yes
+	BR	2$	
+;
+3$:	CMPB	ASXSPC(R5),#SPFMAX ;new entry. is list full
+	BHIS	SPF30		;branch if yes
+	INCB	ASXSPC(R5)	;no. insert entry
+	MOVB	ASXTMP(R5),(R2)+ ;stuff in list
+	MOVB	ASXSUC+1(R5),(R2)+
+	MOV	ASXTMP+2(R5),(R2)+
+	MOV	ASXTMP+4(R5),(R2)+
+	BR	SPF30
+;
+4$:	MOV	(SP)+,R1	;not found. work another link
+	BR	SPF20
+;
+SPF10:	MOV	(SP)+,R1	;complete. set node pointer
+	MUL	#RT.LEN,R1
+	ADD	#PAXSRC,R1
+	ADD	R3,R1
+	ADD	PAXSRC(R3),R1
+	MOVB	#255.,RT.WGT(R1)
+	CLRB	RT.PEA(R1)
+	CLR	@R2		;backstop for sort
+	JSR	PC,SPFSRT	;find nth route
+	TST	R0		;was anything useful found
+	BEQ	5$		;branch if no
+	MOVB	2(R0),RT.WGT(R1) ;yes. reconstruct route string
+	ADD	#RT.PEA,R1	;reconstruct route string
+1$:	MOV	4(R0),R0	;is this last link
+	TSTB	1(R0)
+	BEQ	2$		;branch if yes
+	MOVB	@R0,(R1)+	;no. append next node
+	BR	1$
+;
+2$:	CLRB	(R1)+		;backstop
+5$:	MOV	(SP)+,R2	;evas
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to find nth route
+; Returns r0 = route head
+;
+SPFSRT:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R5,R1		;sort route list
+	ADD	#ASXSPF,R1
+	CLR	R0
+1$:	TST	@R1		;is sort complete
+	BEQ	6$		;branch if yes
+	TSTB	@R1
+	BNE	7$		;branch if not route head
+	MOV	R1,R2
+2$:	TST	@R2		;is pass complete
+	BEQ	5$		;branch if yes
+	TSTB	@R1
+	BNE	4$		;branch if not route head
+	CMP	2(R1),2(R2)	;no. is this entry first
+	BLO	4$		;branch if no
+	BHI	3$		;branch if yes
+	CMP	R1,R2
+	BLOS	4$		;branch if no
+3$:	MOV	@R1,-(SP)	;yes. exchange entries
+	MOV	@R2,@R1
+	MOV	(SP)+,@R2
+	MOV	2(R1),-(SP)
+	MOV	2(R2),2(R1)
+	MOV	(SP)+,2(R2)
+	MOV	4(R1),-(SP)
+	MOV	4(R2),4(R1)
+	MOV	(SP)+,4(R2)
+4$:	ADD	#2*3,R2		;go to next element
+	BR	2$
+;
+5$:	DECB	ASXFLR(R5)	;is this nth route	
+	BLE	9$		;branch if yes
+7$:	ADD	#2*3,R1		;no. go to next pass
+	BR	1$
+;
+9$:	CMP	2(R1),ASXMIN(R5) ;found. is bridge too far
+	BHI	6$		;branch if yes
+	MOV	R1,R0		;return route head
+6$:	MOV	(SP)+,R2	;evas
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to compute link weight
+; R0 = factor bits, returns r0 = weight
+;
+WEIGHT:	CLR	-(SP)		;initialize weight
+	BIT	#LX.HRD,R0	;select factor bits
+	BNE	1$
+	ADD	PAXW1(R3),@SP	;unverified factor
+1$:	BIT	#LX.RCL,R0
+	BNE	2$
+	ADD	PAXW2(R3),@SP	;non-reciprocal factor
+2$:	BIT	#LX.SYN,R0
+	BNE	3$
+	ADD	PAXW3(R3),@SP	;unsynchronized factor
+3$:	MOV	(SP)+,R0	;return weight
+	RTS	PC
+;
+; Subroutine to parse information/status and determine event code
+; R0 = parse table pointer, r1 = input pointer, returns r0 = event code,
+; r1 = updated, cc(c) = 1 if error (null string)
+;
+; This subroutine scans for the first non-whitespace uncased character and
+; looks it up in the table specified, then returns the code associated
+; with the character. The table can be structured to interpret a serios of
+; such characters. The input pointer is left at the first whitespace character
+; following the string.
+;
+DECODE:	MOV	R2,-(SP)	;save
+	MOV	R0,R2
+1$:	MOVB	@R1,R0		;skip to next field
+	BIC	#^C177,R0
+	BEQ	8$		;branch if end
+	INC	R1
+	CMPB	R0,#<' >
+	BLOS	1$		;branch if noise
+	CMPB	R0,#140		;uncase first char
+	BLO	2$
+	SUB	#040,R0
+2$:	MOVB	R0,-(SP)	;skip to end of field
+3$:	MOVB	@R1,R0		;get next char
+	BIC	#^C177,R0
+	CMPB	R0,#<' >
+	BLOS	4$		;branch if end
+	INC	R1
+	BR	3$
+;
+4$:	MOVB	(SP)+,R0	;restore first char
+5$:	TST	@R2		;is this last entry
+	BEQ	7$		;branch if yes
+	CMPB	R0,@R2		;no. does char match
+	BNE	6$		;branch if no
+	TSTB	3(R2)		;yes. is this end
+	BEQ	7$		;branch if yes
+	MOV	2(R2),R2	;no. retrieve pointer
+	BR	1$
+;
+6$:	CMP	(R2)+,(R2)+	;no match. advance to next entry
+	BR	5$
+;
+7$:	MOV	2(R2),R0	;return code
+	CLC
+	BR	9$
+;
+8$:	SEC			;error return
+9$:	MOV	(SP)+,R2	;evas
+	RTS	PC
+;
+; Subroutine to find callsign in node table
+; R1 = input pointer, returns r0 = nid, r1 updated, cc(c) = 1 if error
+;
+; This subroutine edits the callsign string specified to standard form and
+; searches the node table for match. If not found, a new entry is made. The
+; standard-form callsign is at most ten characters long and terminated by
+; <nul>. An error return indicates a malformed callsign string (less than four
+; chars) or no room in the node table. The input pointer is left at the first
+; whitespace character following the string.
+;
+EDCALL:	MOV	R2,-(SP)	;save
+	CLR	-(SP)
+	MOV	R3,R2		;initialize
+	ADD	#PAXQRZ,R2
+1$:	MOVB	@R1,R0		;skip to next field
+	BIC	#^C177,R0
+	BEQ	6$		;branch if end
+	INC	R1
+	CMPB	R0,#<' >
+	BLOS	1$		;branch if noise
+2$:	CMP	@SP,#CALMAX-1	;is buffer full
+	BHIS	4$		;branch if yes
+	CMPB	R0,#140		;no. uncase and save char
+	BLO	3$
+	SUB	#040,R0
+3$:	MOVB	R0,(R2)+
+	INC	@SP
+4$:	MOVB	@R1,R0		;get next char
+	BIC	#^C177,R0
+	CMPB	R0,#<' >
+	BLOS	5$		;branch if end
+	INC	R1
+	CMPB	R0,#'*
+	BEQ	4$		;branch to ignore "*"
+	BR	2$
+;
+5$:	CLRB	(R2)+		;backstop
+	CMP	@SP,#CALMIN	;is this too short
+	BLO	6$		;branch if yes
+	MOV	R1,-(SP)	;no. insert callsign
+	MOV	R3,R1
+	ADD	#PAXQRZ,R1
+	JSR	PC,DECALL
+	MOV	(SP)+,R1
+	BCC	7$		;branch if ok
+6$:	SEC			;error exit
+7$:	BIT	(SP)+,R0	;discard temp
+	MOV	(SP)+,R2	;evas
+	RTS	PC
+;
+; Subroutine to encode nid to standard callsign string
+; R0 = nid, r1 = callsign pointer, returns r1 updated
+;
+; This subroutine copies the callsign string with specified nid to the area
+; specified, leaving <sp> as terminator.
+;
+ENCALL:	MOV	R1,-(SP)	;save
+	MUL	#RT.LEN,R0	;calculate node table pointer
+	ADD	#PAXSRC,R1
+	ADD	R3,R1
+	ADD	PAXSRC(R3),R1
+	ADD	#RT.SRC,R1
+	MOV	R1,R0
+	MOV	(SP)+,R1
+1$:	MOVB	(R0)+,(R1)+	;copy callsign
+	BNE	1$
+	MOVB	#<' >,-1(R1)	;least astonishing backstop
+	RTS	PC
+;
+; Subroutine to decode standard callsign string to nid
+; R1 = callsign pointer, returns r0 = nid, r1 updated, c(cc) = 1 if error
+;
+; This subroutine finds the callsign string, which must be edited to standard
+; form, in the node table and returns its nid. If the callsign is not in the
+; node table, a new entry is made for it. An error return indicates no room in
+; the node table.
+;
+DECALL:	MOV	R2,-(SP)	;evas
+	CLR	-(SP)
+	MOV	R1,-(SP)
+1$:	MOV	R3,R0		;set pointer
+	ADD	#PAXSRC,R0
+	ADD	@R0,R0
+2$:	MOV	@SP,R1		;reset pointers
+	MOV	R0,R2
+	ADD	#RT.SRC,R2
+	TSTB	RT.TYP(R0)	;is this end of table
+	BMI	5$		;branch if yes
+	TSTB	RT.CNG(R0)	;no. is this entry active
+	BNE	3$		;branch if yes
+	TSTB	3(SP)		;no. remember first available slot
+	BNE	4$
+	MOVB	2(SP),3(SP)
+	BR	4$
+;
+3$:	CMPB	@R1,(R2)+	;does string match
+	BNE	4$		;branch if no
+	TSTB	(R1)+
+	BNE	3$
+	BR	8$		;yes. normal exit
+;
+4$:	ADD	#RT.LEN,R0	;no. advance to next entry	
+	INCB	2(SP)
+	BR	2$
+;
+5$:	MOVB	3(SP),R1	;not found. was there an available slot
+	BNE	6$		;branch if yes
+	SEC			;no. error return
+	BR	9$
+;
+6$:	MOVB	R1,2(SP)	;recalculate pointers
+	MUL	#RT.LEN,R1
+	ADD	#PAXSRC,R1
+	ADD	R3,R1
+	ADD	PAXSRC(R3),R1
+	MOV	R1,R0
+	MOV	R1,R2
+	ADD	#RT.SRC,R2
+	MOV	@SP,R1
+7$:	MOVB	(R1)+,(R2)+	;copy callsign
+	BNE	7$
+	CLR	RT.UPD(R0)
+	CLR	RT.UPD+2(R0)
+	MOVB	#1,RT.CNG(R0)
+	MOVB	#255.,RT.WGT(R0)
+	CLRB	RT.TYP(R0)
+	CLRB	RT.PEA(R0)
+	DECB	PAXSRX+1(R3)
+8$:	CLC			;normal exit
+9$:	BIT	(SP)+,R0	;popups
+	MOVB	(SP)+,R0	;evas
+	MOV	(SP)+,R2
+	RTS	PC
+;
+; Garbage collector
+; R0 = weight, returns r0 = free entry pointer, cc(c) = 1 if error
+;
+; This subroutine finds the oldest (weighted) entry in the link table and
+; deletes it. If this is the only link associated with a node, the node is
+; deleted as well. An error return indicates no entry of equal or greater
+; weight could be found.
+;
+GARBAG:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	CLR	-(SP)		;goudge some room
+	MOV	R0,-(SP)
+	MOV	R3,R2		;find largest ttl
+	ADD	#PAXLNK,R2
+	ADD	@R2,R2
+1$:	TST	@R2		;is this end of table
+	BEQ	3$		;branch if yes
+	MOVB	LT.TYP(R2),R0	;no. compute age * weight
+	JSR	PC,WEIGHT
+	CLR	R1
+	BISB	LT.TTL(R2),R1
+	INC	R1
+	MUL	R0,R1
+	CMP	R1,@SP		;remember last largest product
+	BLO	2$
+	MOV	R1,@SP
+	MOV	R2,2(SP)
+2$:	ADD	#LT.LEN,R2	;advance to next entry
+	BR	1$
+;
+3$:	TST	(SP)+		;fish for pointer
+	MOV	(SP)+,R0	;retrieve free entry pointer
+	BNE	4$		;branch if found
+	SEC			;error exit
+	BR	5$
+;
+4$:	CLC			;normal exit
+5$:	MOV	(SP)+,R2	;evas
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to delete entry from link table
+; R0 = entry pointer
+;
+; This subroutine deletes a specified link and updates use counts for the
+; associated nodes. If a use count decrements below two, the associated node
+; is deleted.
+;
+DELET:	MOV	R1,-(SP)	;save
+	MOVB	@R0,R1		;update destination node
+	MUL	#RT.LEN,R1
+	ADD	#PAXSRC,R1
+	ADD	R3,R1
+	ADD	PAXSRC(R3),R1
+	DECB	RT.CNG(R1)
+	CMPB	RT.CNG(R1),#1
+	BHI	1$
+	CLRB	RT.CNG(R1)
+	INCB	PAXSRX+1(R3)
+1$:	MOVB	1(R0),R1	;update source node
+	MUL	#RT.LEN,R1
+	ADD	#PAXSRC,R1
+	ADD	R3,R1
+	ADD	PAXSRC(R3),R1
+	DECB	RT.CNG(R1)
+	CMPB	RT.CNG(R1),#1
+	BHI	2$
+	CLRB	RT.CNG(R1)
+	INCB	PAXSRX+1(R3)
+2$:	MOV	6(R0),2(R0)	;squeeze out hole
+	MOV	4(R0),@R0
+	BEQ	3$
+	ADD	#LT.LEN,R0
+	BR	2$
+;
+3$:	CLR	2(R0)		;don't allow anything stupid
+	INCB	PAXLNX+1(R3)
+	MOV	(SP)+,R1	;evas
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$SUPD,RO,D
+;
+; Transfer vector
+;
+SBNPKT:	.WORD	DCNINI		;0 initialize input
+	.WORD	DCNSIR		;1 start input
+	.WORD	DCNSDR		;2 process leader
+	.WORD	DCNRDR		;3 process redirect
+	.WORD	DCNINI		;4 initialize output
+	.WORD	DCNSIX		;5 start output
+	.WORD	DCNRST		;6 reset output
+;
+; Parse tables
+;
+; Operator commands
+;
+X0:	.WORD	'C,2		;connect {call} {digipeaters}
+	.WORD	'D,4		;disconnect
+	.WORD	'Q,6		;debug (*** temp ***)
+	.WORD	0,0		;not found
+;
+; Success messages (1)
+;
+; {channel status}
+; {parameter value}
+; CHANNEL NOT CONNECTED
+;
+; Failure messages (2)
+;
+; INVALID COMMAND
+; TNC BUSY - LINE IGNORED
+; CHANNEL ALREADY CONNECTED
+; STATION ALREADY CONNECTED
+;
+M1:	.WORD	0,ST.ERR	;all messages
+;
+; Link status messages (3)
+;
+M0:	.WORD	'(,M0		;(n)
+	.WORD	'B,ST.NUL	;BUSY fm {call} via {digipeaters}
+	.WORD	'C,C1
+	.WORD	'D,ST.CLZ	;DISCONNECTED fm {call} via {digipeaters}
+	.WORD	'F,F1
+	.WORD	'L,L1
+	.WORD	0,ST.NUL	;not found
+;
+C1:	.WORD	'R,ST.NUL	;CONNECT REQUEST fm {call} via {digipeaters}
+	.WORD	0,ST.EST	;CONNECTED to {call} via {digipeaters}
+;
+F1:	.WORD	'R,F2
+	.WORD	0,ST.NUL	;not found
+;
+F2:	.WORD	'F,ST.NUL	;FRAME REJECT fm {call} via {digipeaters}
+	.WORD	0,ST.NUL	;FRAME REJECT to {call} via {digipeaters}
+;
+L1:	.WORD	'F,ST.CLZ	;LINK FAILURE with {call} via {digipeaters}
+	.WORD	'R,L2
+	.WORD	0,ST.NUL	;not found
+;
+L2:	.WORD	'F,ST.NUL	;LINK RESET fm {call} via {digipeaters}
+	.WORD	0,ST.NUL	;LINK RESET to {call} via {digipeaters}
+;
+; Channel monitor strings
+; <chan><code>fm <callsign> to <callsign> via <callsignlist> ctl <type>
+;
+MF0:	.WORD	'F,0		;fm {call}
+	.WORD	'T,2		;to {call}
+	.WORD	'V,4		;via {digipeaters}
+	.WORD	'C,6		;ctl {type}
+	.WORD	'P,10		;pid {id}
+	.WORD	0,12		;not found
+;
+; Packet type field
+;
+MF1:	.WORD	'I,LX.SYN	;Inn
+	.WORD	'R,LX.SYN	;RR, RNR, REJ
+	.WORD	'C,LX.IPR	;IP pid indicator
+	.WORD	0,0		;not found
+;
+; State transition table
+;
+STATAB:	.WORD	S0,S1,S2,S3	;state index vector	
+;
+S0:	.WORD	0*2,NOOP	;0 no-op. idle
+	.WORD	0*2,OPEN	;1 connect request
+	.WORD	0*2,NOOP	;2 connect complete
+	.WORD	0*2,NOOP	;3 disconnect request
+	.WORD	0*2,NOOP	;4 disconnect complete
+	.WORD	0*2,NOOP	;5 timeout complete
+	.WORD	0*2,NOOP	;6 failure message
+;
+S1:	.WORD	1*2,NOOP	;0 no-op. connect pending
+	.WORD	1*2,OPEN	;1 connect request
+	.WORD	2*2,RTTL	;2 connect complete
+	.WORD	3*2,CLRQ	;3 disconnect request
+	.WORD	0*2,CLOZ	;4 disconnect complete
+	.WORD	1*2,ROPN	;5 timeout complete
+	.WORD	0*2,CLOZ	;6 failure message
+;
+S2:	.WORD	2*2,NOOP	;0 no-op. established
+	.WORD	2*2,OPEN	;1 connect request
+	.WORD	2*2,RTTL	;2 connect complete
+	.WORD	3*2,CLRQ	;3 disconnect request
+	.WORD	0*2,CLOZ	;4 disconnect complete
+	.WORD	3*2,CLRQ	;5 timeout complete
+	.WORD	2*2,NOOP	;6 failure message
+;
+S3:	.WORD	3*2,NOOP	;0 no-op. disconnect pending
+	.WORD	3*2,NOOP	;1 connect request
+	.WORD	3*2,CLRQ	;2 connect complete
+	.WORD	3*2,NOOP	;3 disconnect request
+	.WORD	0*2,CLOZ	;4 disconnect complete
+	.WORD	0*2,CLOZ	;5 timeout complete
+	.WORD	0*2,CLOZ	;6 failure message
+;
+CMD00:	.ASCIZ	'D'		;disconnect
+CMD01:	.ASCIZ	'@PCC'		;set global pid = x'cc'
+	.EVEN	
+;
+	.END
+                                                                                                                                                                                                           

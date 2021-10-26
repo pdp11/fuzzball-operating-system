@@ -1,0 +1,489 @@
+	.TITLE	RFSET PROCESS OPTIONS
+	.SBTTL	SYSTEM DEFINITIONS
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Rf process options
+;
+; External symbols
+;
+	.GLOBL	RDDEC,RDOCT,RDASC,FORMAT ;i/o conversion routines
+	.GLOBL	TTXXSC,TTXMAR,TTXPAG ;cli segments
+	.GLOBL	CMDHLP,CMDON,CMDOFF,CMDASG,CMDVIC,CMDNTF
+;
+; Entry symbols
+;
+	.GLOBL	RFOPT
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.PSA,.TTD,.CWD,.KWTAB ;definitions
+	.MCALL	.TTYOU,.PRINT	;rt-11 definitions
+	.COM
+	.CHR
+	.PSA
+	.TTD
+	.CWD
+	.PAGE
+	.SBTTL	PROCEDURE SEGMENT
+;
+; Dsects: r3 = par, r5 = ulp
+;
+	.PSECT	$BOSI,RO,I
+;
+; 'decode" (cwx) print rtty decoder info
+; (segment of command language interpreter)
+; (no arguments)
+;
+CWXDEC:	MOV	PC,R0		;get format pointer
+	ADD	#DECFMT-.,R0
+	BR	CWX67
+;
+; 'show' (cwx) display process options
+; (segment of command language interpreter)
+; (no arguments)
+;
+CWXSHO:	MOV	PC,R0		;get format pointer
+	ADD	#CWXFMT-.,R0
+CWX67:	MOV	R3,R1
+	JSR	PC,FORMAT
+	RTS	PC
+;
+; 'moore' (cwx) set moore (arq) mode and speed
+; (segment of command language interpreter)
+; Arg1 = baud rate (baud)
+;
+CWXMOR:	JSR	PC,RDDEC	;get baud rate (baud)
+	BNE	.+6		;branch if arg
+	MOV	#48.,R0		;no arg. default
+	MOV	R0,-(SP)	;compute clock ticks
+	MOV	#1.,R0		;500.*256./baud
+	MOV	#62464.,R1	;(1*65536+62464=128000)
+	DIV	(SP)+,R0
+	BVS	3$		;branch if overflow
+	CMP	R0,#5.*256.	;is value too small
+	BHIS	4$		;branch if no
+	MOV	#5.*256.,R0	;yes. set at lower limit
+4$:	CMP	R0,#BAUMAX*256.	;is value too large
+	BLOS	5$		;branch if no
+3$:	MOV	#BAUMAX*256.,R0	;yes. set at upper limit
+5$:	MOV	R0,PARXDS(R3)	;save for rtty output
+	MOV	R0,PARSCA(R3)	;save for tracking filter
+	MUL	#7.,R0		;account for 7.0 units
+	MOV	R1,PARPAD(R3)
+	CLR	PARPAD+2(R3)
+	BR	CWX65B
+;
+; 'baudot' (cwx) set baudot mode and speed
+; (segment of command language interpreter)
+; Arg1 = baud rate (wpm), arg2 = char rate (wpm),
+;
+CWXRTY:	JSR	PC,RCVRTY	;set receive rate
+	MOV	R0,-(SP)	;save receive rate (wpm)
+	MOV	PARSCA(R3),PARXDS(R3) ;preset default transmit speed
+	JSR	PC,RDDEC	;get character speed (wpm)
+	BEQ	.+4		;branch if missing
+	MOV	R0,@SP		;save char rate
+	CLR	R0		;compute clock ticks
+	MOV	#4950.,R1	;1.32*7.5*500./wpm
+	DIV	(SP)+,R0
+	ASL	R1		;round up
+	BPL	.+4
+	INC	R0
+	MOVB	PARXDS+1(R3),R1	;compute ticks for char
+	MUL	#6.,R1		;(for 7.5-unit code)
+	SUB	R1,R0		;compute remaining ticks
+	BGT	.+6		;branch if at least one
+	MOV	#1,R0		;less than one. insure at least one stop
+	MOVB	R0,PARSTP(R3)	;save for rtty output
+CWX65B:	BIC	#RTGBIT,PARMOD(R3)
+	BR	CWX65
+;
+; 'synch' (cwx) set synchronization threshold
+; (segment of command language interpreter)
+; Arg1 = synch threshold (0 = disable)
+; Arg2 = synch damping factor
+; Arg3 = synch (2 char)
+;
+CWXSYN:	JSR	PC,RDDEC	;get synch threshold
+	MOV	R0,PARSYN(R3)	;and stash
+	JSR	PC,RDDEC	;get synch damping factor
+	BEQ	10$		;branch if missing
+	NEG	R0
+	MOV	R0,PARLOP(R3)
+10$:	JSR	PC,RDOCT	;get synch (2 char)
+	BEQ	CWX65		;branch if missing
+	MOV	R0,PARMOO(R3)	;or stash
+	BR	CWX65
+;
+; 'limit' (cwx) set search limits
+; (segment of command language interpreter)
+; Arg1 = lower limit (wpm), arg2 = upper limit (wpm)
+;
+CWXLIM:	JSR	PC,RDDEC	;get lower limit (wpm)
+	BEQ	3$		;branch if no arg
+	MOV	R0,-(SP)	;compute clock ticks
+	MOV	#2.,R0		;1.32*500.*256./wpm
+	MOV	#37888.,R1	;(2*65556+37888=168960)
+	DIV	(SP)+,R0
+	BVS	3$		;branch if overflow
+	CMP	R0,#5.*256.	;is value too small
+	BHIS	4$		;branch if no
+	MOV	#5.*256.,R0	;yes. set at lower limit
+4$:	CMP	R0,#BAUMAX*256.	;is value too large
+	BLOS	5$		;branch if no
+3$:	MOV	#BAUMAX*256.,R0	;yes. set at upper limit
+5$:	MOV	R0,PARHIG(R3)	;save as high limit (interval)
+	JSR	PC,RDDEC	;get upper limit (wpm)
+	BEQ	9$		;branch if no arg
+	MOV	R0,-(SP)	;compute clock ticks
+	MOV	#2.,R0		;1.32*500.*256./wpm
+	MOV	#37888.,R1	;(2*65556+37888=168960)
+	DIV	(SP)+,R0
+	BVS	6$		;branch if overflow
+	CMP	R0,#5.*256.	;is value too small
+	BHIS	7$		;branch if no
+9$:	MOV	#5.*256.,R0	;yes. set at lower limit
+7$:	CMP	R0,PARHIG(R3)	;is value too large
+	BLOS	8$		;branch if no
+6$:	MOV	PARHIG(R3),R0	;yes. set at upper limit
+8$:	MOV	R0,PARLOW(R3)
+	BR	CWX65
+;
+; 'search' (cwx) set search mode (for baudot/moore)
+; (segment of command language interpreter)
+; Arg1 = receive baud rate (wpm), arg1 = autostart threshold
+;
+CWXSER:	JSR	PC,RCVRTY	;set receive rate
+	JSR	PC,RDDEC	;get autostart threshold
+	BEQ	CWX65		;branch if missing
+	MOV	R0,PARTHX(R3)	;or stash
+	BR	CWX65
+;
+; 'morse' (cwx) set morse mode and speed
+; (segment of command language interpreter)
+; Arg1 = baud rate (wpm), arg2 = char rate (wpm),
+;
+CWXRTG:	JSR	PC,RDDEC	;get baud rate (wpm)
+	BNE	.+6		;branch if given
+	MOV	#20.,R0		;not given. default at 20 wpm
+	MOV	R0,-(SP)	;compute clock ticks
+	CLR	R0		;1154.*500./1000.
+	MOV	#577.,R1
+	DIV	@SP,R0
+	MOV	R0,PARCWS(R3)	;save for rtlg output
+	SWAB	R0		;and for tracking filter
+	MOV	R0,PARSCA(R3)
+	JSR	PC,RDDEC	;get char rate (wpm)
+	BEQ	.+4		;branch if missing
+	MOV	R0,@SP		;save char rate
+	CLR	R0		;compute clock ticks
+	MOV	#1154.,R1
+	DIV	(SP)+,R0
+	MOV	R0,PARSTC(R3)	;save it for later
+	BIS	#RTGBIT,PARMOD(R3)
+CWX65:	BIS	#TKLBIT,PARMOD(R3) ;tickle for freq load/fcc ident
+	RTS	PC
+;
+; 'crap' (crp) set c-rap escape char
+; (segment of command language interpreter)
+; Arg = escape character (octal - b*a*u*d*o*t)
+;
+CWXCRA:	JSR	PC,RDOCT	;get c-rap escape char
+	MOVB	R0,PARAPR(R3)	;and stash
+	BR	CWX65
+;
+; 'delay' (cwx) set transmit timeout
+; (segment of command language interpreter)
+; Arg1 = transmit timeout (sec)
+;
+CWXDLY:	JSR	PC,RDDEC	;get long transmit timeout (120 sec max)
+	MUL	#500.,R0	;convert to 2-ms units
+	BEQ	CWX65		;branch if trivial
+	MOV	R1,PARDLY(R3)	;stash
+	BR	CWX65
+;
+; 'ident' (cwx) set my callsign
+; (segment fo command language interpreter)
+; Arg = my callsign (11 char max)
+;
+CWXIDN:	MOV	#46,R1		;set offset of my callsign
+	BR	CWX66
+;
+; 'call' (cwx) set his callsign
+; (segment of command language interpreter)
+; Arg = his callsign (11 char max)
+;
+CWXCAL:	MOV	#32,R1		;set offset of his callsign
+CWX66:	ADD	PARPGM(R3),R1	;get his id pointer
+	MOV	#11.,R2
+11$:	JSR	PC,RDASC	;get next char
+	BEQ	12$		;branch if eor
+	MOVB	R0,(R1)+	;store in buffer
+	DEC	R2		;is this end of buffer
+	BNE	11$		;continue
+12$:	CLRB	@R1		;backstop
+	BR	CWX65
+;
+; 'scan' (cwx) start scan
+; (segment of command language interpreter)
+; Arg = scan count
+;
+CWXSCA:	JSR	PC,RDDEC	;get scan count
+	MOV	R0,PARSCN(R3)
+	BR	CWX65
+;
+; 'frequency' (cwx) load frequency register
+; (segment of command laguage interpreter)
+; Arg = last five digits of freq
+;
+CWXFRQ:	MOV	PARPGM(R3),R1	;get control program address
+	TST	(R1)+		;align to frequency data
+CWX10:	JSR	PC,RDASC	;get next character
+	BMI	CWX10A		;branch if numeric
+	BEQ	8$		;branch if eor
+	CMP	R0,#' 		;is char blank
+	BEQ	CWX10		;branch if yes
+7$:	CMP	R0,#'V		;no. is char 'v' for vhf
+	BNE	1$		;branch if no
+	CLR	@R1
+	BR	6$
+;
+1$:	CMP	R0,#'H		;is char 'h' for hf
+	BNE	2$		;branch if no
+	MOV	#XCVBIT,@R1	;yes. enable hf transceiver
+	BR	6$
+;
+2$:	ADD	#8.,R1		;non-numeric. skip to next freq
+	BR	CWX10
+;
+6$:	JSR	PC,RDASC	;get next char
+	BMI	CWX10A		;branch if numeric
+	BNE	7$		;branch if not eor
+8$:	MOV	PARPGM(R3),R1
+	BIS	#MUTBIT,2+8.(R1) ;*** temp ***
+	BR	CWX65
+;
+CWX10A:	TSTB	(R1)+		;numeric. align to frequency data
+	BIC	#^C17,R0	;format zero
+	BNE	.+6
+	BIS	#K0BIT,R0
+	BIS	#FCLBIT,R0	;include initialize flag
+	MOVB	R0,(R1)+
+	MOV	#5,R2		;set up to scan next five digits
+10$:	JSR	PC,RDASC	;get next character
+	BPL	CWX10D		;branch if non-numeric
+	BIC	#^C17,R0	;numeric. format zero
+	BNE	.+6
+	BIS	#K0BIT,R0
+	MOVB	R0,(R1)+
+	DEC	R2		;count down digit string
+	BNE	10$		;branch if more
+11$:	JSR	PC,RDASC	;no more. get next character
+	BMI	11$		;branch if numeric
+	BR	CWX10E
+;
+CWX10D:	MOVB	#K0BIT,(R1)+	;short string. store trailing zeros
+	DEC	R2
+	BNE	CWX10D
+CWX10E:	CLRB	(R1)+		;store terminator
+	BR	CWX10
+;
+; Subroutine to set receive speed
+; (called only by 'baudot' and 'search'
+;
+RCVRTY:	JSR	PC,RDDEC	;get baud rate (wpm)
+	BNE	.+6		;branch if arg
+	MOV	#60.,R0		;no arg. default
+	MOV	R0,-(SP)	;compute clock ticks
+	MOV	#2.,R0		;1.32*500.*256./wpm
+	MOV	#37888.,R1	;(2*65556+37888=168960)
+	DIV	@SP,R0
+	BVS	3$		;branch if overflow
+	CMP	R0,#5.*256.	;is value too small
+	BHIS	4$		;branch if no
+	MOV	#5.*256.,R0	;yes. set at lower limit
+4$:	CMP	R0,#BAUMAX*256.	;is value too large
+	BLOS	5$		;branch if no
+3$:	MOV	#BAUMAX*256.,R0	;yes. set at upper limit
+5$:	MOV	R0,PARSCA(R3)	;set receive baud interval
+	MUL	#15.,R0		;account for 7.5 units
+	ASR	R0
+	ROR	R1
+	MOV	R1,PARPAD(R3)	;set receive character interval
+	CLR	PARPAD+2(R3)
+	MOV	(SP)+,R0
+	RTS	PC
+	.PAGE
+;
+; 'speed' convert and print rtty speed
+; (segment of command language interpreter)
+; (no args)
+;
+CWXSPE:	MOV	PC,R0		;print "speed = "
+	ADD	#STR1-.,R0
+	.PRINT
+	MOV	#25.,R0		;compute rtty speed
+	MOV	#51200.,R1	;(168960.*10.)
+	DIV	PARSCA(R3),R0
+	JSR	PC,SPDPRT
+	MOV	PC,R0		;print "  autostart = "
+	ADD	#STR2-.,R0
+	.PRINT
+	CLR	R0
+	MOV	PARSQL(R3),R1
+	DIV	#128.,R0
+	MOV	R0,R1
+	MUL	#5.,R1
+	MOV	R1,R0
+	JSR	PC,SPDPRT
+	MOV	PC,R0		;print "  synch = "
+	ADD	#STR3-.,R0
+	.PRINT
+	MOV	PARSNC(R3),R1
+	MUL	#10.,R1
+	MOV	R1,R0
+	JSR	PC,SPDPRT
+	.TTYOU	#CR
+	.TTYOU	#LF
+	RTS	PC
+;
+; Sub to print number
+;
+SPDPRT:	MOV	R0,R1		;convert and print
+	CLR	R0
+	DIV	#1000.,R0
+	ADD	#'0,R0
+	.TTYOU
+	CLR	R0
+	DIV	#100.,R0
+	ADD	#'0,R0
+	.TTYOU
+	CLR	R0
+	DIV	#10.,R0
+	ADD	#'0,R0
+	.TTYOU
+	.TTYOU	<#'.>
+	MOV	R1,R0
+	ADD	#'0,R0
+	.TTYOU
+	RTS	PC
+;
+; 'qso" (cwx) print callsign and frequency info
+; (segment of command language interpreter)
+; (no arguments)
+;
+CWXQSO:	MOV	PARPGM(R3),R1	;get control program pointer
+	TST	(R1)+		;advance to first freq
+	MOV	PC,R0		;print header
+	ADD	#STR5-.,R0
+	.PRINT
+	JSR	PC,FREQ		;print receive frequency
+	MOV	PC,R0
+	ADD	#STR6-.,R0
+	.PRINT
+	JSR	PC,FREQ		;print transmit frequency
+	MOV	PC,R0
+	ADD	#STR7-.,R0
+	.PRINT
+	JSR	PC,FREQ		;print scan start frequency
+	MOV	PC,R0
+	ADD	#STR8-.,R0
+	.PRINT
+	MOV	PARPGM(R3),R0	;print his callsign
+	ADD	#32,R0
+	.PRINT
+	MOV	PC,R0
+	ADD	#STR9-.,R0
+	.PRINT
+	MOV	PARPGM(R3),R0	;print my callsign
+	ADD	#46,R0
+	.PRINT
+	RTS	PC
+;
+; Subroutine to print frequency/code
+; (called only by qso)
+;
+FREQ:	MOV	#'V,R0		;decode vhf (v) or hf (h)
+	BIT	#XCVBIT,@R1
+	BEQ	2$
+	MOV	#'H,R0
+2$:	.TTYOU
+	TSTB	(R1)+
+	MOV	#5,R2		;decode five bcd digits
+5$:	MOVB	(R1)+,R0
+	BIC	#^C17,R0
+	ADD	#'0,R0
+	.TTYOU
+	DEC	R2
+	BNE	5$
+	TST	(R1)+		;align pointer for later
+	RTS	PC
+	.PAGE
+	.SBTTL	DATA SEGMENT
+;
+	.PSECT	$BOSD,RO,D
+;
+; Options table
+;
+RFOPT:	.KWTAB	<CMD>,CMDHLP	;print command list
+	.KWTAB	<SHO>,CWXSHO	;print process status
+	.KWTAB	<ON>,CMDON	;set option bits
+	.KWTAB	<OFF>,CMDOFF	;clear option bits
+	.KWTAB	<ASG>,CMDASG	;assign device
+	.KWTAB	<DEV>,CMDVIC	;print device status
+	.KWTAB	<ESC>,TTXXSC	;set escape character
+	.KWTAB	<MAR>,TTXMAR	;set right margin
+	.KWTAB	<PAG>,TTXPAG	;set bottom margin
+	.KWTAB	<MOR>,CWXRTG	;set morse mode and speed
+	.KWTAB	<BAU>,CWXRTY	;set baudot mode and speed
+	.KWTAB	<MOO>,CWXMOR	;set moore mode and speed
+	.KWTAB	<SYN>,CWXSYN	;set synchronization threshold
+	.KWTAB	<SEA>,CWXSER	;set search mode
+	.KWTAB	<LIM>,CWXLIM	;set search limits
+	.KWTAB	<CRA>,CWXCRA	;set c-rap escape char
+	.KWTAB	<DEL>,CWXDLY	;set carrier-on timeout
+	.KWTAB	<IDE>,CWXIDN	;set my callsign
+	.KWTAB	<CAL>,CWXCAL	;set his callsign
+	.KWTAB	<FRE>,CWXFRQ	;load frequency register
+	.KWTAB	<SCA>,CWXSCA	;start scan
+	.KWTAB	<SPE>,CWXSPE	;print speed info
+	.KWTAB	<QSO>,CWXQSO	;print qso info
+	.KWTAB	<DEC>,CWXDEC	;print rtty decoder info
+	.KWTAB	<   >,CMDNTF	;not found
+;
+; Format strings
+;
+CWXFMT:	.ASCII	'Process type: ^K'<PARTPE>'  options: ^K'<PAROPT>'^/'
+	.ASCII	'Right margin (MARGIN): ^BI'<PARMAR>'^/'
+	.ASCII	'Bottom margin (PAGE): ^BI'<PARPAG>'^/'
+	.ASCII	'Intercept char (ESC): ^BK'<PARXSC>'^/'
+	.ASCII	'C-RAP intercept char (CRAP): ^BK'<PARAPR>'^/'
+	.ASCII	'ARQ synch char (SYN): ^K'<PARMOO>'^/'
+	.ASCII	'Transmit timeout (DELAY): ^I'<PARDLY>'^/'
+	.ASCII	'Modifier bits (BIT): ^K'<PARMOD>'^/'
+	.ASCII	'Scan limit (SCAN): ^I'<PARSCN>'^/'
+	.ASCII	'RTLG baud rate: ^I'<PARCWS>'	char rate: ^I'<PARSTC>'^/'
+	.ASCIZ	'RTTY baud rate: ^I'<PARXDS>'	char rate: ^BI'<PARSTP>
+DECFMT:	.ASCII	'RTTY decoder^/'
+	.ASCII	'  lower limit:   ^I'<PARLOW>'^/'
+	.ASCII	'  upper limit:   ^I'<PARHIG>'^/'
+	.ASCII	'  baud estimate: ^I'<PARSCA>'^/'
+	.ASCII	'  char estimate: ^I'<PARPAD>'^/'
+	.ASCII	'  carrier:       ^I'<PARDET>'	threshold: ^I'<PARCAR>'^/'
+	.ASCII	'  autostart:     ^I'<PARSQL>'	threshold: ^I'<PARTHX>'^/'
+	.ASCIZ	'  synch lock:    ^I'<PARSNC>'	threshold: ^I'<PARSYN>
+STR1:	.ASCII	'Speed = '<200>
+STR2:	.ASCII	'  Autostart = '<200>
+STR3:	.ASCII	'  Synch = '<200>
+STR5:	.ASCII	'Frequency/mode'
+	.ASCII	<CR><LF>'  receive:    '<200>
+STR6: 	.ASCII	<CR><LF>'  transmit:   '<200>
+STR7:	.ASCII	<CR><LF>'  scan start: '<200>
+STR8:	.ASCII	<CR><LF>'His callsign: '<200>
+STR9:	.ASCII	'My callsign:  '<200>
+	.EVEN
+;
+	.END
+                                                                                                                                                                                   

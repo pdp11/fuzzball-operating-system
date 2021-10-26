@@ -1,0 +1,573 @@
+	.TITLE	GATDMV	Network ddcmp driver
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn network ddcmp driver
+;
+; This module is an extension of the network processes. it transmits and
+; receives packets using the dec dmv11 network link interface in either
+; virtual-circuit or datagram (maintenance mode).
+;
+; Option bits:
+; wrmbit	initiate remote boot
+;
+; DMV11 (M8053) Option Configuration
+;
+; Note: Modem must be strapped to force DSR on in ALB mode and force RTS on
+; continuously (Vadic 4840 SWA(5) on, SWB(7) on, all others as default).
+;
+;   1   2   3   4   5   6   7   8      1   2   3   4   5   6   7   8   9  10
+; +---+---+---+---+---+---+---+---+  +---+---+---+---+---+---+---+---+---+---+
+; | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |  |   | 0 | 0 | 0 |   |   | 0 | 0 |   |   |
+; |   |   |   |   |   |   |   |   |  | 1 |   |   |   | 1 | 1 |   |   | 1 | 1 |
+; +---+---+---+---+---+---+---+---+  +---+---+---+---+---+---+---+---+---+---+
+;	E113 (up = on = 0)			E101 (up = on = 0)
+;
+; 1 - 8	  boot password (00000000)	1	mode enable (1)
+;	  				2	unit number for boot (0)
+;					3	auto answer (0)
+;					4	power-on boot enable (0)
+;					5	remote load detect enable (1)
+;					6 - 8	mode (100 - fdx pt-to-pt dmc)
+;					9	speed low (1) high (0
+;					10	EIA (1) V.35 (0)
+;
+; Note: When virtual-circuit is enabled, mode of this peer follows initial
+; start (virtual-circuit or datagram) mode of neighbor. When datagram is
+; enabled, mode of this peer is always datagram.
+;
+; GSS definitions (* preset, + inapplicable)
+;
+;	+-----------------------------------------------+
+; 15	|	  remote station errors/flags		|
+;	+-----------------------------------------------+
+; 16	|	   local station errors/flags		|
+;	+-----------------------+-----------------------+
+; 17	| global hdr bcc errors	| maint data bcc errors	|
+;	+-----------------------+-----------------------+
+; 20-22	|	   transmit header (6 octets)		|
+;	+-----------------------------------------------+
+; 23-25	|	    receive header (6 octets)		|
+;	+-----------------------------------------------+
+;
+;	+-----------------------------------------------+
+; 33 *	|	      number SYN codes xmit		|
+;	+-----------------------------------------------+
+; 34 +	|		streaming timeout		|
+;	+-----------------------------------------------+
+; 35 +	|	    	     delta T			|
+;	+-----------------------------------------------+
+; 36 +	|		     dead T			|
+;	+-----------------------------------------------+
+; 37 +	|	   	   poll delay			|
+;	+-----------------------------------------------+
+;
+; TSS definitions (* preset, + inapplicable)
+;
+;	+-----------------------+-----------------------+
+; 5	|	reserved	| recv threshold errors	|
+;	+-----------------------+-----------------------+
+; 6	| xmit threshold errors	|select threshold errors|
+;	+-----------------------+-----------------------+
+; 7	|		 data msgs xmit			|
+;	+-----------------------------------------------+
+; 10	|		 data msgs recv			|
+;	+-----------------------------------------------+
+; 11	|		select intervals		|
+;	+-----------------------------------------------+
+; 12	|	    outbound data errors/flags		|
+;	+-----------------------------------------------+
+; 13	|	    inbound data errors/flags		|
+;	+-----------------------------------------------+
+; 14	|	    local buffer errors/flags		|
+;	+-----------------------------------------------+
+; 15	|	    remote buffer errors/flags		|
+;	+-----------------------------------------------+
+; 16	|	     selection timeouts/flags		|
+;	+-----------------------+-----------------------+
+; 17	| local reply timeouts	| remote reply timeouts	|
+;	+-----------------------+-----------------------+
+;
+;	+-----------------------------------------------+
+; 30 +	|		   xmit delay			|
+;	+-----------------------+-----------------------+
+; 31 +	| Q value active state	| R value active state	|
+;	+-----------------------+-----------------------+
+; 32 +	|  Q value inact state	|  R value inact state	|
+;	+-----------------------+-----------------------+
+; 33 +	| Q value unresp state	| R value unresp state	|
+;	+-----------------------+-----------------------+
+; 34 +	| NDM -> inactive state	|  T/O -> unresp state	|
+;	+-----------------------+-----------------------+
+; 35 +	|   T/O -> dead state	|    max msg counter	|
+;	+-----------------------+-----------------------+
+; 36 *	|	   selection interval timeout		|
+;	+-----------------------------------------------+
+; 37 +	|		babbling timeout		|
+;	+-----------------------------------------------+
+;
+; External symbols
+;
+	.GLOBL	.WAIT,.SKED,.STIM,.ASYN ;supervisor services
+	.GLOBL	NETINP,NETOUT	;process initialization
+;
+; Entry symbols
+;
+	.GLOBL	DMIPAT		;input process control vector
+	.GLOBL	DMOPAT		;output process control vector
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.PSA,.GAT,.DMV,.PAT ;dcnlib definitions
+	.MCALL	.SETV,.CTIM	;dcnlib macros
+	.COM			;define common data
+	.PSA			;define process storage areas
+	.GAT			;define gateway/bridge storage areas
+	.DMV			;define dmv11 storage areas
+;
+; Module definitions
+;
+WRMBIT	=	000001		;initiate remote boot (!)
+MOPTIM	=	30000.		;dead-board timeout
+;
+; DDCMP maintenance mode commands
+;
+MM.BOO	=	006		;remote boot request
+MM.BOK	=	010		;remote boot response
+;
+; DMV11 register bit assignments
+;
+ADR	=	1		;station address
+QUESIZ	=	10.		;max csr queue size
+INTENB	=	021		;(bsel0) input/output interrupt enable
+RQI	=	200		;(bsel0) request csr
+MCLR	=	100		;(bsel1) master clear
+RDI	=	000020		;(bsel2) input response (xx0 vector)
+RDO	=	000200		;(bsel2) output response (xx4 vector)
+;
+; Command/response codes (bsel2)
+;
+RECV	=	0		;receive buffer control/response
+CTRL	=	1		;control command/response
+MODE	=	2		;mode definition command/information response
+UNUSED	=	3		;unused receive buffer response
+XMIT	=	4		;transmit buffer control/response
+NOTACK	=	6		;unused not-acked buffer response
+NOTSNT	=	7		;unused not-sent buffer response
+;
+; Request key codes (bsel6) (used with CTRL command)
+;
+NOP	=	000		;no-operation
+ESTAB	=	001		;establish tributary
+DELET	=	002		;delete tributary
+START	=	003		;request start state
+MAINT	=	004		;request maintenance state
+HALT	=	005		;request halt state
+MODEM	=	020		;read modem status
+TSS	=	100		;read/clear gss/tss
+;
+; Status bits (status)
+;
+ST.STR	=	000001		;protocol started
+ST.ACT	=	000002		;protocol ready
+ST.STX	=	000004		;statistics cycle
+ST.RST	=	000010		;protocol reset
+ST.RQR	=	000020		;receive request
+ST.RQX	=	000040		;transmit request
+ST.PDR	=	000100		;receive pending
+ST.PDX	=	000200		;transmit pending
+ST.MOP	=	000400		;datagram (mop) mode
+;
+; Parameter area extension (par)
+;
+.	=	DMSEND
+DMRBLK:	.BLKW	3		;receive request block
+DMXBLK:	.BLKW	3		;transmit request block
+QUEPUT:	.BLKW	1		;input queue put pointer
+QUEGET:	.BLKW	1		;input queue get pointer
+QUEBGN:	.BLKW	1		;beginning of queue
+QUEEND:	.BLKW	1		;end of queue
+QUEUE:	.BLKW	3*QUESIZ	;input queue
+;
+; Process save area extension (dmr)
+;
+.	=	GATENR
+DMRESP:	.BLKW	3		;last response block
+	.BLKW	REGEND/2+NTISTK	;process stack
+DMREND	=	.		;end of dmr extension
+;
+; Process save area extension (dmx)
+;
+.	=	GATENX
+	.BLKW	REGEND/2+NTOSTK	;process stack
+DMXEND	=	.		;end of dmx extension
+;
+; DMV11 device register block (dev)
+;
+.	=	0
+BSEL0:	.BLKB	1		;request/enable register
+BSEL1:	.BLKB	1		;microprocessor register
+BSEL2:	.BLKW	1		;tributary address/command register
+BSEL4:	.BLKW	1		;bus address register
+BSEL6:	.BLKW	1		;character count register
+	.PAGE
+;
+; Procedure segment
+;
+; Supervisor-state procedure
+; Dsects: r2 = dev, r3 = par, r4 = reg, r5 = psa
+;
+; Note: calling process sets r0 = byte count, r1 = starting address.
+; At completion of transfer r0 = byte count.
+;
+	.PSECT	$KERI,RO,I
+;
+; Initialize
+;
+DMRINI:	CLR	STATUS(R3)	;reset status bits
+	MOV	R3,R1		;set queue pointers
+	ADD	#QUEUE,R1
+	MOV	R1,QUEPUT(R3)
+	MOV	R1,QUEGET(R3)
+	MOV	R1,QUEBGN(R3)
+	ADD	#6*QUESIZ,R1
+	MOV	R1,QUEEND(R3)
+	MOV	#SEQSTA,DMSPTR(R3)
+	MOVB	#MCLR,BSEL1(R2)	;initialize microprocessor
+	ADD	#4,R0		;allocate csr response vector
+DMXINI:	MOV	#INT+EXTBAS,R1	;allocate csr request vector
+	.SETV
+	RTS	PC
+;
+; Start block transfer input
+;
+DMRSIO:	MOV	R1,DMRBLK(R3)	;construct read request block
+	MOV	R0,DMRBLK+2(R3)
+	MOV	#ADR*400+RECV,DMRBLK+4(R3)
+	BIS	#ST.PDR+ST.RQR,STATUS(R3) ;indicate request
+	JSR	PC,SVCREQ
+	JMP	.WAIT
+;
+; Start block transfer output
+;
+DMXSIO:	BIT	#WRMBIT,PAROPT(R3) ;is reboot request pending
+	BEQ	1$		;branch if no
+	JSR	PC,SVCRST	;yes. reset protocol
+	MOV	#WORM,R1	;send worm instead
+	MOVB	(R1)+,R0
+1$:	MOV	R1,DMXBLK(R3)	;construct write request block
+	MOV	R0,DMXBLK+2(R3)
+	MOV	#ADR*400+XMIT,DMXBLK+4(R3)
+	BIS	#ST.PDX+ST.RQX,STATUS(R3) ;indicate request
+	JSR	PC,SVCREQ
+	JSR	PC,.WAIT	;start output timeout
+	MOV	#MOPTIM,R0
+	SUB	R0,RESTIM(R5)
+	JMP	.STIM
+;
+; Asynchronous interrupt output
+;
+DMXASY:	TSTB	PSASTS(R5)	;is process running
+	BMI	3$		;branch if yes
+	TSTB	R0		;no. is this timer interrupt
+	BEQ	1$		;branch if yes
+	.CTIM			;no. clear output timeout
+	ADD	R0,RESTIM(R5)
+	BR	2$
+;
+1$:	JSR	PC,SVCRST	;timeout. reset protocol
+	BIS	#1,REGPS(R4)	;indicate output error
+2$:	BIC	#ST.PDX+ST.RQX,STATUS(R3) ;set watchdog idle
+	MOV	DMSPTR(R3),R0	;request statistics
+	JSR	PC,ENQUE
+	JMP	.SKED
+;
+3$:	RTS	PC
+;
+; Csr request interrupt
+;
+DMXINT:	MOV	QUEGET(R3),R1	;initialize csr registers
+	MOV	(R1)+,BSEL4(R2)	;bus address
+	MOV	(R1)+,BSEL6(R2)	;byte count
+	MOV	(R1)+,R0	;command, address
+	CMP	R1,QUEEND(R3)	;update get pointer
+	BLO	1$
+	MOV	QUEBGN(R3),R1
+1$:	MOV	R1,QUEGET(R3)
+	CMP	R1,QUEPUT(R3)	;is queue empty
+	BNE	2$		;branch if no
+	BICB	#RQI,BSEL0(R2)	;yes. clear request flag
+2$:	MOV	R0,BSEL2(R2)	;restart microprocessor
+DMXRSX:	RTS	PC
+;
+; Csr response interrupt
+;
+DMRINT:	MOV	BSEL4(R2),DMRESP(R5) ;save response
+	MOV	BSEL6(R2),DMRESP+2(R5)
+	MOV	BSEL2(R2),R0
+	MOV	R0,DMRESP+4(R5)
+	BIC	#RDO,BSEL2(R2)	;release csr
+	BIC	#^C7,R0		;extract reply code
+	ASL	R0
+	ADD	R0,PC		;pole vault
+	BR	DMRECV		;0 receive buffer response
+	BR	DMRCTL		;1 control response
+	BR	DMRINF		;2 information response
+	BR	DMRRST		;3 unused receive buffer response
+	BR	DMRXMT		;4 transmit buffer response
+	BR	.		;5 invalid
+	BR	DMRXMT		;6 unused not-acked buffer response
+	BR	DMRXMT		;7 unused not-sent buffer response
+;
+DMRRST:	TSTB	PSASTS(R5)	;is process running
+	BMI	DMXRSX		;branch if yes
+	CLR	@R4		;no. zero byte count
+	BIS	#1,REGPS(R4)	;indicate input error
+	BR	DMR90
+;
+DMRECV:	TSTB	PSASTS(R5)	;is process running
+	BMI	DMXRSX		;branch if yes
+	MOV	DMRESP+2(R5),@R4 ;no. insert byte count
+	BIT	#ST.MOP,STATUS(R3) ;is this remote boot response	
+	BEQ	DMR90		;branch if no
+	CMPB	@REGR1(R4),#MM.BOK
+	BNE	DMR90		;branch if no
+	BIC	#WRMBIT,PAROPT(R3) ;yes. (gawd, don't do that again)
+	JSR	PC,SVCRST	;reset protocol
+DMR90:	BIC	#ST.PDR+ST.RQR,STATUS(R3)
+	MOV	DMSPTR(R3),R0	;request statistics
+	JSR	PC,ENQUE
+	JMP	.SKED
+;
+DMRXMT:	MOVB	PARPID(R3),R1	;buffer response. signal output side
+	MOV	#ASY,R0
+	JMP	.ASYN
+;
+DMRINF:	MOVB	DMRESP+2(R5),R0	;fetch reply code
+	CMPB	R0,#20		;are all buffers cleaned out
+	BEQ	5$		;branch if yes
+	BHI	1$		;branch if gss/tss
+	MOV	SEQMOD+2,R0	;modem. cheat on code
+1$:	MOV	DMSPTR(R3),R1	;gss/tss/modem status. get statistics pointer
+	TST	(R1)+
+	CMP	(R1)+,R0	;is reply expected
+	BNE	2$		;branch if no
+	TST	(R1)+		;yes. update tally
+	MOV	(R1)+,R0
+	ADD	R3,R0
+	JSR	PC,@(R1)+
+	ADD	#2*5,DMSPTR(R3)	;update statistics pointer
+	CMP	DMSPTR(R3),#SEQEND
+	BLO	3$		;branch if more to come
+	MOV	#SEQSTA,DMSPTR(R3) ;end of statistics cycle. roll over pointer
+	INC	CYCLES(R3)
+	BIT	#ST.STX,STATUS(R3) ;is shutdown pending
+	BEQ	2$		;branch if no
+	BIC	#ST.STX+ST.MOP+ST.ACT,STATUS(R3) ;yes. halt protocol
+	MOV	#SEQHLT,R0
+	JSR	PC,ENQUE
+2$:	RTS	PC
+;
+3$:	BIT	#ST.STX,STATUS(R3) ;is shutdown pending
+	BEQ	4$		;branch if no
+	MOV	DMSPTR(R3),R0	;yes. continue statistics cycle
+	JSR	PC,ENQUE
+4$:	RTS	PC
+;
+5$:	BIC	#^C<ST.PDR+ST.PDX+ST.MOP>,STATUS(R3) ;the fat lady has sung
+	BIT	#ST.PDR,STATUS(R3) ;is receive pending
+	BEQ	6$		;branch if no
+	BIS	#ST.RQR,STATUS(R3) ;yes. initialize request
+6$:	MOV	QUEGET(R3),QUEPUT(R3)
+	MOVB	#MCLR,BSEL1(R2)	;initialize microprocessor
+	JSR	PC,SVCREQ
+	RTS	PC
+;
+DMRCTL:	MOVB	DMRESP+2(R5),R0	;is control response in range
+	CMPB	R0,#30
+	BHI	4$		;branch if no
+	MOVB	R0,R1		;yes. log responses
+	ADD	R3,R1
+	INC	ERRLOG(R1)
+	CMPB	R0,#12		;is this datagram (mop) request
+	BEQ	1$		;branch if yes
+	CMPB	R0,#14
+	BNE	2$		;branch if no
+1$:	BIS	#ST.MOP,STATUS(R3) ;yes. force restart in mop
+	BR	5$
+;
+2$:	CMPB	R0,#16		;is this start request
+	BNE	3$		;branch if no
+	BIC	#ST.MOP,STATUS(R3) ;yes. force restart	
+	BR	5$
+;
+3$:	CMPB	R0,#24		;is protocol ready
+	BNE	5$		;branch if no
+	BIS	#ST.ACT,STATUS(R3) ;yes. start protocol
+	JSR	PC,SVCREQ
+	RTS	PC
+;
+4$:	MOV	DMRESP+2(R5),DMSCTL(R3) ;save latest response code
+	INC	DMSCTL+2(R3)
+5$:	JSR	PC,SVCRST	;reset protocol
+	RTS	PC		;convenient rathole
+;
+; Subroutine to reset link
+;
+SVCRST:	BIT	#ST.STR,STATUS(R3) ;is protocol started
+	BEQ	1$		;branch if no
+	BIT	#ST.RST,STATUS(R3) ;yes. is protocol reset
+	BNE	1$		;branch if yes
+	BIS	#ST.STX+ST.RST,STATUS(R3) ;yes. wait for clean buffers
+	MOV	#SEQSTA,DMSPTR(R3) ;start statistics cycle
+	MOV	DMSPTR(R3),R0
+	JSR	PC,ENQUE
+1$:	JSR	PC,SVCREQ	;start link
+	RTS	PC
+;
+; Subroutine to start link
+;
+SVCREQ:	BIT	#ST.RST+ST.ACT+ST.STR,STATUS(R3) ;is protocol running
+	BNE	2$		;branch if yes
+	TSTB	BSEL1(R2)	;no. is microprocessor running
+	BPL	2$		;branch if no
+	BIS	#ST.STR,STATUS(R3) ;yes. initialize protocol
+	MOV	#SEQINI,R0
+	JSR	PC,ENQUE
+	MOV	#SEQEST,R0
+	JSR	PC,ENQUE
+	MOV	#ADR*400+CTRL,-(SP) ;set selection interval
+	MOV	#236,-(SP)
+	MOV	PARTRY(R3),-(SP)
+	ASL	@SP		;(2x base)
+	MOV	SP,R0
+	JSR	PC,ENQUE
+	ADD	#3*2,SP
+	MOV	#SEQSTR,R0	;assume virtual-circuit mode
+	BIT	#WRMBIT,PAROPT(R3) ;is datagram mode specified
+	BEQ	1$		;branch if no
+	BIS	#ST.MOP+ST.ACT,STATUS(R3) ;yes. begin collecting fares
+	MOV	#SEQRAW,R0
+1$:	JSR	PC,ENQUE
+2$:	BIT	#ST.ACT,STATUS(R3) ;is protocol ready
+	BEQ	4$		;branch if no
+	BIT	#ST.RQR,STATUS(R3) ;yes. is read pending
+	BEQ	3$		;branch if no
+	BIC	#ST.RQR,STATUS(R3) ;yes. enqueue block
+	MOV	R3,R0
+	ADD	#DMRBLK,R0
+	JSR	PC,ENQUE
+3$:	BIT	#ST.RQX,STATUS(R3) ;is write pending
+	BEQ	4$		;branch if no
+	BIC	#ST.RQX,STATUS(R3) ;yes. enqueue block
+	MOV	R3,R0
+	ADD	#DMXBLK,R0
+	JSR	PC,ENQUE
+4$:	RTS	PC
+;
+; Subroutine to enqueue request
+; R0 = request block pointer, returns updated r0
+;
+ENQUE:	MOV	QUEPUT(R3),R1	;copy request block
+	MOV	(R0)+,(R1)+	;bsel4
+	MOV	(R0)+,(R1)+	;bsel6
+	MOV	(R0)+,(R1)+	;bsel2
+	BIT	#ST.STR,STATUS(R3) ;is protocol started
+	BEQ	2$		;branch if no
+	CMP	R1,QUEEND(R3)	;yes. update queue pointer
+	BLO	1$
+	MOV	QUEBGN(R3),R1
+1$:	MOV	R1,QUEPUT(R3)
+	BISB	#RQI+INTENB,BSEL0(R2) ;request csr
+2$:	RTS	PC
+;
+; Statistics interpreter subroutines
+; r0 = tally pointer
+;
+ACCFLG:	BISB	DMRESP+1(R5),(R0)+ ;remember flags
+	TSTB	(R0)+
+	CLR	R1		;accumulate tally
+	BISB	DMRESP(R5),R1
+	ADD	R1,@R0
+	RTS	PC
+;
+ACCBYT:	CLR	R1		;accumulate low-order tally
+	BISB	DMRESP(R5),R1
+	ADD	R1,(R0)+
+	BR	ACC20
+;
+ACCSUM:	CLR	R1		;accumulate low-order tally
+	BISB	DMRESP(R5),R1
+	ADD	R1,@R0
+ACC20:	CLR	R1		;accumulate high-order tally
+	BISB	DMRESP+1(R5),R1
+	ADD	R1,@R0
+	RTS	PC
+;
+ACCMOD:	CMP	DMRESP(R5),@R0	;has modem status changed
+	BEQ	1$		;branch if no
+	MOV	DMRESP(R5),(R0)+ ;yes. save modem status
+	INC	@R0
+1$:	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$KERD,RO,D
+;
+; Process headers
+;
+DMIPAT:	.PAT	DMREND,NETINP,PRI4,<0,0,DMRINI,DMRSIO,DMRINT>
+DMOPAT:	.PAT	DMXEND,NETOUT,PRI3,<0,DMXASY,DMXINI,DMXSIO,DMXINT,SVCREQ>
+;
+; DMV11 command sequences
+;
+SEQSTA:	.WORD	0,TSS+12	;outbound data errors\flags
+	.BYTE	CTRL,ADR
+	.WORD	DMSDAO,ACCFLG
+	.WORD	0,TSS+13	;inbound data errors\flags
+	.BYTE	CTRL,ADR
+	.WORD	DMSDAI,ACCFLG
+	.WORD	0,TSS+14	;local buffer errors\flags
+	.BYTE	CTRL,ADR
+	.WORD	DMSBFL,ACCFLG
+	.WORD	0,TSS+15	;remote buffer errors\flags
+	.BYTE	CTRL,ADR
+	.WORD	DMSBFR,ACCFLG
+	.WORD	0,TSS+17	;local/remote timeouts
+	.BYTE	CTRL,ADR
+	.WORD	DMSTOL,ACCBYT
+	.WORD	0,TSS+15	;outbound station errors\flags
+	.BYTE	CTRL,0
+	.WORD	DMSGSO,ACCFLG
+	.WORD	0,TSS+16	;inbound station errors\flags
+	.BYTE	CTRL,0
+	.WORD	DMSGSI,ACCFLG
+	.WORD	0,TSS+17	;header checksum errors
+	.BYTE	CTRL,0
+	.WORD	DMSGCK,ACCSUM
+SEQMOD:	.WORD	0,MODEM		;modem status
+	.BYTE	CTRL,0
+	.WORD	DMSINF,ACCMOD
+SEQEND	=	.		;end of table
+;
+SEQINI:	.WORD	0,1		;set mode
+	.BYTE	MODE,0
+;
+SEQEST:	.WORD	0,ESTAB		;enable station
+	.BYTE	CTRL,ADR
+;
+SEQRAW:	.WORD	0,MAINT		;request maintenance mode
+	.BYTE	CTRL,ADR
+;
+SEQSTR:	.WORD	0,START		;request data mode
+	.BYTE	CTRL,ADR
+;
+SEQHLT:	.WORD	0,HALT		;stop station
+	.BYTE	CTRL,ADR
+;
+WORM:	.BYTE	5,MM.BOO,0,0,0,0 ;ddcmp remote boot request
+	.EVEN
+;
+	.END
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                     

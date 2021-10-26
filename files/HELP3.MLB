@@ -1,0 +1,1327 @@
+.MACRO	SRCCOM
+SRCCOM		Source compare program
+
+  SYNTAX
+	SRCCOM                  ;invoke SRCCOM.SAV
+	*[listfile][,SLPfile]=oldfile,newfile[/options]
+	*...                    ;* is CSI prompt
+	*^Z                     ;exit to CLI
+
+  SEMANTICS
+	See the RT-11 System User's Guide
+
+  OPTIONS
+	/A      Specifies audit trail for SLP command file
+	/B      Compares blank lines
+	/C      Ingnores comments and spacing
+	/D      Copies newfile to listfile and inserts change bars and bullets
+		at left margin to mark differences
+	/F      Includes formfeeds in output file
+	/L:n    Defines number of lines that must agree to constitute a match;
+		n can be 1 to 310;  defalut is 3
+	/S      Ignores spaces and tabs when comparing
+	/V:i:d  Defines characters to use as markers for inserts and deletions
+		in place of change bars and bullets;  use with /D;  i and d
+		are the numeric for the ASCII characters to use
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	SYSMGR
+SYSMGR		Maintain login file
+
+  SYNTAX
+	sysgmr                  ;entered by the user
+	SYSMGR-Login File Manager (6-17-83) type ?  for help
+	*
+
+  SEMANTICS
+	The SYSMGR command is used to create, update, display and otherwise
+	maintain the standard login file.  See also the help information for
+	the LOGIN and LOGOUT commands for additional discussion of the login
+	file and its use.
+
+  OPTIONS
+	After typing the SYSMGR command, the host responds with the herald
+	shown above and then prompts for user input by printing an asterisk.
+	The acceptable input commands to SYSMGR are:
+
+	?       - prints a listing of the commands,
+	create  - creates a login file, if none already exists,
+	delete  - delete a user name from the login file,
+	display - display all current login file entries,
+	enter   - make a new entry to the login file,
+	quit    - return to the monitor and update the login file, if
+	necessary.
+
+  EXAMPLES
+	.sysmgr
+	SYSMGR-Login File Manager (6-17-83) Type ?  for help
+	*?
+	?SYSMGR-I-The following commands are available:
+	create -create a standard login file if none exists
+	delete -delete user name from login file
+	display-display current login file entries
+	enter -make new entries to the login file
+	quit -quit executing this program
+	*create
+	?SYSMGR-W-Standard login file already exists
+	*delete
+	Username:  smith
+	?SYSMGR-W-Specified User (SMITH) not in Login File
+	*display
+	User            Private Volume
+	----            --------------
+	JONES           DL0:
+	GROSS           DL0:
+	*delete
+	Username:  gross
+	*enter
+	Username:  gross
+	Password:
+	Private Volume:  dl3:
+	*display
+	User            Private Volume
+	----            --------------
+	JONES           DL0:
+	GROSS           DL3:
+	*quit
+	.                                       ;return to monitor
+.ENDM
+.MACRO	SUNFAX
+SUNFAX		Bitmap to facsimile conversion
+
+  SYNTAX
+	SUNFAX			;invoke SUNFAX.SAV
+	*<outfilespec>=<infilespec>[/options]
+	*...                    ;* is CSI prompt
+	*^Z                     ;exit to CLI
+
+  SEMANTICS
+	This program converts a file in Sun bitmap format to Dacom
+	(compressed) facsimile format. The image is scaled by default to
+	display the maximum size without clipping height or width, but
+	can be expanded to maximum height using the /P option or maximum
+	width using the /L option.
+
+  OPTIONS
+	/I      Invert image (reverse black/white)
+	/L	Force landscape mode
+	/R:n	Set resolution (0: 200 ppi (default), 1: 100 ppi, 2: 67 ppi)
+	/P	Force portrait mode
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	TELSRV
+TELSRV		Virtual terminal server program
+
+  SYNTAX
+	See RFC-854.
+
+  SEMANTICS
+	In the standard Fuzzball host configurations at least one user process
+	is dedicated to TELNET service, although in some configurations
+	there may be more than one of these dynamically managed by the Log
+	Process and shared between TELNET and spooling services. The TELNET
+	Server itself contains routines to respond to initial connections,
+	determine the service requested and then call the required service
+	module.
+
+	Services are specified by the TCP port number indicated in the initial
+	connection request.  Some functions are provided by the TELNET Server
+	itself.  In most configurations the TELNET Server and service modules
+	are dynamically loaded and share the same virtual address space.
+
+	One of the service modules is the Command Language Interpreter (CLI),
+	which interprets commands and provides a functionality similar to that
+	provided by the RT-11 Keyboard Monitor.  The CLI can be used to load,
+	debug and run RT-11 system and application programs, including the
+	various network utility programs, such as the TELNET User, FTP User
+	and others.
+
+	In BOS system configurations without hardware relocation features the
+	TELNET Server is ordinarily enabled in the Background user process.
+	So long as a connection is not open to a foreign host, this process
+	can be used by a local terminal as if the TELNET Server were not
+	present.  When a connection request is received, characters output by
+	the process are sent to the remote user and not to the local terminal.
+
+	Data are passed between the user and server programs in 8-bit bytes
+	without modification or interpretation.  If TELNET negotiations are
+	active, the TELNET interpret-as-control (IAC) character is used to
+	initiate TELNET command sequences.  If an IAC is followed immediately
+	by a second one, a single IAC is delivered to the program.
+
+	TELNET negotiations (RFC-855) are active for all servers except those
+	specified below. The server replies to all DO commands with a WONT,
+	except in the case of ECHO (RFC-857).  In this case the server replies
+	WONT ECHO if the user program is in line (edit) mode and WILL ECHO if
+	the user program is in character (non-edit) mode, as indicated by the
+	TTSPC$ bit (010000) in the Job Status Word.  The server replies to all
+	DONT commands with WONT and ignores all WILL and WONT commands.
+
+	The server will send an unsolicited WILL ECHO if the TTSPC$ bit
+	(010000) is changed from zero to one and WONT ECHO if this bit is
+	changed from one to zero.  This feature provides a useful way to hide
+	passwords and to run interactive programs such as EDIT and KED that
+	switch back and forth between line and character modes.
+
+  OPTIONS
+   DAYTIME (13) Time and date
+	Provides RFC-867 time and date (in RT-11 format) by executing the
+	implied CLI command DAYTIME.
+   ECHO (7) Remote loopback
+	Echoes all received characters to the sender as specified by RFC-862.
+   FTP (21) File transfer
+	Invokes the FTP Server program by executing the implied CLI command
+	RUN FTPSRV.  See HELP information on FTP and FTPSRV.
+   MPM (45) Multimedia mail transfer
+	Invokes the MPM Server program by executing the implied CLI command
+	RUN MPMSRV. See HELP information on MMM and MPMSRV.
+   NAME (42) Name server
+	Invokes name-server program by executing the implied command RUN NAME.
+   NETSTAT (15) Who-is-up
+	Provides information on which hosts are up by executing the implied
+	CLI command SET HOST HOST.
+   NIFTP (47) File transfer
+	Invokes NIFTP User program by executing the implied CLI command RUN
+	NIFTP.  See HELP information on NIFTP.
+   QOD (17) Qoute-of-the-day
+	Provides a scurrilious who-are-you function compatible with RFC-865.
+   SINK (9) Discard
+	Discards all received characters as specified by RFC-863.
+   SMTP (25) Mail transfer
+	Invokes the SMTP Server program by executing the implied CLI command
+	RUN SMPSRV.  See HELP information on SMTP and SMPSRV.
+   TALK (87) Terminal intercom
+	The server first produces a prompt message inviting a device and mode
+	specification.  The user enters first the logical device name (default
+	is TT) and then the mode (ASCII or IMAGE).  The server then switches
+	to that device and enters transparent mode.  Note that the mode
+	specification applies only to the device itself, since data are
+	transferred between the user and server programs as 8-bit
+	uninterpreted bytes.
+   TELNET (23) Virtual terminal
+	Provides RT-11 services described in HELP information.
+   TEST (19) Character generator
+	Generates a test message continuously until the connection is closed
+	by the remote host as specified by RFC-864.  Executes the implied CLI
+	command TEST 1000.
+   TIME (37) Time server
+	Provides time in seconds from 0000 UT 1 January 1900 as specified by
+	RFC-868.
+   TN (107) Virtual terminal
+	Invokes TELNET User program by executing the implied CLI command RUN
+	TN.  See HELP information on TN.
+   VCG (127) Peritek VCG display
+	Invokes Peritek User program by executing the implied CLI command RUN
+	VCG.
+
+  EXAMPLES
+	See RFC-854.
+.ENDM
+.MACRO	TERMINAL
+TERMINAL	Terminal Process commands
+
+  SYNTAX
+	SET <devname> <command> <argument> ;CLI command
+
+  SEMANTICS
+	See USER process commands and GENERAL help information
+
+	The terminal process is the interface between the system and the
+	operator.  This process, suitably configured, can also be used for
+	line printer support and for connection to other machines.  Each
+	process (actually a pair of cooperating processes which appear as a
+	single unit) controls one terminal and is capable of routing input
+	data to one of four destination processes as controlled by escape
+	sequences.
+
+	A terminal process operates in either ASCII or IMAGE mode.  In IMAGE
+	mode all bytes are copied between system buffers and the terminal
+	unmodified and uninterpreted.  In addition, a terminal process can be
+	configured either to emulate a DCE for a connected terminal or to
+	emulate a DTE for a connected machine.  In DTE mode the byte is
+	discarded unless the device is in use unless a busy bit is set in the
+	options word).  In ASCII mode the DC1 and DC3 characters are used to
+	control both input and and output flows.
+
+	In ASCII mode on input bit 8 (the parity bit) is stripped.  In DTE
+	mode all bytes received from the device are placed unchanged in the
+	input buffer.  In DCE mode a LF is inserted following a CR.  In
+	addition, an escape code (normally defaulted to DLE) causes the
+	low-order two bits to select channels 0-3 as defined by the
+	command-language interpreter.  Other control functions are interpreted
+	as follows:
+
+	DC3     stop output
+	DC1     start output
+	ETX     interrupt process
+
+	DC1 and DC3 are not included in the input buffer.  ETX is included in
+	the buffer.  If the input buffer is over 3/4 full, DC3 is sent by the
+	output side and the driver enters the flow-control condition.  In this
+	condition if the input buffer is under 1/4 full, DC1 is sent by the
+	output side and the driver leaves the flow-control condition.  If the
+	input buffer overflows, BEL is sent by the output side.
+
+	In ASCII mode on output the parity bit is assumed to have been
+	stripped by the sender.  In this mode an EOT character will generate a
+	long-space (break) condition.  In DTE mode an LF immediately following
+	a CR is discarded and all other bytes are transmitted unaltered to the
+	device.  In DCE mode the byte is interpreted as follows:
+
+	BS      decrement column counter
+	HT      fill SP to the next tab stop (fixed at every eight columns)
+	LF      advance line counter by one
+	FF      reset line counter
+	CR      reset column counter
+
+	Codes 000-037 and 177 (other than the above) do not affect column or
+	line counters.  Codes 040-176 advance column counter by one.  If the
+	right margin is exceeded a CR-LF sequence is inserted preceeding the
+	byte. If the bottom margin is exceeded a FF is inserted following the
+	byte.
+
+  OPTIONS
+   ASG <logname> <filespec>
+	If <filespec> is a physical direct-access device, amend the device
+	table so as to associate the logical name <logname> with this device.
+	If <filespec> is a file, associate the logical name <logname> with a
+	virtual-volume file of that name (see VOLUMES help information).  If
+	<filespec> is missing remove the <logname> entry from the the device
+	table.  Note that the format of this command is different from the
+	RT-11 ASSIGN command.
+   CMD
+	List the available commands.  Additional information is available with
+	the HELP program.
+   DELAY <timeout>
+	Set the CR delay to <timeout> (milliseconds).  The default is zero (no
+	delay).
+   ESCAPE <code>
+	Set the escape character code to <code>, which is an octal integer in
+	the range 000-177.  The default is 020 (^P).
+   DEVICE <logname>
+	Display a formatted summary of the device table, which establishes the
+	association between the logical and physical names of each process
+	together with additional data.  If <logname> is a valid logical name,
+	the data associated with that process is displayed.  If <logname> is
+	defaulted the entire table is displayed.
+   MARGIN <column>
+	Set the right-margin to <column>.  The default is zero (no margin).
+   OFF <code>
+	The ON and OFF commands can be used to set and clear bits in the
+	options word of the parameter area associated with the process.  The
+	ON command sets the option bits corresponding to the one bits of
+	<code> (which is an octal value) to one, while the OFF command sets
+	these bits to to zero.  Options for the terminal process are as
+	follows:
+
+	0       DCE/DTE mode (OFF:  DCE, ON:  DTE)
+	1       ASCII/IMAGE mode (OFF:  ASCII, ON:  IMAGE)
+	2       EOT-break (OFF:  DL11, ON:  DZ11)
+	15      Device enable (OFF:  free, ON:  in use)
+
+   ON <code>
+   PAGE <line>
+	Set the bottom margin to <line>.  The default is zero (no margin).
+   SHOW
+	Display a formatted summary of various quantitites of interest.
+   SPEED <code>
+	Set the device-register bits for speed selection to <code>.  The
+	interpretation of <code> is device-specific.
+
+  EXAMPLES
+	.set tt0 cmd
+	Commands are:
+	CMD   SHO   ON   OFF   ASG   DEV   ESC   MAR
+	PAG   SPE   DEL
+
+	.set tt0 show
+	Process type:  000004 options:  000000
+	Right margin (MARGIN):  0
+	Bottom margin (PAGE):  0
+	Intercept char (ESC):  020
+	Return delay (DELAY):  0
+	Data rate (SPEED):  100
+	Special bits (TAPE):  000
+.ENDM
+.MACRO	TIME
+TIME		Setting system date and time
+
+  SYNTAX
+	SETCLK          ;set system time and date from local reference
+	UDP		;set system time and date from another host
+	RTCLOK          ;set TCU-50 local reference from system time and date
+
+  SEMANTICS
+	Network hosts normally track the network time and date from a
+	selected virtual host equipped with a precision time reference such
+	as a radio clock synchronized to NBS broadcast standards.  A Digital
+	Pathways TCU-50 Timing Control Unit can be used as a local time and
+	date reference that retains this information when power is turned off
+	or when a radio clock is not available.  Note that neither the TCU-50
+	nor the radio clocks provide the year, so this must be specified
+	either in the RT-11 startup command file, by a CLI command prior to
+	running the SETCLK program or by the UDP program.
+
+	The SETCLK program can be used to set the time and date while running
+	either the RT-11 or BOS/VOS systems.  If set while running RT-11, the
+	time and date are passed to BOS/VOS during the initialization process.
+	This program sets the system date and time from either the Digital
+	Pathways TCU-50 digital clock or one of three NBS radio clocks:
+	Spectracom Model 8170 (WWVB), Truetime Model 468-DC (GOES satellite)
+	or Heath Model GC-1000 (WWV/WWVH).
+
+	The TCU-50 is a backplane module with integral backup batteries.  The
+	radio clocks are attached via a serial asynchronous line interface
+	which is used to send poll messages and receive responses in the
+	following format:
+
+	Spectracom clock:	<cr><lf> q ddd hh:mm:ss  tz=zz<cr><lf>
+	Truetime clock:		<ctrl-a>ddd:hh:mm:ssq<cr><lf>
+	Heath clock:		hh:mm:ss.f     dd/mm/yr<cr>
+
+	where ddd is day of year, hh:mm:ss is time of day, f is tenths of
+	seconds, and dd/mm/yr is conventional (US) date.  The tz=zz field is
+	not used.  In the Spectracom clock, q is " " for in-synch or "?" for
+	off-synch and zz is the time zone (always 00 for ut).  In the Truetime
+	clock, q is a precision estimate in milliseconds and coded as follows:
+	"?" +-500 msec, "#" +-50 msec, "*" +-5 msec, "." +-1 msec, <sp> less
+	than 1 msec.  In the Heath clock, the hh:mm:ss.f field is displayed as
+	0?:??:??.? before initial synchronization.
+
+	SETCLK must be conditionally assembled to select one of the radio
+	clocks.  The program will try the TCU-50 first.  If not found at the
+	assigned register address, it will try the selected radio clock at its
+	assigned address.  If even that is not found, the program will
+	complain and the time and date must be entered manually or using the
+	UDP program.
+
+	The UDP program, which is also used as the network time server and
+	name server, can be used to set the time and date from a another host.
+	To do this, run the UDP program and enter a OUT command, which
+	directs terminal output to the local terminal.  Then enter a TIME
+	command with an argument consisting of the name of a host known to
+	provide reliable time (e.g. DCN1).  When a response appears, enter a
+	SET command to set the local time and date to that of the host
+	specified.
+
+	The RTCLOK program can be used to set the TCU-50 from the system time
+	and date, either under RT-11 or BOS/VOS.  There are no arguments for
+	this program.
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	TN
+TN		Virtual terminal user program
+
+  SYNTAX
+	TN                      ;invoke TN.SAV
+	...
+	QUIT                    ;exit to CLI
+				;or
+	TN <hostname> <port>    ;invoke TN.SAV and execute an
+				;implied CONNECT <hostname> <port>
+	...                     ;command
+	QUIT                    ;exit to CLI
+
+  SEMANTICS
+	The virtual-terminal protocol (TELNET) functions are provided using
+	two programs, the TELNET User and the TELNET Server.  The TELNET User
+	runs in interactive mode on a Fuzzball host.  The TELNET Server
+	normally resides at some other host and is activated upon receipt of
+	a TCP connection on port 23.  The TELNET User is an interface to the
+	Command Language Interpreter (CLI) and RT-11 Emulator and provides
+	the same set of functions available to users at local terminals. These
+	programs operate with the protocol described in RFC-854 and can be
+	used with other implementations conforming to this protocol.
+
+	The TELNET User operates in one of two modes:  command mode, in which
+	commands are interpreted from the local terminal and executed on the
+	local host, and transparent mode, in which all characters from the
+	local terminal are transmitted directly to the remote server.  In
+	either mode characters are transmitted directly from the remote server
+	to the local terminal along with responses and other data that may be
+	produced by the TELNET User itself.
+
+	Operation is in the command mode until a CONNECT command is executed,
+	following with operation continues in the transparent mode.  If the
+	connection is closed by the remote server, operation resumes in the
+	command mode.  In addition, a limited set of commands can be executed
+	while in the transparent mode by means of an escape sequence, which
+	begins with an escape character code which is initially set to 037
+	(produced by the control-~ function on DEC keyboards) and can be
+	changed by the ESCAPE command.  Following the escape character must be
+	a single-character command interpreted as follows:
+
+	C       Close the connection and return to command mode
+	I       Send an interrupt sequence to the remote server
+	L	Start boot-load followed by send-file transfer (LINK and TALK
+		only)
+	Q	Start send-file transfer
+	S	Stop send-file transfer
+	X       Resume command mode (use the TELNET command to return to
+		transparent mode)
+	control-~ Transmit the escape character itself to the remote server
+
+	Data are passed between the user and server programs in 8-bit bytes
+	without modification or interpretation.  If TELNET negotiations are
+	active, the TELNET interpret-as-control (IAC) character is used to
+	initiate TELNET command sequences.  If an IAC is followed immediately
+	by a second one, a single IAC is delivered to the program.
+
+	TELNET negotiations, when active, are used to establish the options
+	for each instance of each connection.  There are only two options
+	used:  suppress-go-ahead SUGA (RFC-858) and remote-echo ECHO
+	(RFC-857).  If TELNET negotiations are enabled when the connection is
+	first opened, the TELNET User will send a DO SUGA command and either a
+	DO ECHO or DONT ECHO command, depending upon whether the ECHO REMOTE
+	or ECHO LOCAL modes are in effect.  Thereafter, the program will send
+	DO ECHO or DONT ECHO as required whan the ECHO mode is changed.  The
+	program will reply WONT to any DO or DONT command and will ignore a
+	WONT command.  A WILL ECHO command will force operation in the
+	remote-echo/edit mode if the ECHO REMOTE mode is in effect, otherwise
+	the program will reply DONT ECHO.  A WONT ECHO command will force
+	operation in the local-echo/edit mode in any case.
+
+	Facilities are included to send and receive files in conjunction with
+	virtual-terminal operations.  In addition, the Peritek VCG bit-map
+	display with color monitor is supported.  This device can be used to
+	display data received from the remote server in either
+	Tektronix-compatible format or bit-map format.
+
+	The TELNET User program can also be used to connect to terminal and
+	special-server processes on the same machine. 	This is useful to
+	connect to remote systems and to download dependent machines.  See the
+	LINK and TALK commands for further details.  The EOT character can be
+	used to send a break signal to the remote machine.  See the TERMINAL
+	help information for further details.
+
+	Downloading to PDP11-compatible machines is simplified by the L escape
+	sequence.  To use this sequence a SEND command is used to declare the
+	name of the load-module file (LDA format) and a IMAGE command to
+	declare the transfer as binary.  Then a LINK command is used to set up
+	the connection via the terminal process specified.  The L escape
+	sequence sends a sequence of ODT commands to load the DEC Absolute
+	Loader in the remote machine along with a routine that relocates it to
+	high memory.  Following this, the remote machine is started and the
+	loader relocated to high memory.  Finally, the load-module file
+	specified is sent to the remote machine and started (if specified in
+	the load module).
+
+	The TELNET User prompt is "*", signifying the program is ready for the
+	next CONNECT, LINK or TALK command.  Prompts will not appear following
+	commands which have only local significance or in which errors are
+	detected.
+
+  OPTIONS
+   ASCII
+	The ASCII and IMAGE commands set the mode for subsequent file
+	transfers.  The default is ASCII.
+   BRIEF
+	The BRIEF and VERBOSE commands control output of detailed commentary
+	dialog.  BRIEF disables this and VERBOSE enables it.  The default is
+	BRIEF.
+   CLOSE
+	Write the current buffer to the script file and close it.
+   CONNECT <hostname> <port>
+	Open a TELNET connection to <hostname> with <port> specified. If
+	<hostname> is represented by the character "*" 	or is missing, the
+	connection is opened in listening mode. The <port> is a decimal
+	integer in the range 0-255 or one of the service names specified in
+	the table below.
+	
+	Following the CONNECT command operation continues in the transparent
+	mode until either an escape sequence or the connection is closed by
+	the remote server. Each instance of each connection is characterized
+	by a selection of three interacting modes of operation: (1) whether
+	TELNET negotiations are active (see the ON/OFF TELNET commands), (2)
+	transmit mode (see the TRANSMIT command) and (3) echo mode (see the
+	ECHO command). If <port> is specified by integer, the default settings
+	are OFF (TELNET), LINE (TRANSMIT) and LOCAL (ECHO), as modified by
+	explicit ON/OFF TELNET, TRANSMIT and ECHO commands. If <port> is
+	specified by service name, the settings are as given in the table. If
+	<port> is defaulted, TELNET (23) is assumed and the settings are as
+	given for TELNET in the table.
+
+	Name    Port    TELNET  TRANS   ECHO    Function
+	------------------------------------------------
+	ECHO    7       OFF     LINE    LOCAL   loopback
+	SINK    9       OFF     LINE    LOCAL   discard
+	SYSTAT  11      OFF     LINE    LOCAL   who-is-on
+	DAYTIME 13      OFF     LINE    LOCAL   time and date
+	NETSTAT 15      OFF     LINE    LOCAL   who-is-up
+	QOD     17      OFF     LINE    LOCAL   quote-of-day
+	TEST    19      OFF     LINE    LOCAL   char generator
+	FTP     21      OFF     LINE    LOCAL   file transfer
+	TELNET  23      ON      LINE    REMOTE  virtual term
+	SMTP    25      ON      LINE    REMOTE  mail transfer
+	TIME    37      OFF     CHAR    NONE    time server
+	NAME    42      OFF     CHAR    NONE    name server
+	WHOIS   43      OFF     LINE    LOCAL   NIC who-is
+	MPM     45      OFF     LINE    LOCAL   mail transfer
+	NIFTP   47      OFF     LINE    LOCAL   file transfer
+	FINGER  79      OFF     LINE    LOCAL   who-is-there
+	TALK    87      OFF     CHAR    LOCAL   term intercom
+	LINK    87      OFF     CHAR    NONE    proc intercom
+	NICNAME 101     OFF     LINE    LOCAL   NIC name server
+	CSNAME  103     OFF     LINE    LOCAL   CSNET who-is
+	TN      107     OFF     LINE    LOCAL   virtual term
+	VCG     127     OFF     LINE    LOCAL   VCG display
+	SPQ	515	OFF	CHAR	NONE	output spooler
+
+   DELAY <time>
+	Set the packetization timeout to <time> milliseconds. A value of zero
+	for <time> disables the timeout, with 500 millisconds assumed as the
+	default.
+   DISCONNECT
+	Close the TELNET connection.
+   ECHO <mode>
+	Set the echo mode to <mode>, which can be one of the following:
+
+	LOCAL   Characters are echoed locally
+	NONE    Characters are not echoed
+	REMOTE  Characters are echoed by the remote host
+
+	See the CONNECT command for defaults.  All remote hosts must support
+	LOCAL mode, but some (including Fuzzball hosts) may not support REMOTE
+	mode.  If TELNET negotiations are active and REMOTE mode has been
+	specifed but refused by the remote host, the mode will be changed
+	automatically to LOCAL without informing the user.  REMOTE mode is not
+	effective if TELNET negotiations are not active or in LINE mode (see
+	the TRANSMIT command), in which characters are always echoed locally.
+   ESCAPE <code>
+	Set the escape character code to <code>, which is an octal integer in
+	the range 000-177.  The default is 037 (^~).
+   HELP
+	Display helpful information, including a list of commands.
+   IMAGE
+	(see the ASCII command)
+   LINK <logname>
+	Connect to the local device or special server <logname> with local
+	echo disabled. The <logname> must be defined in the device table (see
+	ASG command in USER help information). Only the C, L, Q and S escape
+	sequences are valid in this mode.
+   LOCAL <hostname>
+	Set the local address to <hostname>, with default the local primary
+	address. This feature can be used to select local secondary addresses
+	in the case of a multi-homed host.
+   OFF <code>
+	The ON and OFF commands are used to set and clear selected options.
+	The ON command enables the selected option and the OFF command
+	disables it.  Options supported include:
+
+	SCRIPT  Controls data transfer to script file (OFF:  disable,
+		ON:  enable).
+	SEND    Controls data transfer from the send file (OFF:  disable, ON:
+		enable)
+	TELNET  Controls TELNET option negotiation (OFF:  disable, ON:
+		enable)
+	TERMINAL Controls data transfer to operator terminal (OFF:  disable,
+		ON:  enable)
+	VCG     Controls data transfer to the Peritek VCG display (OFF:
+		disable, ON:  enable)
+
+   ON <code>
+	(see the OFF command)
+   QUIT
+	Execute an implied DISCONNECT command and exit to the CLI.
+   ROUTE <hostname1> <hostname2> ...
+	Specify the Internet source route as the sequence <hostname1>
+	<hostname2> ...  (up to nine).
+   SCRIPT <filespec>
+	Begin recording in the file <filespec> a copy of all data received
+	over the TELNET connection from the remote host.  The data recorded
+	include local echoes, if selected by the operator or negotiated via
+	the TELNET protocol.  Recording can be suspended and resumed using the
+	OFF SCRIPT and ON SCRIPT commands as required.  The file is closed and
+	made permanent using the CLOSE command.  All eight bits of each octet
+	are recorded without interpretation or modification.
+   SEND <filespec>
+	Declare the file <filespec> to send over the TELNET connection to the
+	remote host.  Transmission can be initiated and suspended using the Q
+	and S escape sequences or the OFF SEND and ON SEND commands as
+	required and is terminated by end-of-file.  Data can be transmitted in
+	ASCII or IMAGE modes using the corresponding commands.
+   SHOW
+	Display a formatted summary of various quantitites of interest,
+	including the current host, file and block number.
+   TALK <logname>
+	Connect to the local device or special server <logname> with local
+	echo enabled. The <logname> must be defined in the device table (see
+	ASG command in USER help information). Only the C, L, Q and S escape
+	sequences are valid in this mode.
+   TELNET
+	Resume transparent mode.  Subsequent data received from the terminal
+	will be sent to the remote host.
+   TOS <type-of-service>
+	Specify the Internet type-of-service octet (in octal).
+   TRANSMIT <mode>
+	Set the transmit mode to <mode>, which can be one of the following:
+	CHARACTER Request transmit on each character (line editing inactive)
+	LINE    Request transmit on end-of-line (line editing active)
+	See the CONNECT command for defaults.  If TELNET negotiations are
+	active the mode is set automatically to CHARACTER if the REMOTE echo
+	mode is successfully negotiated with the remote host and LINE
+	otherwise.  In either mode each transmit request is subject to a
+	one-second packetization timeout;  that is, following transmission of
+	a data segment a subsequent data segment will not be transmitted until
+	the timeout has expired.  Line-editing characters are identical to
+	those used for ordinary local terminals (see INFORMATION help
+	information).
+   VCG
+	Initialize Peritek VCG display.
+   VERBOSE
+	(see the BRIEF command)
+
+  EXAMPLES
+	tn dcn2
+	DCN2.ARPA RT-11 Service (31-Dec-82 Version) 21-May-83 .test
+	 !" $%_'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^ .quit
+	tn dcn2 talk
+	DCN2.ARPA TALK Service (15-May-83 Version) 21-May-83
+	 Enter device name and mode (default is operator):
+	 Terminal link to TT0:
+	hello - this is dcn6
+	hello - this is dcn2
+	DCN2.ARPA Closing
+.ENDM
+.MACRO	UDP
+UDP		UDP NAME/TIME/TFTP server process
+
+  SYNTAX
+	NAME	See IEN-116 and RFC-883.
+	TIME	See RFC-868 and RFC-958.
+	TFTP	See RFC-783.
+
+  SEMANTICS
+	The UDP server process can be configured in a Fuzzball host to process
+	name, time and file-transfer requests using the User Datagram Protocol
+	(UDP). The server runs unattended and can process any number of
+	requests in any order, with the exception that only one TFTP file
+	transfer can be active at a time.
+
+	There are two TIME servers, one conforming to RFC-868, which returns
+	a 32-bit integer equal to the number of seconds since 0000 hours on
+	1 January 1900, and the other conforming to RFC-958, which is capable
+	of much higher precisions and includes additional information to
+	estimate errors and synchronize a network of clocks.
+
+	There are two NAME servers, one conforming to IEN-116 and used by
+	"old" namecaller programs and the other conforming to RFC-883 and used
+	by "new" namesolver programs compatible with the domain-name system.
+	Both servers use the HOSTS.DAT encoded host-name table (see HOSTS help
+	information). The RFC-883 server responds only to class-1 (ARPA
+	Internet) and type-1 (host-name record) requests. If the request is
+	for a principal name, a single type-1 resource record is returned. If
+	the request is for a secondary name or numeric address in standard
+	form nn.nn.nn.nn, a type-5 record is returned along with the type-1
+	record. See also RSOLV help information.
+
+	The TFTP service is intended primarily for use by the IBM Personal
+	Computer with the MIT PC-IP code. All TFTP transfers are to/from the
+	ANONYMOUS user directory, with no restrictions on access other than
+	to observe protected files. Note that a TFTP transfer from the IBM
+	PC to the device "LP:" on a properly configured Fuzzball host will
+	cause the file to be processed by the standard spooling utilities (see
+	AUTOSPOOL help information).
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	NAME	See IEN-116 and RFC-883.
+	TIME	See RFC-868 and RFC-958.
+	TFTP	See RFC-783.
+.ENDM
+.MACRO	USER
+USER		User Process commands
+
+  SYNTAX
+	<command> <argument>
+
+  SEMANTICS
+	The CLI is invoked automatically upon exit from an application
+	program.  It is used to invoke application programs, to inspect system
+	status variables and to perform housekeeping functions.  Commands
+	consist of a name, only the first three characters of which are
+	significant, followed by a list of arguments separated by spaces and
+	terminated by <CR>.  If the name does not represent a valid command,
+	an attempt is made to invoke an application program of that name as in
+	the R command.  All numbers are decimal unless indicated otherwise.
+
+  OPTIONS
+   ALTER <bgnadr> <value> ...
+	Alter words of memory beginning at <bgnadr> (octal) to contain the
+	values specified (octal).  See the BASE command for operation with
+	virtual systems.
+   ASG <logname> <filespec>
+	Amend the device table so as to associate the logical name <logname>
+	with the physical device or file <filespec>.  If <filespec> is missing
+	remove the <logname> entry from the device table.  See VOLUMES help
+	information for further details.  Note that the format of this command
+	is different from the RT-11 ASSIGN command.
+   BASE <pid>
+	Set the virtual space for DISPLAY and ALTER commands to the process
+	<pid>.  If <pid> is missing, assume the process interpreting the
+	command.
+   CMD
+	List the available commands.  Additional information is available with
+	the HELP program.
+   DATE <date>
+	The TIME and DATE commands can be used to set the system time and date
+	as specified in RT-11 format.  If the argument is missing, simply
+	display the current values.  Note that ordinarily the system tracks
+	network time and date from a selected virtual host, so that these
+	commands are useful only in special cases.
+   DEVICE <logname>
+	Display a formatted summary of the device table, which establishes the
+	association between the logical and physical names of each process
+	together with additional data.  If <logname> is a valid logical name,
+	the data associated with that process is displayed.  If <logname> is
+	defaulted the entire table is displayed.
+   DISPLAY <bgnadr> <nwords>
+	Display <nwords> (octal) of memory beginning at <bgnadr> (octal).  The
+	output format is eight words per line preceeded by the address of the
+	first word.  See the BASE command for operation with virtual systems.
+   LOAD <filespec> <argument>
+	Read an RT-11 background load module from <filespec> into working
+	storage.  The default device is DK:  and the default extension is
+	.SAV.  Note that working storage must contain sufficient space to hold
+	both the load module and the CLI itself (otherwise use the RUN
+	command).  If <argument> is given it is copied (without the <CR> and
+	with a trailing zero byte) in the chain area starting at location 512
+	with a count of the number of characters in location 510.  In this
+	case the chain bit (bit 8) is set in the job status word.
+   OFF <code>
+	The ON and OFF commands can be used to set and clear bits in the
+	options word of the parameter area associated with the process.  The
+	ON command sets the option bits corresponding to the one bits of
+	<code> (which is an octal value) to one, while the OFF command sets
+	these bits to to zero.  Options for the user process are as follows:
+
+	0       Login (OFF: optional, ON: required)
+	1       TELSRV server (OFF: disable, ON: enable)
+
+   ON <code>
+	(see the OFF command)
+   OUT <logname>
+	Redirect terminal output to the sequential device with logical name
+	<logname>.  If <logname> is missing, assume the name TT:.
+   PSA <pid>
+	Display the state vector (PSA area) of the process <pid>.  If <pid> is
+	missing, assume the process interpreting the command.  The output
+	format is as described under the DISPLAY command.
+   QUIT
+	Exit CLI and close TELNET server connection, if applicable.
+   R <filespec> <argument>
+	This command is identical to the RUN command, except that the default
+	device is SY:.
+   RESET
+	Panic reset.  Reinitialize the system and all of its processes.
+   RUN <filespec> <argument>
+	This command is a combination of the LOAD and START commands with the
+	implied start address as specified by the load module.  The CLI can be
+	overlaid by the load module with this command, so the space
+	restriction of the LOAD command does not apply.
+   SET <devname> <command> <argument>
+	This command provides access to the parameter areas associated with
+	the process <devname>.  The function to be performed is specified by
+	the pair <command> <argument>, where <command> is interpreted
+	depending on the process type.  For instance, if <devname> specifies a
+	user process, <command> can be any command listed in this section.
+	The commands recognized in the case of other processes are summarized
+	in separate HELP topics.  Note that the SET, SHOW, ON, OFF and ASG
+	commands described in this section are generally applicable to all
+	processes.
+   SHOW <devname>
+	Display a formatted summary of various quantitites of interest.  If
+	<devname> is missing, a table of all processes is displayed.
+   START <bgnadr>
+	Start a previously-read load module at location <bgnadr> (octal).
+   TEST <count>
+	Display a test line <count> times.  If <count> is missing, assume a
+	value of one.
+   TIME <time>
+	(see the DATE command)
+
+  EXAMPLES
+	.cmd
+	Commands are:
+	CMD   SHO   ON   OFF   TIM   DAT   DAY   TCU
+	ASG   OUT   DEV   SET   BAS   ALT   DIS   RES
+	PSA   TES   QUI   RUN   STA   LOA
+
+	.devices
+	LDN     Name    Proc    PortID  Type    Size
+	----------------------------------------------
+	000     TT      TT0     034     000004  000000
+	001     SY      DL0     044     000200  047704
+	002     DK      DL0     044     000200  047704
+	003     DY0     DY0     042     000200  001734
+	004     DL0     DL0     044     000200  047704
+	005     DL1     DL1     044     000600  047704
+	006     DL2     DL2     044     001200  047704
+	007     LP      TT1     040     000004  000000
+	010     NS      NSP     024     100032  060000
+	011     NAM     NAM     026     000032  060000
+	012     GAT     GAT     030     000032  030000
+	013     LOG     TT0     034     000004  000000
+	014     TLK     TT0     034     000004  000000
+
+	.show
+	Proc    PortID  Type    Size    VecAdr  RegAdr  Option
+	------------------------------------------------------
+	HOS     000     000030  100000  000000  000000  111001
+	DC6     002     000026  000400  000000  000000  000000
+	LH0     006     000027  000400  000310  176510  040000
+	LH1     012     000027  000400  000320  176520  040000
+	VM0     014     000002  120000  001000  000000  000000
+	VM1     016     000002  120000  002200  000000  000000
+	VM2     020     000002  110000  003400  000000  000000
+	VM3     022     000002  120000  004500  000000  000002
+	NSP     024     100032  060000  005700  000000  000000
+	NAM     026     000032  060000  006500  000000  000000
+	GAT     030     000032  030000  007300  000000  000000
+	TT0     034     000004  000000  000060  177560  000000
+	TT1     040     000004  000000  000300  176500  000021
+	DY0     042     000200  001734  000264  177170  000000
+	DL0     044     000200  047704  000160  174400  000000
+	DL1     044     000600  047704  000000  000000  000000
+	DL2     044     001200  047704  000000  000000  000000
+
+	.test
+	 !" $%_'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^
+.ENDM
+.MACRO	VCG
+VCG		Peritek VCG server
+
+  SYNTAX
+	VCG			;invoke VCG.SAV
+	*<outfilespec>=<infilespec>[/options]
+	*...                    ;* is CSI prompt
+	*^Z                     ;exit to CLI
+
+  SEMANTICS
+	This program reads a file in one of several formats and converts
+	the data for presentation on the Peritek VCG display. Data types
+	supported include Sun bitmap, Dacom facsimile, Tektronix graphics,
+	ordinary text and raw bitmap. Data conversion, scrolling, scaling
+	and clipping is automatic in all cases except raw bitmap, which can
+	be specified by the /B option. The image is scaled by default to
+	display the maximum size without clipping height or width, but can
+	be expanded to maximum height using the /P option or maximum width
+	using the /L option.
+
+	The program also writes a file in Sun bitmap format from the display
+	for later presentation or conversion to hardcopy. The /D option can
+	be used to specify standard Sun bitmap format (b/w only) or a
+	nonstandard bitmap format (color) designed for maximum speed with
+	the Peritek display.
+
+  OPTIONS
+	/B	Specify raw bitmap mode
+	/D:n	Specify bits per pel (1: b/w in standard Sun format,
+		3: color in special Peritek format (default))
+	/W:n	Specify width in pels (raw bitmap only (default 640))
+	/H:n	Specify height in pels (raw bitmap only (default 512))
+	/I	Invert image (bitmap and facsimile)
+	/L	Force landscape mode (bitmap and facsimile)
+	/P	Force portrait mode (bitmap and facsimile)
+
+  EXAMPLES
+	None
+
+.ENDM
+.MACRO	VOLUMES
+VOLUMES		Virtual volumes
+
+  SYNTAX
+	ASG <logname> <filespec> ;CLI command
+
+  SEMANTICS
+	The virtual volumes feature allows logical volumes to be encapsulated
+	as RT-11 files on any direct-access physical device.  The feature is
+	similar to that provided by the XD handler distributed by DECUS, but
+	is integrated into the operating system.  Private volumes can be
+	assigned to the DK:  device or any other RT-11 logical device except
+	SY:  (which should never be reassigned).
+
+	Once assigned the virtual volume can be accessed just like any other
+	physical volume - files can be created and deleted and the volume can
+	be initialized, squeezed or even scanned for bad blocks.  Since the
+	volume is in fact an ordinary file on the physical device, it can be
+	copied to and from other media, in particular floppy disks, for
+	archiving.  It is important to observe that the file cannot be deleted
+	or copied and the physical volume cannot be squeezed if the file is
+	assigned and in active use, since this could lead to corruption of
+	other files on the physical device.
+
+	For the purposes of archiving to floppy disk, the file should be
+	created with a size of 494 blocks for the RX01 or 988 blocks for the
+	RX02.  Following is a command sequence that creates a file and copies
+	an RX02 volume to it (the file must not exist prior to this):
+
+	DUP                     ;invoke DUP.SAV
+	*<filespec>/f=dy0:      ;* is CSI prompt
+	<filespec>/Copy;  Are you sure?  Y ;Y is confirmation
+	*^Z                     ;exit to CLI
+
+	Following is a command sequence that copies a file to an RX02 volume
+	(the original contents of the volume will be destroyed):
+
+	DUP                     ;invoke DUP.SAV
+	*dy0:a=<filespec>/i     ;* is CSI prompt, a is a
+				;dummy file (not used)
+	DY0:/Copy;  Are you sure?  Y ;Y is confirmation
+	*^Z                     ;exit to CLI
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	WATCH
+WATCH		SIMP monitoring program
+
+  SYNTAX
+	WATCH                   ;invoke WATCH.SAV
+	...
+	QUIT                    ;exit to CLI
+
+  SEMANTICS
+	The SIMP Monitoring program (WATCH) formats and displayes monitoring
+	reports received from the SATNET Satellite IMP (SIMP) located at each
+	ground station.  It runs in interactive mode on a Fuzzball host.
+	Following is a summary of monitoring report formats:
+   HELLO Packet Report format
+	Hello = (b) e, g, t, c, r, f
+
+	b Total HELLO packets received in the past 64 frames which have a bad
+	hardware checksum
+	e Total of Etam's HELLO packets missed in the past 64 frames
+	g Total of Goonhilly's HELLO packets missed in the past 64 frames
+	t Total of Tanum's HELLO packets missed in the past 64 frames
+	c Total of Clarksburg's HELLO packets missed in the past 64 frames
+	r Total of Raisting's HELLO packets missed in the past 64 frames
+	f Total of Fucino's HELLO packets missed in the past 64 frames
+   PROGRAM Status Report format
+	p STR=a R=b BCK=c (A1 A2 A3 M C N loops)
+
+	p Current channel protocol (CPODA, FPODA, FTDMA)
+	a Number of streams in existence
+	b Nominal receive rate, kb/sec (64, 32, 16)
+	c Average number of background passes per virtual slot
+
+	Displayed switches:
+	A1 First access control parameter is on (preventing channel access)
+	A2 Second access control parameter is on
+	A3 Third access control parameter is on
+	M One or more message generator components are on
+	C Cumstats are being sent to a host
+	N One or more noise gates are on
+	OI Satellite channel looped by Simp internally (within Simp)
+	OX Satellite channel looped by Simp externally (Simp signals for loop
+	within SSI)
+	OL Satellite channel looped, but not by Simp
+	4I Line to host 1 looped by Simp internally
+	4X Line to host 1 looped by Simp externally (Simp signals for loop
+	within modem)
+	4L Line to host 1 looped, but not by Simp
+	2I,2X,2L Same as 1I,1X,1L but for host 2
+   CHANNEL Traffic Report format
+	E=a/b/c S=d*e/f/g*h C=i/j/k/lc/ls DS=m/n/p DR=q/r/s
+
+	a Packets received with bad hardware checksum, bad software header
+	checksum
+	b Packets received with bad hardware checksum, good software header
+	checksum
+	c Hello packets received
+	d Hello frames out of frame sync
+	e PODA frames in datagram in-sync res-sync state
+	f PODA frames in datagram out-of-sync res-sync state
+	g PODA frames in datagram initial acquisition res-sync state
+	h PODA frames in stream sending-for-Help state
+	i Others' control packets heard
+	j Own control packets heard
+	k Control packets sent
+	lc Fraction of total bandwidth (including HELLO subframe) used for
+	control subframes
+	ls Fraction of total bandwidth used for streams
+	m Messages timed out in CPM
+	n Data packet retransmissions
+	p Data packet first transmissions
+	q Acceptable data packets heard for me, but discarded because of
+	buffer shortage or host output queue full
+	r Acceptable data packets heard for me, accepted
+	s Acceptable data packets heard for others
+   HOST Traffic Report format
+	PS = a/b PR = c/d HI = e/f MS = g/h/i MR = j/k
+
+	a Data packet retransmissions
+	b Data packet first transmissions
+	c Packets received with hardware errors
+	d Good data packets received
+	e Hello packets received
+	f I-heard-you packets received
+	g Messages discarded from host output queue because holding time
+	exceeded
+	h Messages sent but refused by host
+	i Messages sent
+	j Received messages discarded
+	k Received messages accepted
+   TIMING Timing Report format
+	RTT=a/b GT=c/d
+
+	a Last Round-Trip-Time difference from previous Global-Time update
+	b Max Round-Trip-Time difference from previous Global-Time update
+	c Last Global-Time difference from previous Global-Time update
+	d Max Global-Time difference from previous Global-Time update
+
+  OPTIONS
+   BRIEF
+	The BRIEF and VERBOSE commands control output of detailed commentary
+	dialog.  BRIEF disables this and VERBOSE enables it.  The default is
+	VERBOSE.
+   CONNECT <simpid>
+	Open an RTP datagram connection to <simpid>.  The set of <simpids>
+	recognized presently includes:
+
+	CLA     Clarksburg, MD (COMSAT Labs)
+	ETA     Etam, WV (USA)
+	FUC     Fucino (Italy)
+	GOO     Goonhilly Downs (UK)
+	RAI     Raisting (West Germany)
+	TAN     Tanum (Sweden)
+   DISCONNECT <simpid>
+	Close the RTP datagram connection for <simpid>.
+   HELP
+	Display helpful information, including a list of commands.
+   OFF <simpid> <code>
+	The ON and OFF commands are used to set and clear various options.
+	The ON command enables the selected option and the OFF command
+	disables it.  Options supported include:
+
+	ALL             christmas tree
+	CHANNEL         channel status line
+	HELLO           hello line
+	HOST            host status line
+	POLL            poll response line
+	PROGRAM         program status line
+	TEST            test and monitoring line
+	TIMING          rtt line
+	TRAP            trap report line
+
+   ON <simpid> <code>
+	(see the OFF command)
+   PORT <simpid> <address>
+	Set the internet address associated with <simpid> to <address>.  The
+	format of the <address> field is four decimal integers.
+   QUIT
+	Close all RTP connections and exit to the CLI.
+   SHOW <format>
+	Display a formatted summary of various quantitites of interest,
+	including the current host and WATCH headers.
+   VERBOSE
+	(see the BRIEF command)
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	WHOIS
+WHOIS		NIC data-base access program
+
+  SYNTAX
+	WHOIS  <name>		;invoke WHOIS.SAV
+		or
+	WHOIS
+	User? <name>		;prompt is User?
+				;exit to CLI
+
+  SEMANTICS
+	This program accesses the Network Information Center host SRI-NIC.ARPA
+	for the entry under the name <name> and prints the reply as-is. It can
+	be used to retrieve the addresses and phone numbers of users
+	registered at the NIC on behalf of DARPA and DCA.
+
+  OPTIONS
+	none
+
+  EXAMPLES
+	None
+
+.ENDM
+.MACRO	XNET
+XNET		Internet loader/debugger program
+
+  SYNTAX
+	XNET                    ;invoke XNET.SAV
+	...
+	QUIT                    ;exit to CLI
+
+  SEMANTICS
+	The Internet Loader/Debugger program (XNET) is designed to support
+	remotely located internet processors such as gateways, port expanders
+	and hosts.  It can function both as a user and server and is normally
+	run in interactive mode by a user at a Fuzzball host. XNET
+	communicates with the remote processor using XNET datagrams and a
+	protocol described in IEN-158.  The remote processor must contain an
+	XNET bootstrap or server program, either in ROM or in protected
+	memory.
+
+	Fuzzball host configurations that do not include a disk ordinarily
+	include a special hardware module built by SRI International and
+	called the Robustness Card.  This module contains an XNET bootstrap in
+	ROM along with a watchdog timer that forces entry to the bootstrap if
+	not reset within a timeout interval.  Those Fuzzball host
+	configurations that do include a disk presently include a software
+	module that forces a master reset upon arrival of an XNET datagram
+	of specified type. The master reset reinitializes all hardware and
+	software components, but does not reload the system.
+
+	The Fuzzball XNET program is compatible with the XNET4 program on some
+	TOPS-20 ARPANET service hosts.  With respect to the TOPS-20 program,
+	The Fuzzball host appears as an ordinary XNET bootstrap, except that
+	the "memory" loaded by the TOPS-20 program is in fact a file. Thus,
+	load modules cross-compiled and cross-linked on the TOPS-20 system
+	can be transmitted to the Fuzzball host and stored for later use.
+
+	A XNET operation proceeds by first opening an RTP datagram connection
+	with the remote host using the CONNECT command.  If opened in the
+	active mode, XNET will send an XNET message with the command field set
+	to 0 (NOP) to the remote bootstrap in order to reset its state
+	variables.  Next, the CREATE or OPEN commands are used to establish a
+	memory-image file for use as a cache.  Using the EXAMINE and DEPOSIT
+	commands the user can exchange data between the remote memory and the
+	cache.  In addition, the user can display and alter the cache contents
+	with the DISPLAY and ALTER commands.  The REGISTER command can be used
+	to set the remote registers, including the stack pointer and program
+	counter, and the START command to start the remote program.
+
+	If opened in the passive mode, XNET waits for an XNET datagram from
+	another host, possibly the TOPS-20 XNET4 program or the SRI Robustness
+	Card ROM program.  A local file previously opened is then manipulated
+	by the remote user as if the file were local memory.
+
+	XNET stores memory images in RT-11 files, which are block-structured
+	with a block size of 512 bytes and can be randomly accessed by block.
+	In addition, memory images (not overlays) produced by the RT-11 linker
+	can be used.  The XNET program accesses memory images using a cache
+	buffer which is loaded automatically from the file by a memory image
+	reference and is written back to the file by a memory image reference
+	outside the buffer or when the file is closed.
+
+  OPTIONS
+   ABORT
+	Terminate the current operation and ignore subsequent datagrams.
+   ALTER <bgnadr> <value> ...
+	Alter words of the memory image beginning at <bgnadr> to contain the
+	values specified.
+   BRIEF
+	The BRIEF and VERBOSE commands control output of detailed commentary
+	dialog.  BRIEF disables this and VERBOSE enables it.  The default is
+	VERBOSE.
+   CLOSE
+	Write the current buffer to the memory-image file and close the file.
+   CONNECT <hostname> <maxsize> <protocol>
+	Open an RTP datagram connection to <hostname> with <size> datagrams
+	and <protocol> specified.  The <size> is a decimal integer in the
+	range 36-576 and defaults to 256.  The <protocol> is a decimal integer
+	in the range 0-255 and defaults to 15 (XNET).
+   CREATE <filespec>
+	The CREATE and OPEN commands close the existing file, if necessary,
+	then create (a new file) or open (an existing file) <filespec> as a
+	memory image.  The <filespec> can include the size of the file in
+	blocks.  Each block contains 256 PDP11 words, so that the maximum size
+	(also the default) is 128 blocks.
+   DEPOSIT <bgnadr> <nwords>
+	Write <nwords> of the memory image beginning at <bgnadr> to the remote
+	processor.  The contents of the memory image are not affected.
+   DISPLAY <bgnadr> <nwords>
+	Display <nwords> of the memory image beginning at <bgnadr>.  The
+	output format is eight words per line preceeded by the address of the
+	first word.  The contents of the memory image are not affected.
+   EXAMINE <bgnadr> <nwords>
+	Read <nwords> from the remote processor beginning at <bgnadr> to the
+	memory image.
+   DISCONNECT
+	Execute an implied ABORT command and close the RTP datagram
+	connection.
+   HELP
+	Display helpful information, including a list of commands.
+   LOCAL <hostname>
+	Set the local address to <hostname>, with default the local primary
+	address. This feature can be used to select local secondary addresses
+	in the case of a multi-homed host.
+   OPEN <filespec>
+	(see the CREATE command)
+   PURGE
+	Purge the memory-image file and suppress any further modifications to
+	it.
+   QUIT
+	Execute an implied DISCONNECT command and exit to the CLI.
+   REGISTER <register> <value>
+	Write <value> to the <register> area in the remote processor which
+	will be used to initialize the corrsponding general register when the
+	program is started.  The value for <register> must be in the range
+	0-7.
+   RESTART
+	Resend the last XNET message.  This command is useful after a XNET
+	datagram has been lost in the network.
+   ROUTE <hostname1> <hostname2> ...
+	Specify the Internet source route as the sequence <hostname1>
+	<hostname2> ...  (up to nine).
+   SHOW <format>
+	Display a formatted summary of various quantitites of interest,
+	including the current host and XNET headers.
+   START
+	Send the START XNET message to the remote processor.  The remote
+	bootstrap will reply to this message, wait a second or two, then
+	plunge into the program using the general register contents previously
+	set by the REGISTER command.
+   TOS <type-of-service>
+	Specify the Internet type-of-service octet (in octal).
+   VERBOSE
+	(see the BRIEF command)
+   XNET <code>
+	Send a XNET message to the remote processor with the command field set
+	to <code>.  The <code> defaults to 1 (debug process) and, if sent to a
+	Fuzzball host will cause that host to perform a system reset.
+
+  EXAMPLES
+	xnet
+	DCN6.ARPA XNET User Process (25-Apr-81 Version) 21-May-83
+	connect dcn2
+	?INET-I-(XNT)-Open [128.4.0.2]
+	?XNET-I-Message 010037 000000 000100 000000 000000
+	create x.y
+	?XNET-I-File open DK:X.Y[1000]
+	display 0 10
+	000000 000000 000000 000000 000000 000000 000000 000000 000000
+	alter 0 1 2 3 4 5 6 7
+	display 0 10
+	000000 000001 000002 000003 000004 000005 000006 000007 000000
+	deposit 0 10
+	?XNET-I-Operation complete
+	alter 0 7 6 5 4 3 2 1
+	display 0 10
+	000000 000007 000006 000005 000004 000003 000002 000001 000000
+	examine 0 10
+	?XNET-I-Operation complete
+	display 0 10
+	000000 000001 000002 000003 000004 000005 000006 000007 000000
+	purge
+	?XNET-F-File purged
+	quit
+	?INET-I-(XNT)-Closed
+.ENDM
+.MACRO	.99999
+.ENDM
+                                                                                                                                                            

@@ -1,0 +1,686 @@
+	.TITLE	STASRV	Statistics/NTP control server
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn - Statistics/NTP control server
+;
+; 0                   1                   2                   3
+; 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |LI | VN  |  6  |R E M|  Opcode |          Sequence             |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |    Status     |     Error     |        Association ID         |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |            Ofset              |            Count              |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |                                                               |
+; |                  Message Data (480 octets max)                |
+; |                                                               |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |                        Key Identifier                         |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |                                                               |
+; |             Message Authentication Code (64 bits)             |
+; |                                                               |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;
+; External symbols
+;
+	.GLOBL	GETPKT,SNDPKT,FREPKT ;utility routines
+	.GLOBL	OPNBLK		;connection block
+	.GLOBL	PRTPTR		;output buffer pointer
+	.GLOBL	COMPTR		;host process pointer
+	.GLOBL	RDLIN,HASH	;utility i/o
+	.GLOBL	SHOW1		;show ntp status
+	.GLOBL	NTPTAB,NTPEND,NTPCNT,NTPSYS ;ntp data
+	.GLOBL	NTPPTR,NTPSTR,NTPDSP ;current clock source
+	.GLOBL	NTPHID,NTPKID	;encryption key id, ntp clock id
+	.GLOBL	UDPDST,UDPSRC	;address/port fields
+	.GLOBL	COM20,COM21,COM25,COM26,COM27,COM28 ;display strings
+	.GLOBL	CRYSET,CRYTST	;authentication routines
+;
+; Entry symbols
+;
+	.GLOBL	STAREQ		;statistics request
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.PSA,.CLP,.TRDEF ;dcnlib definitions
+	.MCALL	.IOD,.IPD,.GAT,.SUP
+	.MCALL	.GDAT,.BOOT	;dcnlib macros
+	.MCALL	$DFIH,$DFUH,$DFMH,$DFSIG ;moslib definitions
+	.MCALL	DFCON,NTPTAB,CALL,FORMAT ;netlib macros
+	.MCALL	.EXIT		;rt-11 macroni
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.PSA			;define process storage area
+	.CLP			;define rt-11 monitor area extension
+	.IOD			;emulator monitor area extension
+	.IPD			;define internet process psa extension
+	.GAT			;define network process psa extension
+	.SUP			;define host process par areas
+	.TRDEF			;define trap codes
+	$DFIH			;define internet header
+	$DFUH			;define user datagram header
+	$DFMH			;define ntp control message header
+	$DFSIG			;define interprocess signals
+	DFCON			;define connection block
+	NTPTAB			;define ntp tables
+;
+; Module definitions
+;
+NTPPRT	=	123.*400	;ntp server port
+MAXGRM	=	468.		;max NTP control message data octets
+;
+	.PSECT	$BOSI,RO,I
+;
+; Statistics request
+; R0 = udp length, r1 = packet pointer, r2 = udp header pointer
+;
+STAREQ:	MOV	R2,R3		;set pointers
+	ADD	R0,R3
+	MOV	R0,TEMP
+	MOV	#LINE,R0	;copy command
+	ADD	#UH.LEN,R2
+1$:	CMP	R2,R3
+	BHIS	2$
+	MOVB	(R2)+,(R0)+
+	BR	1$
+;
+2$:	CLRB	(R0)+		;stash backstop
+	SUB	#LINE+1,R0
+	MOV	R0,LENGTH
+;	FORMAT	#COM10,#LINE-UH.LEN ;***
+	JSR	PC,FREPKT	;discard ip packet
+	MOV	#BUFFER,PRTPTR	;make billboard
+	MOV	#BUFFER,BUFPTR
+	CLR	OFFSET
+	CLR	AUTHSW
+	CLR	STAKEY
+	CLR	XFLAG
+	CMP	UDPDST+4,#NTPPRT ;is this network time request
+	BNE	3$		;branch if no
+	JSR	PC,NTPSET	;yes. interpret ntp control message
+	BR	4$
+;
+3$:	JSR	PC,SET		;interpret spy request
+4$:	TST	XFLAG		;is something happening
+	BEQ	7$		;branch if no
+	CMP	XFLAG,#^RBOO	;yes. is reboot set
+	BNE	5$		;branch if no
+	.BOOT			;yes. off the lights
+;
+5$:	CMP	XFLAG,#^RQUI	;is quit set
+	BNE	6$		;branch if no
+	FORMAT	#COM2		;yes. restarting
+	BR	7$
+;
+6$:	FORMAT	#COM3		;invalid command
+7$:	MOV	PRTPTR,COUNT	;compute length
+	SUB	BUFPTR,COUNT
+	CLR	PRTPTR
+8$:	JSR	PC,UNBUF	;lop off a bunch
+	TST	COUNT		;are more data pending
+	BNE	8$		;branch if yes
+	CMP	XFLAG,#^RQUI	;is quit set
+	BNE	9$		;branch if no
+	.EXIT			;yes. dim the lights
+;
+9$:	RTS	PC		;leave the lights on
+;
+UNBUF:	JSR	PC,GETPKT	;allocate ip packet
+	BCC	1$		;branch if okay
+	CLR	COUNT		;cant. axe the rest
+	RTS	PC
+;
+1$:	MOV	R1,R2		;okay. establish pointers
+	BISB	#300+TQ.DLY,IH.TOS(R2) ;give it a good spank
+	MOV	PH.LNG(R2),R0
+	SUB	#UH.LEN,R0
+	ADD	PH.OFS(R2),R2
+	MOV	R2,R3
+	ADD	#UH.LEN,R3
+	CMP	UDPDST+4,#NTPPRT ;is this network time request
+	BNE	3$		;branch if no
+	BISB	#NY.RSP,LINE-UH.LEN+NM.OPC ;yes. flag response	
+	MOV	OFFSET,LINE-UH.LEN+NM.OFS ;insert offset
+	SWAB	LINE-UH.LEN+NM.OFS  
+	MOV	#LINE,R1	;copy header
+2$:	MOV	(R1)+,(R3)+
+	CMP	R1,#LINE-UH.LEN+NM.LEN
+	BLO	2$
+	SUB	#NM.LEN-UH.LEN,R0
+3$:	CMP	R0,#MAXGRM	;clip data size at max
+	BLOS	4$
+	MOV	#MAXGRM,R0
+4$:	CMP	R0,COUNT	;compute count
+	BLOS	5$
+	MOV	COUNT,R0
+5$:	SUB	R0,COUNT
+	MOV	R0,R1		;copy string to packet
+	BEQ	7$
+6$:	MOVB	@BUFPTR,(R3)+
+	INC	BUFPTR
+	INC	OFFSET
+	SOB	R1,6$
+7$:	CMP	UDPDST+4,#NTPPRT ;is this network time request
+	BNE	8$		;branch if no
+	MOV	R0,NM.CNT(R2)	;yes. insert count
+	SWAB	NM.CNT(R2)
+	ADD	#NM.LEN-UH.LEN,R0
+	TST	COUNT		;any more left
+	BEQ	8$		;branch if no
+	BISB	#NY.MOR,NM.OPC(R2) ;yes. so flag
+8$:	MOV	TEMP,R1		;is authentication requested
+	TST	AUTHSW
+	BEQ	9$		;branch if no
+	CALL	CRYSET,R1,R0,STAKEY ;yes. dim the lights
+9$:	ADD	#UH.LEN,R0	;send packet
+	JSR	PC,SNDPKT
+	CLC
+	RTS	PC
+;
+; Subroutine to interpret ntp control message
+;
+NTPSET:	CMP	LENGTH,#NM.LEN-UH.LEN ;is message long enough
+	BLO	1$		;branch if no
+	MOV	LINE-UH.LEN+NM.CNT,R0 ;yes. check count fields
+	SWAB	R0
+	ADD	#NM.LEN-UH.LEN,R0
+	CMP	R0,LENGTH
+	BEQ	3$		;branch if equal
+	BLO	2$		;branch if authenticated	
+1$:	MOVB	#NZ.FMT,LINE-UH.LEN+NM.STA ;invalid message length or format
+	BISB	#NY.ERR,LINE-UH.LEN+NM.OPC
+	FORMAT	#COM33
+	RTS	PC
+;
+2$:	INC	AUTHSW		;mark to authenticate response
+	CALL	CRYTST,#LINE,R0,LENGTH ;verify authentication
+	MOV	R0,STAKEY
+	BNE	3$		;branch if ok
+	MOVB	#NZ.ATH,LINE-UH.LEN+NM.STA ;authentication failure
+	BISB	#NY.ERR,LINE-UH.LEN+NM.OPC
+	FORMAT	#COM31
+	RTS	PC
+;
+3$:	MOV	#LINE-UH.LEN+NM.LEN,R0 ;set up for argument scan
+	JSR	PC,RDLIN
+	MOVB	LINE-UH.LEN+NM.OPC,R0 ;decode command
+	BITB	#NY.RSP+NY.ERR+NY.MOR,R0
+	BNE	NTPERR		;branch if bad format
+	ASL	R0
+	ADD	#NTPCMD,R0	;shoot off to segment
+	CMP	R0,#NTPENC
+	BHIS	NTPERR		;branch if bogon opcode
+	MOV	@R0,PC
+;
+; Invalid or unsupported request
+;	
+NTPWRV	=	.		;write variables (not supported)
+NTPTRP	=	.		;set trap address (not supported)
+NTPERR:	MOVB	#NZ.OPC,LINE-UH.LEN+NM.STA ;invalid or unsupported request
+	BISB	#NY.ERR,LINE-UH.LEN+NM.OPC
+	FORMAT	#COM34
+NTPNOP:	RTS	PC
+;
+; Read system/peer status
+; note: read peer status is identical to read peer variables
+;
+NTPRDS:	TST	LINE-UH.LEN+NM.AID ;is this sys status
+	BNE	NTPRDV		;branch if no
+	MOV	COMPTR,R0	;yes. display system status word
+	MOVB	CLKTYP(R0),NTPSYS
+	MOV	NTPSYS,LINE-UH.LEN+NM.STA
+	BIC	#170000,NTPSYS	;clear event counter
+	MOV	NTPTAB,R4	;fish out association status
+1$:	CMP	R4,NTPEND
+	BHIS	3$		;branch if done
+	TST	NG.SRC(R4)	;is this neighbor used
+	BEQ	2$		;branch if no
+	MOVB	NG.IDN+1(R4),R0	;yes. reveal that binary fact
+	JSR	PC,PRBYT
+	MOVB	NG.IDN(R4),R0
+	JSR	PC,PRBYT
+	MOVB	NG.PST(R4),R0	;assemble status word
+	JSR	PC,PRBYT
+	MOVB	NG.PST+1(R4),R0
+	JSR	PC,PRBYT
+2$:	ADD	#NG.LEN,R4	;advance to next entry
+	BR	1$
+;
+3$:	RTS	PC
+;
+; Read system/peer variables
+;
+NTPRDV:	MOV	LINE-UH.LEN+NM.AID,R0 ;get peer pointer
+	SWAB	R0
+	BNE	NTP10		;branch if peer
+	MOV	NTPPTR,R4	;is peer selected
+	BNE	1$		;branch if yes
+	MOV	COMPTR,R0	;no. display system status word
+	MOVB	CLKTYP(R0),NTPSYS
+	MOV	NTPSYS,LINE-UH.LEN+NM.STA
+	BIC	#170000,NTPSYS	;clear event counter
+	BR	2$
+;
+1$:	MOV	NG.IDN(R4),LINE-UH.LEN+NM.AID ;display peer status word
+	SWAB	LINE-UH.LEN+NM.AID
+	MOV	NG.PST(R4),LINE-UH.LEN+NM.STA
+	BIC	#170000,NG.PST(R4) ;clear event counter
+2$:	FORMAT	#COM74,#NTPKID	;display system variables
+	FORMAT	#COM75,COMPTR
+	CMPB	CLKTYP(R0),#CK.NTP ;is this ntp
+	BNE	3$		;branch if no
+	FORMAT	#COM76,#NTPDSP	;yes. announce delay
+	BR	4$
+;
+3$:	FORMAT	#COM76A		;not ntp. announce zero
+4$:	.GDAT			;get leap bits
+	ASH	#-14.,R0
+	BIC	#^C3,R0
+	MOV	R0,TEMP
+	FORMAT	#COM83,#TEMP
+	FORMAT	#COM77,R4
+	MOV	COMPTR,R1	;encode reference id
+	MOVB	CLKTYP(R1),R1
+	MUL	#5,R1
+	ADD	#CLKENC,R1
+	FORMAT	#COM78
+	FORMAT	#COM79,COMPTR
+	FORMAT	#COM81,COMPTR
+	RTS	PC
+;
+NTP10:	MOV	NTPTAB,R4	;read peer variables
+1$:	CMP	R4,NTPEND	;find entry
+	BHIS	3$		;branch if done
+	TST	NG.SRC(R4)	;is this neighbor used
+	BEQ	2$		;branch if no
+	CMP	R0,NG.IDN(R4)	;yes. is this one requested
+	BEQ	4$		;branch if yes
+2$:	ADD	#NG.LEN,R4	;no. advance to next entry
+	BR	1$
+;
+3$:	MOVB	#NZ.AID,LINE-UH.LEN+NM.STA ;unknown association id
+	BISB	#NY.ERR,LINE-UH.LEN+NM.OPC
+	FORMAT	#COM30
+	RTS	PC
+;
+4$:	MOV	NG.PST(R4),LINE-UH.LEN+NM.STA ;get peer status word
+	BIC	#170000,NG.PST(R4) ;clear event counter
+	FORMAT	#COM70,R4	;display useful stuff
+	CMPB	NG.STR(R4),#1	;is this ntp
+	BLOS	5$		;branch if no
+	FORMAT	#COM72,R4	;yes. ip address
+	BR	6$
+;
+5$:	FORMAT	#COM71,R4	;alpha string
+6$:	FORMAT	#COM73,R4	;display leap, mode
+	MOVB	NG.FLG(R4),R0
+	MOVB	R0,TEMP+1
+	BICB	#^C7,TEMP+1
+	ASH	#-6,R0
+	BIC	#^C3,R0
+	MOVB	R0,TEMP
+	FORMAT	#COM73A,#TEMP
+	FORMAT	#COM73B,R4	;display filter
+	RTS	PC
+;
+; Write radio variables
+;
+NTPWRR:	TST	STAKEY		;was message authenticated
+;***	BEQ	2$		;branch if no
+	JSR	PC,HASH		;yes. get variable name
+	BEQ	1$		;branch if none
+	CMP	R0,#^RLEA	;is it "leap"
+	BNE	3$		;branch if no
+	JSR	PC,RDOCT	;yes. get value
+	BEQ	4$		;branch if missing
+	CMP	R0,#3
+	BHI	4$		;branch if invalid
+	ASH	#3,R0
+1$:	JSR	PC,NTPRDR	;a wicked thing
+	RTS	PC
+;
+2$:	MOVB	#NZ.PNG,LINE-UH.LEN+NM.STA ;administratively prohibited
+	BISB	#NY.ERR,LINE-UH.LEN+NM.OPC
+	FORMAT	#COM32
+	RTS	PC
+;
+3$:	MOVB	#NZ.VAR,LINE-UH.LEN+NM.STA ;unknown variable name
+	BISB	#NY.ERR,LINE-UH.LEN+NM.OPC
+	FORMAT	#COM35
+	RTS	PC
+;
+4$:	MOVB	#NZ.VAL,LINE-UH.LEN+NM.STA ;invalid variable value
+	BISB	#NY.ERR,LINE-UH.LEN+NM.OPC
+	FORMAT	#COM36
+	RTS	PC
+;
+; Read radio variables
+;
+NTPRDR:	MOV	@#SYSPTR,R2	;set pointers
+	ADD	PNPTR(R2),R2
+	MOV	-2(R2),R3
+	ADD	R3,R2
+	ADD	R2,R3
+1$:	MOV	R2,R1		;tease up par pointer
+	ADD	@R1,R1
+	MOV	PARTPE(R1),-(SP) ;is this internet clock process
+	BIC	#^C37,@SP
+	CMP	(SP)+,#26
+	BNE	3$		;branch if no
+	BIT	#7,PAROPT(R1)
+	BEQ	3$		;branch if no
+	CMPB	LINE-UH.LEN+NM.OPC,#NY.WRR ;yes. is this write radio
+	BNE	2$		;branch if no
+	BICB	#030,PAROPT(R1)	;yes. stuff those rascals
+	BISB	R0,PAROPT(R1)
+2$:	MOVB	PARVLF(R1),LINE-UH.LEN+NM.STA ;return radio status
+	MOV	PAROPT(R1),R0	;display clock device
+	DEC	R0
+	BIC	#^C3,R0
+	ASL	R0
+	MOV	DEVCLK(R0),R0
+	FORMAT	R0
+	FORMAT	#COM82		;display clock fields
+3$:	TST	(R2)+		;move to next entry
+	CMP	R2,R3
+	BLO	1$
+	RTS	PC
+;
+; Subroutine to interpret spy command
+;
+SET:	MOV	#LINE,R0	;set up for argument scan
+	JSR	PC,RDLIN
+STA20:	JSR	PC,HASH		;get process name
+	BNE	STA21		;branch if okay
+	RTS	PC
+;
+STA21:	MOV	R0,XFLAG	;remember we wuz here
+	MOV	@#SYSPTR,R2	;set pointers
+	ADD	PNPTR(R2),R2
+	MOV	-2(R2),R3
+	MOV	R3,R1
+	ADD	R2,R3
+1$:	CMP	R0,@R2		;is this the one
+	BEQ	2$		;branch if yes
+	TST	(R2)+		;no. advance to next entry
+	CMP	R2,R3
+	BLO	1$
+	RTS	PC		;nobody home
+;
+2$:	CLR	XFLAG		;somebody home
+	ADD	R2,R1		;get par pointer
+	ADD	@R1,R1
+	MOV	PARTPE(R1),R0	;find process type
+	BIC	#^C37,R0
+	CMP	R0,#26		;is this internet process
+	BNE	4$		;branch if no
+	JSR	PC,RDOCT	;yes. get leap bits
+	BEQ	3$		;branch if aint
+	BICB	#300,PAROPT(R1)
+	BISB	R0,PAROPT(R1)	;stuff those rascals where clock will notice
+3$:	FORMAT	#IPFMT		;yes. display inp process status
+	BIT	#7,PAROPT(R1)	;is this clock process
+	BEQ	STA20		;branch if no
+	FORMAT	#COM11		;yes. display clock fields
+	BR	STA20
+;
+4$:	CMP	R0,#27		;is this network process
+	BNE	5$		;branch if no
+	FORMAT	#GTFMT		;yes. display net process status
+	BR	STA20
+;
+5$:	CMP	R0,#30		;is this host process
+	BNE	6$		;branch if no
+	FORMAT	#HLFMT		;yes. display hos process status
+	BR	STA20
+;
+6$:	CMP	R0,#32		;is this daemon process
+	BNE	7$		;branch if no
+	JSR	PC,SHOW		;yes. display udp process status
+	BR	STA20
+;
+7$:	FORMAT	#COM1		;illegal process
+	RTS	PC
+;
+; Show (sho) show UDP neighbor status
+; Arg1 = entry id
+;
+SHOW:	JSR	PC,RDDEC	;get entry id
+	TST	R0		;from upstairs
+	BNE	6$		;branch if present
+	FORMAT	#COM20		;missing. display header
+	CLR	ARGBLK
+	MOV	NTPTAB,R4	;display neighbor
+1$:	CMP	R4,NTPEND
+	BHIS	5$		;branch if done
+	TSTB	NG.FLG(R4)	;count non-mobilized entries
+	BNE	2$
+	INC	ARGBLK
+2$:	TST	NG.SRC(R4)
+	BEQ	4$		;branch if empty
+	FORMAT	#COM26,R4	;display entry
+	MOV	NG.PST(R4),R0
+	BIC	#^C7,R0
+	CLR	ARGBLK+2
+	MOVB	COM25(R0),ARGBLK+2
+	FORMAT	#COM27,#ARGBLK+2
+	FORMAT	#COM28,R4
+	MOV	PRTPTR,COUNT	;recompute length
+	SUB	BUFPTR,COUNT
+	CMP	COUNT,#MAXGRM	;is buffer size exceeded
+	BLOS	4$		;branch if no
+	JSR	PC,UNBUF	;yes. lop off a chunk
+	MOV	COUNT,R0	;copy residual
+	BEQ	5$		;branch if buffer squeeze
+	MOV	BUFPTR,R1
+	MOV	#BUFFER,PRTPTR
+	MOV	#BUFFER,BUFPTR
+3$:	MOVB	(R1)+,@PRTPTR
+	INC	PRTPTR
+	SOB	R0,3$
+4$:	ADD	#NG.LEN,R4	;advance to next entry
+	BR	1$
+;
+5$:	FORMAT	#COM21,#ARGBLK	;display max id
+	RTS	PC
+;
+6$:	JSR	PC,SHOW1	;coward's way
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+; NTP command handrail
+;
+NTPCMD:	.WORD	NTPNOP		;0 unspecified
+	.WORD	NTPRDS		;1 read status
+	.WORD	NTPRDV		;2 read variables
+	.WORD	NTPWRV		;3 write variables (not supported)
+	.WORD	NTPRDR		;4 read radio variables
+	.WORD	NTPWRR		;5 write radio variables
+	.WORD	NTPTRP		;6 set trap address (not supported)
+NTPENC	=	.		;end of table
+DEVCLK:	.WORD	COM82A,COM82B,COM82C,COM82D ;clock device encoding
+;
+; NTP clock type encoding
+;
+CLKENC:	.ASCIZ	'UNSP'		;0 unspecified or unknown
+	.ASCIZ	'ATOM'		;1 atomic
+	.ASCIZ	'WWVB'		;2 lf radio
+	.ASCIZ	'WWV'<0>	;3 hf radio
+	.ASCIZ	'GOES'		;4 uhf satellite
+	.ASCIZ	'DCN'<0>	;5 dcn (local net)
+	.ASCIZ	'NTP'<0>	;6 udp/ntp
+	.ASCIZ	'UDP'<0>	;7 udp/time
+	.ASCIZ	'MAN'<0>	;8 eyeball-and-wristwatch
+	.ASCIZ	'NIST'		;9 telephone modem
+;
+; Text strings
+;
+COM2:	.ASCIZ	'?UDP-W-Restarting'
+COM1:	.ASCIZ	'?STAT-F-Illegal process'
+COM3:	.ASCIZ	'?STAT-F-Invalid command'
+COM33:	.ASCIZ	'?NTPMON-F-Invalid message length or format'
+COM31:	.ASCIZ	'?NTPMON-F-Authentication failure'
+COM34:	.ASCIZ	'?NTPMON-F-Invalid or unsupported request'
+COM32:	.ASCIZ	'?NTPMON-F-Administratively prohibited'
+COM30:	.ASCIZ	'?NTPMON-F-Unknown association identifier'
+COM35:	.ASCIZ	'?NTPMON-F-Unknown variable name'
+COM36:	.ASCIZ	'?NTPMON-F-Invalid variable value'
+;
+; Internet process
+;
+IPFMT:	.ASCII	'Process type: ^K'<PARTPE>'  options: ^K'<PAROPT>'^/'
+	.ASCII	'Host ID: ^BI'<PARHID>'  max conn: ^BI'<PARCNT>
+	.ASCII	'  max size: ^I'<PARMAX>'^/'
+	.ASCII	'Input packets	^MI'<PARTOT>
+	.ASCII	'	Output packets	^MI'<PARTOP>'^/'
+	.ASCII	'  bad format	^I'<PARIPF>
+	.ASCII	'	Returned	^I'<PARECH>'^/'
+	.ASCII	'  bad checksum	^I'<PARIPX>
+	.ASCII	'	ICMP msgs rcvd	^I'<PARSIG>'^/'
+	.ASCII	'  unreachable	^I'<PARECM>
+	.ASCII	'	ICMP msgs sent	^I'<PARIPR>'^/'
+	.ASCIZ	'  reass error	^I'<PARFTO>
+COM11:	.ASCII	'NBS time ^BI'<PARVLF>'	^A'<PARNBM>'^/'
+	.ASCII	'Poll messages	^MI'<PARNBP>'^/'
+	.ASCII	'  no reply	^I'<PARNBR>'^/'
+	.ASCII	'  bad format	^I'<PARNBX>'^/'
+	.ASCII	'  bad data	^I'<PARNBD>'^/'
+	.ASCIZ	'  last set	^I'<PARLST>
+;
+; Network process
+;
+GTFMT:	.ASCII	'Process type: ^K'<PARTPE>'  options: ^K'<PAROPT>'^/'
+	.ASCII	'Subnet: ^R'<PARSBT>'  status: ^BK'<PARSTX>
+	.ASCII	'  hello: ^BI'<PARMIN>'  timeout: ^I'<PARTRY>'^/'
+	.ASCII	'Address: ^C'<PARADR>'  max size: ^I'<PARMAX>
+	.ASCII	'  bias: ^I'<PARBIA>'  queue: ^I'<PARRHO>'^/'
+	.ASCII	'Input packets	^MI'<PARINP>
+	.ASCII	'	Output packets	^MI'<PAROUT>'^/'
+	.ASCII	'  bad format	^I'<PARFMT>
+	.ASCII	'	  frag error	^I'<PARFRG>'^/'
+	.ASCII	'  bad checksum	^I'<PARCKS>
+	.ASCII	'	  preempted	^I'<PARPMP>'^/'
+	.ASCII	'  unreachable	^I'<PARMIS>
+	.ASCII	'	  time exceeded	^I'<PARTTL>'^/'
+	.ASCII	'  HELLO msgs	^MI'<PARHLO>
+	.ASCII	'	  HELLO msgs	^MI'<PARHLX>'^/'
+	.ASCII	'Input errors	^I'<PARNRY>
+	.ASCII	'	Output errors	^I'<PARERR>'^/'
+	.ASCII	'Returned	^I'<PARRTN>
+	.ASCII	'	ICMP msgs	^I'<PARRET>'^/'
+	.ASCII	'No buffer	^I'<PARNBF>
+	.ASCIZ	'	Quenched	^I'<PARQNC>
+;
+; Host process
+;
+HLFMT:	.ASCII	'Process type: ^K'<PARTPE>'  options: ^K'<PAROPT>'^/'
+	.ASCII	'Reference clock: ^BI'<CLKTYP>'  from: ^BI'<PARCKH>
+	.ASCII	'  dispersion: ^I'<CLKERR>'  refstamp: ^+D'<CLKREF>
+	.ASCII	' ^+T'<CLKREF+2>'^/'
+	.ASCII	'Local clock offset: ^SI'<PARINC>'  skew: ^SI'<CLKDRF>
+	.ASCII	'  comp: ^SBI'<PARDCC>'  poll: ^SBI'<PARDCC+1>
+	.ASCII	'  stratum: ^BI'<CLKSTR>'  prec: ^SI'<CLKPRE>'^/'
+	.ASCII	'Processes	^I'<PARPRO>
+	.ASCII	'	Free blocks	^I'<PARPKT>'^/'
+	.ASCII	'Vectors		^I'<PARINT>
+	.ASCII	'	Free bytes	^I'<PARPKT+2>'^/'
+	.ASCII	'Nibbles		^I'<PARNIB>
+	.ASCII	'	Quench level	^I'<PARCGT>'^/'
+	.ASCII	'Packets		^I'<PARCNG>
+	.ASCII	'	Uptime		^+T'<PARUPT>'^/'
+	.ASCII	'Lost traps: ^I'<PARTRL>
+	.ASCII	'  ^K'<PARTRB>' ^K'<PARTRB+2>' ^K'<PARTRB+4>
+	.ASCII	' ^K'<PARTRB+6>' ^K'<PARTRB+10>' ^K'<PARTRB+12>'^/'
+	.ASCII	'Route changes: ^I'<PARRTC>
+	.ASCII	'  net: ^C'<PARTRN>'  changes: ^I'<PARRTC+2>'^/'
+PDFMT:	.ASCII	'Sequence: ^I'<PARPDN>'  pc: ^K'<PARPDN+6>
+	.ASCII	'  code: ^BK'<PARPDN+2>'  process: ^K'<PARPDN+4>'^/'
+	.ASCII	'Regs:   ^K'<PARPDR>' ^K'<PARPDR+2>' ^K'<PARPDR+4>
+	.ASCII	' ^K'<PARPDR+6>' ^K'<PARPDR+10>' ^K'<PARPDR+12>
+	.ASCII	' ^K'<PARPDR+14>' ^K'<PARPDR+16>'^/'
+	.ASCII	'Stack:  ^K'<PARPDS>' ^K'<PARPDS+2>' ^K'<PARPDS+4>
+	.ASCII	' ^K'<PARPDS+6>' ^K'<PARPDS+10>' ^K'<PARPDS+12>
+	.ASCIZ	' ^K'<PARPDS+14>' ^K'<PARPDS+16>
+;
+; NTP control message
+;
+COM70:	.ASCII	'srcadr=^C'<NG.SRC>', srcport=^XI'<NG.SRC+4>
+	.ASCII	', dstadr=^C'<NG.DST>', dstport=^XI'<NG.DST+4>',^/'
+	.ASCII	'keyid=^BI'<NG.KEY>', stratum=^BI'<NG.STR>
+	.ASCII	', precision=^SBI'<NG.PRE>', rootdelay=^SMI'<NG.ERR>
+	.ASCIZ	', rootdispersion=^SMI'<NG.DRF>','
+COM71:	.ASCIZ	'refid=^A'<NG.RID>'^+'
+COM72:	.ASCIZ	'refid=^C'<NG.RID>'^+'
+COM73:	.ASCII	', reftime="^+D'<NG.REF>' ^+T'<NG.REF+2>'",^/'
+	.ASCII	'delay=^SI'<NG.DLY>', offset=^SMI'<NG.OFS+2>
+	.ASCII	', dispersion=^I'<NG.DSP>', $weight=^I'<NG.WGT>
+	.ASCII	', pmode=0x^BH'<NG.STA>', hmode=0x^BH'<NG.FLG>',^/'
+	.ASCIZ	'reach=0x^BH'<NG.SRG>', valid=^BI'<NG.RCT>'^+'
+COM73A:	.ASCIZ	', leap=^BI'<0>', hmode=^BI'<1>'^+'
+COM73B:	.ASCII	', hpoll=^SBI'<NG.MPI>', ppoll=^SBI'<NG.HPI>
+	.ASCII	', $flash=0x^BH'<NG.BIT>',^/'
+	.ASCII	'org=0x^H'<NG.ORG>'^H'<NG.ORG+2>'.^H'<NG.ORG+4>'^H'<NG.ORG+6>
+	.ASCII	', rec=0x^H'<NG.REC>'^H'<NG.REC+2>'.^H'<NG.REC+4>'^H'<NG.REC+6>
+	.ASCII	', xmt=0x^H'<NG.XMT>'^H'<NG.XMT+2>'.^H'<NG.XMT+4>'^H'<NG.XMT+6>',^/'
+	.ASCII	'filtdelay=	^SI'<NG.FLT+6>'	^SI'<NG.FLT+20>
+	.ASCII	'	^SI'<NG.FLT+32>'	^SI'<NG.FLT+44>
+	.ASCII	'	^SI'<NG.FLT+56>'	^SI'<NG.FLT+70>
+	.ASCII	'	^SI'<NG.FLT+102>'	^SI'<NG.FLT+114>',^/'
+	.ASCII	'filtoffset=	^SMI'<NG.FLT+2>'	^SMI'<NG.FLT+14>
+	.ASCII	'	^SMI'<NG.FLT+26>'	^SMI'<NG.FLT+40>
+	.ASCII	'	^SMI'<NG.FLT+52>'	^SMI'<NG.FLT+64>
+	.ASCII	'	^SMI'<NG.FLT+76>'	^SMI'<NG.FLT+110>',^/'
+	.ASCII	'filterror=	^I'<NG.FLT+10>'	^I'<NG.FLT+22>
+	.ASCII	'	^I'<NG.FLT+34>'	^I'<NG.FLT+46>
+	.ASCII	'	^I'<NG.FLT+60>'	^I'<NG.FLT+72>
+	.ASCIZ	'	^I'<NG.FLT+104>'	^I'<NG.FLT+116>
+COM74:	.ASCII	'processor=PDP11/LSI-11, system=FUZZBALL,^/'
+	.ASCIZ	'keyid=^BI'<0>'^+'
+COM75:	.ASCII	', stratum=^BI'<CLKSTR>', precision=^SI'<CLKPRE>
+	.ASCIZ	', rootdispersion=^I'<CLKERR>'^+'
+COM76:	.ASCIZ	', rootdelay=^SI'<0>','
+COM76A:	.ASCIZ	', rootdelay=0, '
+COM83:	.ASCIZ	'leap=^I'<0>'^+'
+COM77:	.ASCIZ	', peer=^I'<NG.IDN>'^+'
+COM78:	.ASCIZ	', refid=^A'<0>'^+'
+COM79:	.ASCIZ	', reftime="^+D'<CLKREF>' ^+T'<CLKREF+2>'",^/clock="^LD ^LT"^+'
+COM81:	.ASCII	', phase=^SI'<PARINC>', freq=^SI'<CLKDRF>
+	.ASCIZ	', comp=^SBI'<PARDCC>', poll=^SBI'<PARDCC+1>
+COM82A:	.ASCIZ	'device=Spectracom 8170 WWVB Receiver,'
+COM82B:	.ASCIZ	'device=TrueTime 432-DC GOES Receiver,'
+COM82C:	.ASCIZ	'device=Heath GC-1000 WWV/H Receiver,'
+COM82D:	.ASCIZ	'device=Precision Standard Time 1020 (v4.01) WWV/H Receiver,'
+COM82:	.ASCII	'timecode="^A'<PARNBM>'",^/'
+	.ASCII	'poll=^I'<PARNBP>', noreply=^I'<PARNBR>
+	.ASCIZ	', badformat=^I'<PARNBX>', baddata=^I'<PARNBD>
+COM10:	.ASCII	'header=0x^XH'<NM.MOD>', sequence=^XI'<NM.SEQ>
+	.ASCII	', ident=^XI'<NM.AID>', status=0x^XH'<NM.STA>
+	.ASCIZ	', count=^XI'<NM.CNT>
+	.EVEN
+;
+	.PSECT	$ERAS,RW,I
+;
+; Variables
+;
+XFLAG:	.BLKW	1		;exit flag
+TEMP:	.BLKW	1		;temp
+LENGTH:	.BLKW	1		;request message length
+COUNT:	.BLKW	1		;message byte count
+OFFSET:	.BLKW	1		;message byte offset
+BUFPTR:	.BLKW	1		;buffer pointer
+AUTHSW:	.BLKW	1		;authentication switch
+STAKEY:	.BLKW	1		;authentication key
+ARGBLK:	.BLKW	5		;rt-11 argument block
+LINE:	.BLKB	128.		;command buffer
+BUFFER:	.BLKB	1024.		;encoding buffer
+	.EVEN
+;
+	.END
+                                                                                                                                                                                                                                                                                                               

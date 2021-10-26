@@ -1,0 +1,849 @@
+	.TITLE	TIO	MACRO Disassembler
+	.NLIST	BEX
+	.ENABL	LC
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.CSIGE,.EXIT,.PRINT ;rt-11 definitions
+	.MCALL	.WAIT,.WRITW,.READW,.CLOSE,.PURGE
+;
+; Module definitions
+;
+ADRSIZ	=	500.		;size of operand table
+HT	=	011		;horizontal tabulation (fe)
+LF	=	012		;line feed (fe)
+CR	=	015		;carriage return (fe)
+;
+; MACRO Disassembler
+;
+BYTBIT	=	100000		;Byte operand
+JMPBIT	=	040000		;Jump operand
+LOGBIT	=	020000		;Logical operand
+XITBIT	=	010000		;Exit operand
+SRCBIT	=	004000		;Source operand
+LITBIT	=	002000		;Literal operand
+REFBIT	=	001000		;Reference (ADRTAB)
+LOCBIT	=	000400		;Location (ADRTAB)
+DATMOD	=	000200		;Data mode
+INSMOD	=	000100		;Instruction mode
+;
+	.MACRO	OPTAB OP,MASK,FLAG,CODE,NAME ;generate OPTAB entry
+	.WORD	OP,^C<MASK>,FLAG,CODE
+	.ASCIZ	/NAME/
+	.EVEN
+	.ENDM	OPTAB
+	.PAGE
+	.SBTTL	Get file specifications and switches
+;
+; Procedure segment
+;
+	.PSECT	TEXT
+;
+; Get CSI string and open files
+;
+START:	MOV	SP,R2		;mark stack for options
+1$:	MOV	R2,SP		;position stack if error
+	.CSIGE	#DEVSPC,#DEFEXT,#0 ;get file specs
+	BCS	1$		;back if error
+	CLR	OPTION		;initialize options
+	TST	(SP)+		;pop off count
+2$:	CMP	SP,R2		;more switches specified
+	BHIS	3$		;branch if no
+	MOV	(SP)+,OPTION	;get option switch
+	BPL	2$
+	TST	(SP)+
+	BR	2$
+;
+; Initialize variables and switches
+;
+3$:	.WAIT	#3		;is input file defined
+	BCS	START		;branch if no
+	.READW	#AREA,#3,#INPBUF,#256.,#0 ;yes. program limits
+	BCC	4$		;branch if no error
+	.PRINT	#COM01		;"Input error"
+	BR	START
+;
+4$:	MOV	INPBUF+40,PGMSTR ;initialize pass 1
+	MOV	INPBUF+42,PGMLOW
+	MOV	INPBUF+50,PGMHIG
+	MOV	#ADRTAB,ADRLST
+	CLR	OUTPTR
+	CLR	PASCNT
+PASS:	MOV	PGMLOW,R0	;initialize all passes
+	MOV	R0,PGMPC
+	ASH	#-9.,R0
+	MOV	R0,INPBLK
+	CLR	INPCNT
+	MOV	#ADRTAB,ADRPTR
+	MOV	#INSMOD,FLAGS
+;
+; Get next instruction
+;
+LOOP:	MOV	#LINE,R4	;initialize
+	CLR	LINTAB
+	ADD	PASCNT,PC	;pass control
+	BR	INSTRC		;0 pass 1
+	BR	1$		;2 pass 2
+1$:	MOV	ADRPTR,R1	;4 pass 3. scan address table
+	MOV	R1,R2
+	CLR	R3
+2$:	CMP	@R2,PGMPC	;is address in range
+	BHI	3$		;branch if no
+	MOV	R2,R3		;yes. save flags
+	CMP	(R2)+,(R2)+	;advance to next entry
+	BR	2$
+;
+3$:	MOV	R2,ADRPTR	;reset table pointer
+	TST	R3		;were labels assigned
+	BEQ	12$		;branch if no
+	CMP	@R3,PGMPC	;yes. is address at PC
+	BNE	6$		;branch if no
+	BIT	#INSMOD,FLAGS	;yes. determine mode
+	BEQ	4$		;branch if program
+	BIT	#JMPBIT,2(R3)
+	BNE	4$		;branch if program
+	BIT	#DATMOD,FLAGS	;data. is this new mode
+	BNE	6$		;branch if no
+	BIS	#DATMOD,FLAGS	;yes. set data mode
+	BR	5$
+;
+4$:	BIT	#XITBIT!DATMOD,FLAGS ;program. is this new mode
+	BEQ	6$		;branch if no
+	BIC	#DATMOD!INSMOD,FLAGS ;yes. set program mode
+5$:	JSR	PC,PRIND	;print indicator
+6$:	CMP	R4,#LINE	;is line empty
+	BEQ	7$		;branch if yes
+	JSR	PC,PRINT	;no. shove it out
+7$:	BIS	#LOCBIT,2(R1)	;yes. record generated label
+	BIT	#JMPBIT,2(R1)	;determine mode
+	BNE	8$		;branch if program
+	MOVB	#'D,(R4)+	;data
+	BR	9$
+;
+8$:	MOVB	#'I,(R4)+	;program
+9$:	MOV	@R1,R0		;complete label
+	JSR	PC,PRDEC
+	MOV	@R1,R0
+	SUB	PGMPC,R0	;compute displacement
+	BNE	10$		;branch if nonzero
+	MOVB	#':,(R4)+	;zero. LAB: format
+	BR	11$
+;
+10$:	MOVB	#HT,(R4)+	;LAB = VAL format
+	MOVB	#'=,(R4)+
+	MOVB	#HT,(R4)+
+	MOVB	#'.,(R4)+
+	JSR	PC,PRDEC
+	JSR	PC,PRINT
+11$:	CMP	(R1)+,(R1)+	;advance to next label
+	CMP	R1,R2		;is this last
+	BLO	6$		;branch if no
+12$:	BIT	#XITBIT,FLAGS	;yes. is this program break
+	BEQ	13$		;branch if no
+	JSR	PC,PRIND	;yes. output indicator
+13$:	MOVB	#HT,(R4)+	;skip label field
+	MOV	PGMPC,R0	;output PC
+	JSR	PC,PROCT
+INSTRC:	BIC	#^C<DATMOD!INSMOD>,FLAGS ;initialize
+	JSR	PC,RDWRD	;get next word
+	BCC	12$		;branch if not end
+	BIS	#JMPBIT,FLAGS	;end of program. mark branch operand
+	MOV	#COMEND,R1
+1$:	MOVB	(R1)+,(R4)+	;copy ".END" instruction
+	BNE	1$
+	DEC	R4
+	MOV	PGMSTR,R0	;output operand
+	JSR	PC,INSADR
+	JSR	PC,PRINT
+	ADD	PASCNT,PC	;pass control
+	BR	3$		;0 pass 1
+	BR	4$		;2 pass 2
+	JSR	PC,PREOF	;4 pass 3. close output file
+2$:	JMP	START
+;
+3$:	ADD	#2,PASCNT	;pass 1. set pass 2
+4$:	MOV	#ADRTAB,R1	;pass 2. test reference bits
+	CLR	R2
+5$:	CMP	R1,ADRLST
+	BHIS	6$
+	TST	(R1)+
+	MOV	(R1)+,R0
+	COM	R0
+	BIT	#REFBIT!LOCBIT,R0
+	BEQ	5$
+	INC	R2
+	BR	5$
+;
+6$:	TST	R2		;were all labels processed
+	BEQ	10$		;branch if yes
+	MOV	#ADRTAB,R1	;no. remove unreferenced labels
+	MOV	R1,R2
+7$:	CMP	R1,ADRLST
+	BHIS	9$
+	BIT	#REFBIT,2(R1)
+	BEQ	8$
+	BIC	#REFBIT!LOCBIT,2(R1)
+	MOV	@R1,(R2)+
+	MOV	2(R1),(R2)+
+8$:	CMP	(R1)+,(R1)+
+	BR	7$
+;
+9$:	MOV	R2,ADRLST	;save new pointer
+	BR	11$
+;
+10$:	ADD	#2,PASCNT	;set pass 3
+	.WAIT	#0		;is output file defined
+	BCS	2$		;branch if no
+	MOV	#OUTBUF,OUTPTR	;yes. initialize last pass
+	MOV	#512.,OUTCNT
+	CLR	OUTBLK
+11$:	MOV	#177777,@ADRLST	;mosey on to next pass
+	JMP	PASS
+;
+12$:	MOV	R0,PGMOP	;save operation
+;
+; Find operation code and format
+;
+SEARCH:	ADD	PASCNT,PC	;pass control
+	BR	3$		;0 pass 1
+	BR	1$		;2 pass 2
+1$:	BIT	#DATMOD,FLAGS	;4 pass 3. is this data mode
+	BEQ	3$		;branch if no
+	MOV	#COMWRD,R1	;yes. copy ".WORD" instruction
+2$:	MOVB	(R1)+,(R4)+
+	BNE	2$
+	DEC	R4
+	MOV	PGMOP,R0	;output operand
+	JSR	PC,PRDEC
+	JSR	PC,PRINT	;output text
+	BR	7$
+;
+3$:	MOV	#OPTAB,R1	;instruction mode. initialize
+	MOV	R4,R3
+4$:	MOV	R3,R4		;restore text pointer
+	MOV	(R1)+,OPCODE	;get next entry
+	MOV	(R1)+,OPMASK
+	MOV	(R1)+,OPFLAG
+	MOV	(R1)+,OPTYPE
+5$:	MOVB	(R1)+,(R4)+
+	BNE	5$
+	DEC	R4
+	MOVB	#HT,(R4)+	;advance to operand field
+	INC	R1
+	BIC	#1,R1
+	CMP	OPCODE,#177777	;is this end of table
+	BEQ	6$		;branch if yes
+	MOV	PGMOP,R0	;no. assemble operation and operand fields
+	BIC	OPMASK,R0
+	CMP	R0,OPCODE	;does operation code match
+	BNE	4$		;branch if no
+6$:	COM	OPMASK		;leave only operand
+	BIC	OPMASK,PGMOP
+	BIS	OPFLAG,FLAGS
+	JSR	PC,@OPTYPE	;decode operands
+7$:	JMP	LOOP
+;
+; Undefined operation
+;
+OPD9:	MOV	PGMOP,R0	;output operand
+	JSR	PC,PRDEC
+	JSR	PC,PRINT	;output text
+	RTS	PC
+;
+; Decode xxSSDD format (double-operand instructions)
+; MOV(B), CMP(B), BIT(B), BIC(B), BIS(B), ADD, SUB
+;
+OPD2:	MOV	PGMOP,R0	;decode SS
+	ASH	#-6,R0
+	JSR	PC,DECODE
+	BIC	#LOGBIT!SRCBIT,FLAGS
+	MOVB	#',,(R4)+	;decode DD
+	MOV	PGMOP,R0
+	JSR	PC,DECODE
+	JSR	PC,PRINT
+	RTS	PC
+;
+; Decode xxxRSS format
+; MUL, DIV, ASH, ASHC
+;
+OPD7:	MOV	PGMOP,R0	;decode SS
+	JSR	PC,DECODE
+	BIC	#SRCBIT,FLAGS
+	MOVB	#',,(R4)+
+	MOV	PGMOP,R0	;decode R
+	ASH	#-6,R0
+	BIC	#^C7,R0
+	ASL	R0
+	MOVB	COMREG(R0),(R4)+
+	MOVB	COMREG+1(R0),(R4)+
+	JSR	PC,PRINT
+	RTS	PC
+;
+; Decode xxxRDD format
+; JSR, XOR
+;
+OPD6:	MOV	PGMOP,R0	;decode R
+	ASH	#-6,R0
+	BIC	#^C7,R0
+	ASL	R0
+	MOVB	COMREG(R0),(R4)+
+	MOVB	COMREG+1(R0),(R4)+
+	MOVB	#',,(R4)+
+	MOV	PGMOP,R0	;decode SS/DD
+	BIC	#^C77,R0
+	JSR	PC,DECODE
+	JSR	PC,PRINT
+	RTS	PC
+;
+; Decode xxxxSS, ssssDD format (single-operand instructions)
+; JMP, SWAB, CLR(B), COM(B), INC(B), DEC(B), NEG(B), ADC(B), SBC(B), TST(B)
+; ROR, ROL, ASR, ASL, MFPI, MTPI, SXT, MFPD, MTPD
+;
+OPD1:	MOV	PGMOP,R0	;decode SS/DD
+	JSR	PC,DECODE
+	JSR	PC,PRINT
+	RTS	PC
+;
+; Decode no-operand format
+; HALT, WAIT, RTI, BPT, IOT, RESET, RTT, NOP, CLx, SEx
+;
+OPD0:	CLRB	-(R4)		;back up over HT
+	JSR	PC,PRINT	;output text
+	RTS	PC
+;
+; Decode xxxRNN format
+; SOB
+;
+OPD8:	MOV	PGMOP,R0	;decode R
+	ASH	#-6,R0
+	BIC	#^C7,R0
+	ASL	R0
+	MOVB	COMREG(R0),(R4)+
+	MOVB	COMREG+1(R0),(R4)+
+	MOVB	#',,(R4)+
+	MOV	PGMOP,R0	;decode NN
+	BIC	#^C77,R0
+	ASL	R0
+	NEG	R0
+	ADD	PGMPC,R0
+	JSR	PC,INSADR
+	JSR	PC,PRINT
+	RTS	PC
+;
+; Decode xxxNNN format (branch instruction)
+;
+OPD3:	MOVB	PGMOP,R0	;decode NNN
+	ASL	R0
+	ADD	PGMPC,R0
+	JSR	PC,INSADR
+	JSR	PC,PRINT
+	RTS	PC
+;
+; Decode xxxxxN, xxxxNN, xxxNNN format
+; MARK, EMT, TRAP
+;
+OPD5:	MOV	PGMOP,R0	;decode N
+	JSR	PC,PRDEC
+	JSR	PC,PRINT
+	RTS	PC
+;
+; Decode xxxxxR format
+; RTS, FADD, FSUB, FMUL, FDIV
+;
+OPD4:	MOV	PGMOP,R0	;decode R
+	ASL	R0
+	MOVB	COMREG(R0),(R4)+
+	MOVB	COMREG+1(R0),(R4)+
+	JSR	PC,PRINT	;output text
+	RTS	PC
+;
+; DECODE (DEC) Decode operand field
+; R0 = operand code
+;
+DECODE:	MOV	R0,R1		;get type and register subfields
+	BIC	#^C7,R1
+	ASL	R1
+	MOV	COMREG(R1),R1
+	ASH	#-3,R0
+	BIC	#^C7,R0
+	ASL	R0
+	ADD	R0,PC
+	BR	DEC0		;0 register Rx
+	BR	DEC1		;1 register deferred @Rx
+	BR	DEC2		;2 auto-increment (Rx)+
+	BR	DEC3		;3 auto-increment deferred @(Rx)+
+	BR	DEC4		;4 auto-decrement -(Rx)
+	BR	DEC5		;5 auto-decrement deferred @-(Rx)
+	BR	DEC6		;6 index d(Rx)
+	BR	DEC7		;7 index deferred @d(Rx)
+;
+DEC1:	MOVB	#'@,(R4)+	;register
+DEC0:	MOVB	R1,(R4)+
+	SWAB	R1
+	MOVB	R1,(R4)+
+	BR	DECX
+;
+DEC3:	MOVB	#'@,(R4)+	;auto-increment
+DEC2:	CMP	R1,#"PC		;is this PC addressing
+	BNE	1$		;branch if no
+	MOVB	#'#,(R4)+	;yes. get displacement
+	JSR	PC,RDWRD
+	BIS	#LITBIT,FLAGS
+	JSR	PC,INSADR
+	BIC	#LITBIT,FLAGS
+	RTS	PC
+;
+1$:	MOVB	#'(,(R4)+	;not PC addressesing
+	MOVB	R1,(R4)+
+	SWAB	R1
+	MOVB	R1,(R4)+
+	MOVB	#'),(R4)+
+	MOVB	#'+,(R4)+	
+	BR	DECX
+;
+DEC5:	MOVB	#'@,(R4)+	;auto-decrement
+DEC4:	MOVB	#'-,(R4)+	
+	MOVB	#'(,(R4)+
+	MOVB	R1,(R4)+
+	SWAB	R1
+	MOVB	R1,(R4)+
+	MOVB	#'),(R4)+
+DECX:	JSR	PC,PRTAB	;skip field
+	RTS	PC
+;
+DEC7:	MOVB	#'@,(R4)+	;index
+DEC6:	JSR	PC,RDWRD	;get displacement
+	CMP	R1,#"PC		;is this PC addressing
+	BNE	1$		;branch if no
+	ADD	PGMPC,R0	;yes. relocate
+	JSR	PC,INSADR
+	RTS	PC
+;
+1$:	JSR	PC,INSADR	;not PC addressing
+	MOVB	#'(,(R4)+
+	MOVB	R1,(R4)+
+	SWAB	R1
+	MOVB	R1,(R4)+
+	MOVB	#'),(R4)+
+	RTS	PC
+; 
+; INSADR (INS) Insert entry in address table
+; R0 = address (preserved)
+;
+INSADR:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	CMP	R0,PGMLOW	;is this literal value
+	BLO	10$		;branch if yes
+	CMP	R0,PGMHIG
+	BHI	10$		;branch if yes
+	MOV	FLAGS,R1
+	COM	R1
+	BIT	#LOGBIT!SRCBIT!LITBIT,R1
+	BEQ	10$		;branch if yes
+	TST	OUTPTR		;no. what pass it this
+	BNE	8$		;branch if pass 3
+	MOV	FLAGS,R1	;pass 1. search address table
+	BIC	#^CJMPBIT,R1
+	MOV	#ADRTAB,R2
+1$:	CMP	R2,ADRLST	;is this end of table
+	BHIS	3$		;branch if yes
+	CMP	R0,@R2		;no. does entry belong here
+	BLO	3$		;branch if yes
+	BHI	2$
+	MOV	2(R2),-(SP)
+	BIC	#^CJMPBIT,@SP
+	CMP	R1,(SP)+
+	BLO	3$		;branch if yes
+	BEQ	7$		;branch if duplicate
+2$:	CMP	(R2)+,(R2)+	;no. advance to next entry
+	BR	1$
+;
+3$:	BIS	#REFBIT,R1	;new entry. set reference bit
+4$:	CMP	R2,ADRLST	;is this end of table
+	BHIS	5$		;branch if yes
+	MOV	@R2,-(SP)	;no. exchange entries
+	MOV	2(R2),-(SP)
+	MOV	R0,(R2)+
+	MOV	R1,(R2)+
+	MOV	(SP)+,R1
+	MOV	(SP)+,R0
+	BR	4$
+;
+5$:	CMP	R2,#ADRSIZ*4+ADRTAB ;is table full
+	BLO	6$		;branch if no
+	.PRINT	#COM3		;'address table overflow'
+;
+6$:	MOV	R0,(R2)+	;insert last entry
+	MOV	R1,(R2)+
+	MOV	R2,ADRLST
+	BR	12$
+;
+7$:	BIS	#REFBIT,2(R2)	;duplicate. set reference bit
+	BR	12$
+;
+8$:	MOV	#'I,R1		;pass 2. output operand
+	BIT	#JMPBIT,FLAGS
+	BNE	9$
+	MOV	#'D,R1
+9$:	MOVB	R1,(R4)+
+	BR	11$
+;
+10$:	TST	OUTPTR		;literal address. is this pass 3
+	BEQ	12$		;branch if no
+11$:	JSR	PC,PRDEC	;yes. output operand
+12$:	MOV	(SP)+,R2	;restore registers
+	MOV	(SP)+,R1
+	RTS	PC
+	.PAGE
+	.SBTTL	Subroutines
+;
+; PRDEC (PRD) Print decimal number
+; R0 = signed decimal number
+;
+PRDEC:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	MOV	#5.,R2		;initialize
+	TST	R0		;is number negative
+	BPL	2$		;branch if no
+	CMP	R0,#100000	;yes. diddle it
+	BEQ	1$
+	BIT	#LOGBIT,FLAGS	;is this logical operand
+	BNE	1$		;branch if yes
+	NEG	R0		;no. arithmetic operand. use two's complement
+	MOVB	#'-,(R4)+
+	BR	2$
+;
+1$:	COM	R0		;logical operand. use one's complement
+	MOVB	#'^,(R4)+
+	MOVB	#'C,(R4)+
+2$:	MOV	R0,R1		;move quotient to dividend
+	CLR	R0
+	DIV	#8.,R0		;*** divide by radix
+	MOV	R1,-(SP)	;save remainder
+	DEC	R2
+	BNE	2$
+	MOV	#4.,R2		;initialize to print string
+	CLR	R1
+3$:	MOV	(SP)+,R0	;is this leading zero
+	BEQ	4$		;branch if yes
+	INC	R1		;no. set switch
+4$:	TST	R1		;is lz switch on
+	BEQ	5$		;branch if no
+	ADD	#'0,R0		;yes. print it
+	MOVB	R0,(R4)+
+5$:	DEC	R2
+	BNE	3$
+	MOV	(SP)+,R0	;make sure zero prints
+	ADD	#'0,R0
+	MOVB	R0,(R4)+
+	MOV	(SP)+,R2	;restore registers
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; PRINT (PRN) Write indicator line
+;
+PRIND:	MOVB	#';,(R4)+	;output indicator
+	JSR	PC,PRINT
+	BIC	#XITBIT,FLAGS
+	RTS	PC
+;
+; PROCT (PRO) Write octal word
+; R0 = octal word
+;
+PROCT:	MOV	R1,-(SP)	;save registers
+	TST	OPTION		;is listing specified
+	BEQ	2$		;branch if no
+	MOV	#6.,R1		;yes. initialize loop count
+	ROL	R0		;write high-order digit
+	MOV	R0,-(SP)
+	BIC	#^C0,R0		;first digit only one bit
+1$:	ROL	R0
+	ADD	#'0,R0
+	JSR	PC,PRBYT
+	MOV	(SP)+,R0	;restore argument
+	DEC	R1		;is shift-write fini
+	BEQ	2$		;branch if yes
+	ROL	R0		;rotate next digit
+	ROL	R0
+	ROL	R0
+	MOV	R0,-(SP)	;save argument
+	BIC	#^C3,R0		;mask to three bits
+	BR	1$
+;
+2$:	JSR	PC,PRTAB	;skip field
+	MOV	(SP)+,R1	;restore registers
+	RTS	PC
+;
+; PRTAB (TAB) Write HT
+;
+PRTAB:	TST	OPTION		;is listing specified
+	BEQ	1$		;branch if no
+	MOV	#HT,R0		;yes. output HT
+	JSR	PC,PRBYT
+1$:	INC	LINTAB
+	RTS	PC
+;
+; PRINT (PRN) Write line buffer
+;
+PRINT:	MOV	R1,-(SP)	;save registers
+1$:	CMP	LINTAB,#4	;skip fields
+	BHIS	2$
+	JSR	PC,PRTAB
+	BR	1$
+;
+2$:	CLRB	(R4)+		;plant backstop
+	MOV	#LINE,R1
+3$:	MOVB	(R1)+,R0	;output string
+	BEQ	4$
+	JSR	PC,PRBYT
+	BR	3$
+;
+4$:	MOV	#CR,R0		;end line
+	JSR	PC,PRBYT
+	MOV	#LF,R0
+	JSR	PC,PRBYT
+	MOV	#LINE,R4	;reset for next line
+	CLR	LINTAB
+	MOV	(SP)+,R1	;restore registers
+	RTS	PC
+;
+; RDWRD (INP) Read word from input file
+; returns R0 = next word, CC = C if eof or error
+;
+RDWRD:	CMP	PGMPC,PGMHIG	;is this end of program
+	BHI	1$		;branch if yes
+	TST	INPCNT		;no. is input buffer empty
+	BNE	3$		;branch if no
+	MOV	#INPBUF,INPPTR	;yes. next block
+	.READW	#AREA,#3,INPPTR,#256.,INPBLK
+	BCC	2$		;branch if no error
+	.PRINT	#COM01		;"Input error"
+1$:	CLR	R0		;(just in case)
+	SEC
+	RTS	PC
+;
+2$:	MOV	R0,INPCNT	;no error. initialize
+	INC	INPBLK
+3$:	DEC	INPCNT		;get next word
+	MOV	@INPPTR,R0
+	JSR	PC,PROCT
+	MOV	@INPPTR,R0
+	ADD	#2,INPPTR
+	ADD	#2,PGMPC	;update PC
+	CMP	PGMPC,PGMHIG	;is this last program word
+	BLOS	4$		;branch if no
+	BIS	#XITBIT!INSMOD,FLAGS ;yes. mark for program break
+4$:	CLC
+	RTS	PC
+;
+; PRBYT (OUT) Write byte to output file
+; R0 = byte
+;
+PRBYT:	TST	OUTPTR		;is output file defined
+	BEQ	2$		;branch if no
+	MOVB	R0,@OUTPTR	;yes. stash byte
+	INC	OUTPTR
+	DEC	OUTCNT		;is buffer full
+	BNE	2$		;branch if no
+	MOV	#OUTBUF,OUTPTR	;yes. write next block
+	.WRITW	#AREA,#0,OUTPTR,#256.,OUTBLK
+	BCS	1$		;branch if error
+	MOV	#512.,OUTCNT	;no error. reset output info
+	INC	OUTBLK
+	BR	2$
+;
+1$:	.PRINT	#COM24		;"Output error"
+	CLR	OUTPTR		;amputate output
+2$:	RTS	PC
+;
+; PREOF (OUT) Output end-of-file
+;
+PREOF: 	TST	OUTPTR		;is output file defined
+	BEQ	3$		;branch if no
+1$:	CMP	OUTCNT,#512.	;yes. is buffer empty
+	BHIS	2$		;branch if yes
+	CLR	R0		;no. fill block with zeros
+	JSR	PC,PRBYT
+	BR	1$
+;
+2$:	TST	OUTBLK		;is output file empty
+	BEQ	3$		;branch if yes
+	.CLOSE	#0		;no. close file
+3$:	.PURGE	#0		;purge channel in any case
+	RTS	PC
+	.PAGE
+	.SBTTL	Constants and working storage
+;
+; Data segment
+;
+	.PSECT	DATA
+;
+; Read-only data
+;
+DEFEXT:	.RAD50	'SAVDMP      '	;default input .SAV, output .DMP
+COMREG:	.ASCII	'R0R1R2R3R4R5SPPC' ;register decode table
+;
+; Operation decode table
+;
+OPTAB:	OPTAB	000000,177777,0,OPD0,HALT
+	OPTAB	000001,177777,0,OPD0,WAIT
+	OPTAB	000002,177777,XITBIT!INSMOD,OPD0,RTI
+	OPTAB	000003,177777,0,OPD0,BPT
+	OPTAB	000004,177777,0,OPD0,IOT
+	OPTAB	000005,177777,0,OPD0,RESET
+	OPTAB	000006,177777,XITBIT!INSMOD,OPD0,RTT
+	OPTAB	000100,177700,JMPBIT!XITBIT!INSMOD,OPD1,JMP
+	OPTAB	000200,177770,XITBIT!INSMOD,OPD4,RTS
+	OPTAB	000230,177770,0,OPD5,SPL
+	OPTAB	000240,177777,0,OPD0,NOP
+	OPTAB	000241,177777,0,OPD0,CLC
+	OPTAB	000242,177777,0,OPD0,CLV
+	OPTAB	000243,177777,0,OPD0,CLV!CLC
+	OPTAB	000244,177777,0,OPD0,CLZ
+	OPTAB	000245,177777,0,OPD0,CLZ!CLC
+	OPTAB	000246,177777,0,OPD0,CLZ!CLV
+	OPTAB	000247,177777,0,OPD0,CLZ!CLV!CLC
+	OPTAB	000250,177777,0,OPD0,CLN
+	OPTAB	000251,177777,0,OPD0,CLN!CLC
+	OPTAB	000252,177777,0,OPD0,CLN!CLV
+	OPTAB	000253,177777,0,OPD0,CLN!CLV!CLC
+	OPTAB	000254,177777,0,OPD0,CLN!CLZ
+	OPTAB	000255,177777,0,OPD0,CLN!CLZ!CLC
+	OPTAB	000256,177777,0,OPD0,CLN!CLZ!CLV
+	OPTAB	000257,177777,0,OPD0,CCC
+	OPTAB	000260,177777,0,OPD0,NOP
+	OPTAB	000261,177777,0,OPD0,SEC
+	OPTAB	000262,177777,0,OPD0,SEV
+	OPTAB	000263,177777,0,OPD0,SEV!SEC
+	OPTAB	000264,177777,0,OPD0,SEZ
+	OPTAB	000265,177777,0,OPD0,SEZ!SEC
+	OPTAB	000266,177777,0,OPD0,SEZ!SEV
+	OPTAB	000267,177777,0,OPD0,SEZ!SEV!SEC
+	OPTAB	000270,177777,0,OPD0,SEN
+	OPTAB	000271,177777,0,OPD0,SEN!SEC
+	OPTAB	000272,177777,0,OPD0,SEN!SEV
+	OPTAB	000273,177777,0,OPD0,SEN!SEV!SEC
+	OPTAB	000274,177777,0,OPD0,SEN!SEZ
+	OPTAB	000275,177777,0,OPD0,SEN!SEZ!SEC
+	OPTAB	000276,177777,0,OPD0,SEN!SEZ!SEV
+	OPTAB	000277,177777,0,OPD0,SCC
+	OPTAB	000300,177700,0,OPD1,SWAB
+	OPTAB	000400,177400,JMPBIT!XITBIT!INSMOD,OPD3,BR
+	OPTAB	001000,177400,JMPBIT,OPD3,BNE
+	OPTAB	001400,177400,JMPBIT,OPD3,BEQ
+	OPTAB	002000,177400,JMPBIT,OPD3,BGE
+	OPTAB	002400,177400,JMPBIT,OPD3,BLT
+	OPTAB	003000,177400,JMPBIT,OPD3,BGT
+	OPTAB	003400,177400,JMPBIT,OPD3,BLE
+	OPTAB	004000,177000,JMPBIT,OPD6,JSR
+	OPTAB	005000,177700,0,OPD1,CLR
+	OPTAB	005100,177700,0,OPD1,COM
+	OPTAB	005200,177700,0,OPD1,INC
+	OPTAB	005300,177700,0,OPD1,DEC
+	OPTAB	005400,177700,0,OPD1,NEG
+	OPTAB	005500,177700,0,OPD1,ADC
+	OPTAB	005600,177700,0,OPD1,SBC
+	OPTAB	005700,177700,0,OPD1,TST
+	OPTAB	006000,177700,0,OPD1,ROR
+	OPTAB	006100,177700,0,OPD1,ROL
+	OPTAB	006200,177700,0,OPD1,ASR
+	OPTAB	006300,177700,0,OPD1,ASL
+	OPTAB	006400,177700,0,OPD5,MARK
+	OPTAB	006500,177700,0,OPD1,MFPI
+	OPTAB	006600,177700,0,OPD1,MTPI
+	OPTAB	006700,177700,0,OPD1,SXT
+	OPTAB	010000,170000,SRCBIT,OPD2,MOV
+	OPTAB	020000,170000,SRCBIT,OPD2,CMP
+	OPTAB	030000,170000,LOGBIT!SRCBIT,OPD2,BIT
+	OPTAB	040000,170000,LOGBIT!SRCBIT,OPD2,BIC
+	OPTAB	050000,170000,LOGBIT!SRCBIT,OPD2,BIS
+	OPTAB	060000,170000,SRCBIT,OPD2,ADD
+	OPTAB	070000,177000,SRCBIT,OPD7,MUL
+	OPTAB	071000,177000,SRCBIT,OPD7,DIV
+	OPTAB	072000,177000,0,OPD7,ASH
+	OPTAB	073000,177000,0,OPD7,ASHC
+	OPTAB	074000,177000,0,OPD6,XOR
+	OPTAB	075000,177770,0,OPD4,FADD
+	OPTAB	075010,177770,0,OPD4,FSUB
+	OPTAB	075020,177770,0,OPD4,FMUL
+	OPTAB	075030,177770,0,OPD4,FDIV
+	OPTAB	077000,177000,JMPBIT,OPD8,SOB
+	OPTAB	100000,177400,JMPBIT,OPD3,BPL
+	OPTAB	100400,177400,JMPBIT,OPD3,BMI
+	OPTAB	101000,177400,JMPBIT,OPD3,BHI
+	OPTAB	101400,177400,JMPBIT,OPD3,BLOS
+	OPTAB	102000,177400,JMPBIT,OPD3,BVC
+	OPTAB	102400,177400,JMPBIT,OPD3,BVS
+	OPTAB	103000,177400,JMPBIT,OPD3,BCC
+	OPTAB	103400,177400,JMPBIT,OPD3,BCS
+	OPTAB	104000,177400,0,OPD5,EMT
+	OPTAB	104400,177400,0,OPD5,TRAP
+	OPTAB	105000,177700,BYTBIT,OPD1,CLRB
+	OPTAB	105100,177700,BYTBIT,OPD1,COMB
+	OPTAB	105200,177700,BYTBIT,OPD1,INCB
+	OPTAB	105300,177700,BYTBIT,OPD1,DECB
+	OPTAB	105400,177700,BYTBIT,OPD1,NEGB
+	OPTAB	105500,177700,BYTBIT,OPD1,ADCB
+	OPTAB	105600,177700,BYTBIT,OPD1,SBCB
+	OPTAB	105700,177700,BYTBIT,OPD1,TSTB
+	OPTAB	106000,177700,BYTBIT,OPD1,RORB
+	OPTAB	106100,177700,BYTBIT,OPD1,ROLB
+	OPTAB	106200,177700,BYTBIT,OPD1,ASRB
+	OPTAB	106300,177700,BYTBIT,OPD1,ASLB
+	OPTAB	106500,177700,BYTBIT,OPD1,MFPD
+	OPTAB	106600,177700,BYTBIT,OPD1,MTPD
+	OPTAB	110000,170000,BYTBIT!SRCBIT,OPD2,MOVB
+	OPTAB	120000,170000,BYTBIT!SRCBIT,OPD2,CMPB
+	OPTAB	130000,170000,BYTBIT!LOGBIT!SRCBIT,OPD2,BITB
+	OPTAB	140000,170000,BYTBIT!LOGBIT!SRCBIT,OPD2,BICB
+	OPTAB	150000,170000,BYTBIT!LOGBIT!SRCBIT,OPD2,BISB
+	OPTAB	160000,170000,SRCBIT,OPD2,SUB
+	OPTAB	177777,177777,0,OPD9,.WORD
+;
+; Comment strings
+;
+COMEND:	.ASCIZ	'.END'<HT>
+COMWRD:	.ASCIZ	'.WORD'<HT>
+COM17:	.ASCIZ	'?DISASS-F-Invalid switch or value'
+COM01:	.ASCIZ	'?DISASS-F-Input error'
+COM24:	.ASCIZ	'?DISASS-W-Output error'
+COM02:	.ASCIZ	'?DISASS-F-End of file'
+COM3:	.ASCIZ	'?DISASS-F-Address table overflow'
+	.EVEN
+;
+; Read/write data
+;
+PGMPC:	.BLKW	1		;Program PC
+PGMOP:	.BLKW	1		;Program operation
+PGMSTR:	.BLKW	1		;Program start address
+PGMLOW:	.BLKW	1		;Low program address
+PGMHIG:	.BLKW	1		;High program address
+;
+OPCODE:	.BLKW	1		;Operation code
+OPMASK:	.BLKW	1		;Operation code mask
+OPFLAG:	.BLKW	1		;Operation flags
+OPTYPE:	.BLKW	1		;Operation type
+;
+OPTION:	.BLKW	1		;CSI options
+FLAGS:	.BLKW	1		;Program flags
+PASCNT:	.BLKW	1		;Pass counter
+AREA:	.BLKW	5		;RT-11 argument block
+INPPTR:	.BLKW	1		;Input buffer pointer
+INPCNT:	.BLKW	1		;Input word count
+INPBLK:	.BLKW	1		;Input block number
+OUTPTR:	.BLKW	1		;Output buffer pointer
+OUTCNT:	.BLKW	1		;Output word count
+OUTBLK:	.BLKW	1		;Output block number
+LINTAB:	.BLKW	1		;Output line HT count
+ADRPTR:	.BLKW	1		;Address table pointer
+ADRLST:	.BLKW	1		;Address table end on current pass
+INPBUF:	.BLKW	256.		;Input buffer
+OUTBUF:	.BLKW	256.		;Output buffer
+LINE:	.BLKB	132.		;Line buffer
+	.EVEN
+ADRTAB:	.BLKW	ADRSIZ*2	;Jump table
+DEVSPC	=	.		;Space for device handlers
+;
+	.END	START
+                                                                                      

@@ -1,0 +1,741 @@
+%!PS-Adobe-23.0 EPSF-1.2
+%%Creator: SCHEMA
+%%BoundingBox: 0 0 1343.0 1023.0
+/scl 511804.0 0.072 mul 65536.0 div def
+scl scl scale
+
+% Landscape Orientation
+/xoff 256.0 65536.0 mul 511804.0 div def
+/yoff 1343.0 -256.0 65536.0 mul 511804.0 div sub def
+xoff yoff translate
+-90 rotate
+
+0 setgray
+
+/a { 1 setlinewidth newpath arcn stroke } def
+/fa { 3 setlinewidth newpath arcn stroke } def
+/c { 1 setlinewidth newpath 0 360 arc stroke } def
+/fc { 1 setlinewidth newpath 0 360 arc fill } def
+/l { 1 setlinewidth newpath moveto lineto stroke } def
+/t { 3 setlinewidth newpath moveto lineto stroke } def
+/ds { [4 4] 0 setdash 1 setlinewidth
+	newpath moveto lineto stroke [] 0 setdash } def
+/dt { [2 2] 0 setdash 1 setlinewidth
+	newpath moveto lineto stroke [] 0 setdash } def
+
+8 7 8 1015 t
+1328 7 912 7 t
+1336 1015 8 1015 t
+1336 7 1336 1015 t
+912 7 8 7 t
+1336 7 1328 7 t
+
+/reencsmalldict 12 dict def	%% Schema font definitions
+/ReEncodeSmall
+	{ reencsmalldict begin
+		/newcodesandnames exch def
+		/newfontname exch def
+		/basefontname exch def
+		/basefontdict basefontname findfont def
+		/newfont basefontdict maxlength dict def
+		basefontdict
+			{ exch dup /FID ne
+				{ dup /Encoding eq
+					{ exch dup length array copy newfont 3 1 roll put }
+					{ exch newfont 3 1 roll put }
+					ifelse
+				}
+				{ pop pop }
+				ifelse
+			} forall
+		newfont /FontName newfontname put
+		newcodesandnames aload pop
+		newcodesandnames length 2 idiv
+			{ newfont /Encoding get 3 1 roll put }
+			repeat
+		newfontname newfont definefont pop
+		end
+		} def
+/schfontvec [ 8#200 /Ccedilla 8#201 /udieresis 8#202 /eacute 8#203 /acircumflex
+8#204 /adieresis 8#205 /agrave 8#207 /ccedilla 8#210 /ecircumflex
+8#211 /edieresis 8#212 /egrave 8#213 /idieresis 8#214 /icircumflex
+8#215 /igrave 8#216 /Adieresis 8#220 /Eacute 8#223 /ocircumflex
+8#224 /odieresis 8#225 /ograve 8#226 /ucircumflex 8#227 /ugrave
+8#230 /ydieresis 8#231 /Odieresis 8#232 /Udieresis 8#240 /aacute 8#241 /iacute
+8#242 /oacute 8#243 /uacute 8#244 /ntilde 8#245 /Ntilde ] def
+/schsymbvec [ 8#341 /beta 8#346 /mu 8#352 /Omega ] def
+/Courier-Bold /Schfont schfontvec ReEncodeSmall
+/Symbol /Schsymb schsymbvec ReEncodeSmall
+
+
+/htdict 4 dict def	%% HTEXT - variable spacing horizontal text routine
+/ht
+	{	htdict begin
+		/textstring exch def
+		/xskip exch def
+		0 text_height neg rmoveto
+		/Schfont findfont text_height scalefont setfont
+		textstring
+			{
+			/charcode exch def
+			/thechar ( ) dup 0 charcode put def
+			gsave
+				charcode 8#245 gt
+				{ /Schsymb findfont text_height scalefont setfont
+				thechar show
+				/Schfont findfont text_height scalefont setfont }
+				{ thechar show }
+				ifelse
+			grestore
+			currentpoint moveto
+			xskip 0 rmoveto
+			} forall
+		end
+	} def
+
+/text_height 12 def
+/text_width 6 def
+1304 27 moveto 9 (5) ht
+/text_height 12 def
+/text_width 6 def
+1272 27 moveto 9 (OF) ht
+/text_height 12 def
+/text_width 6 def
+1248 27 moveto 9 (1) ht
+/text_height 12 def
+/text_width 6 def
+1192 27 moveto 9 (SHEET) ht
+1176 31 1176 7 l
+1336 55 992 55 l
+1336 31 992 31 l
+992 7 992 87 t
+1336 87 992 87 t
+/text_height 20 def
+/text_width 9 def
+1032 87 moveto 13 (Loran Timing Receiver) ht
+/text_height 12 def
+/text_width 6 def
+1040 27 moveto 9 (18 Sept 1991) ht
+1176 55 1176 31 l
+/text_height 12 def
+/text_width 6 def
+1032 51 moveto 9 (100-0001-001) ht
+/text_height 12 def
+/text_width 6 def
+1216 51 moveto 9 (REV) ht
+/text_height 12 def
+/text_width 6 def
+1264 51 moveto 9 (1E) ht
+/text_height 12 def
+/text_width 6 def
+672 563 moveto 9 (Receiver Control) ht
+/text_height 12 def
+/text_width 6 def
+664 539 moveto 9 (\(PC adapter card\)) ht
+/text_height 12 def
+/text_width 6 def
+824 507 moveto 9 (J303) ht
+/text_height 12 def
+/text_width 6 def
+904 507 moveto 9 (OUT) ht
+/text_height 12 def
+/text_width 6 def
+824 579 moveto 9 (J302) ht
+/text_height 12 def
+/text_width 6 def
+904 579 moveto 9 (IN) ht
+896 567 864 567 t
+896 495 864 495 t
+/text_height 12 def
+/text_width 6 def
+528 763 moveto 9 (50-ohm) ht
+/text_height 12 def
+/text_width 6 def
+536 739 moveto 9 (coax) ht
+512 783 512 703 l
+/text_height 12 def
+/text_width 6 def
+336 755 moveto 9 (\(near antenna\)) ht
+/text_height 12 def
+/text_width 6 def
+336 739 moveto 9 (1XX designators) ht
+296 783 296 703 l
+512 703 296 703 l
+512 783 296 783 l
+408 847 408 783 l
+432 847 384 847 l
+408 823 384 847 l
+432 847 408 823 l
+/text_height 12 def
+/text_width 6 def
+672 515 moveto 9 (3XX designators) ht
+/text_height 12 def
+/text_width 6 def
+344 771 moveto 9 (Preamplifier) ht
+/text_height 20 def
+/text_width 9 def
+640 271 moveto 13 (System Diagram) ht
+/text_height 12 def
+/text_width 6 def
+920 339 moveto 9 (GRA   ++--+-+- +    +++++--+) ht
+/text_height 12 def
+/text_width 6 def
+920 323 moveto 9 (GRB   +--+++++ -    +-+-++--) ht
+1184 343 960 343 l
+1184 343 1184 303 l
+960 343 960 303 l
+1184 303 960 303 l
+/text_height 12 def
+/text_width 6 def
+984 379 moveto 9 (LORAN-C pulse coding) ht
+464 247 152 247 l
+464 223 152 223 l
+464 199 152 199 l
+464 175 152 175 l
+464 151 152 151 l
+464 127 152 127 l
+288 247 288 127 l
+344 247 344 127 l
+152 247 152 127 l
+464 247 464 127 l
+400 247 400 127 l
+192 479 192 479 l
+208 479 208 479 l
+240 479 240 479 l
+256 479 256 479 l
+288 479 288 479 l
+304 479 304 479 l
+336 479 336 479 l
+352 479 352 479 l
+384 479 384 479 l
+400 479 400 479 l
+432 479 432 479 l
+480 479 480 479 l
+496 479 496 479 l
+448 479 448 479 l
+160 511 144 511 l
+160 527 144 527 l
+160 543 160 527 l
+256 543 160 543 l
+256 543 256 527 l
+352 527 256 527 l
+352 543 352 527 l
+400 543 352 543 l
+400 543 400 527 l
+448 527 400 527 l
+448 543 448 527 l
+496 543 448 543 l
+496 543 496 527 l
+208 543 208 527 l
+304 543 304 527 l
+/text_height 12 def
+/text_width 6 def
+184 539 moveto 9 (+) ht
+/text_height 12 def
+/text_width 6 def
+232 539 moveto 9 (+) ht
+/text_height 12 def
+/text_width 6 def
+280 539 moveto 9 (-) ht
+/text_height 12 def
+/text_width 6 def
+328 539 moveto 9 (-) ht
+/text_height 12 def
+/text_width 6 def
+376 539 moveto 9 (+) ht
+/text_height 12 def
+/text_width 6 def
+424 539 moveto 9 (-) ht
+/text_height 12 def
+/text_width 6 def
+472 539 moveto 9 (+) ht
+/text_height 12 def
+/text_width 6 def
+520 539 moveto 9 (-) ht
+496 575 496 559 l
+512 567 496 567 l
+464 567 448 567 l
+160 583 144 583 l
+160 599 160 583 l
+192 599 160 599 l
+192 599 192 583 l
+464 583 192 583 l
+464 599 464 583 l
+496 599 464 599 l
+496 599 496 583 l
+528 583 496 583 l
+192 623 192 607 l
+496 623 496 607 l
+/text_height 12 def
+/text_width 6 def
+296 627 moveto 9 (GRI 99600 us) ht
+288 615 192 615 l
+496 615 408 615 l
+/b { newpath 0.5 0 360 arc fill } def
+492 618 b
+492 617 b
+493 617 b
+492 616 b
+493 616 b
+494 616 b
+488 615 b
+489 615 b
+490 615 b
+491 615 b
+492 615 b
+493 615 b
+494 615 b
+492 614 b
+493 614 b
+494 614 b
+492 613 b
+493 613 b
+492 612 b
+495 615 b
+460 570 b
+460 569 b
+461 569 b
+460 568 b
+461 568 b
+462 568 b
+456 567 b
+457 567 b
+458 567 b
+459 567 b
+460 567 b
+461 567 b
+462 567 b
+460 566 b
+461 566 b
+462 566 b
+460 565 b
+461 565 b
+460 564 b
+463 567 b
+156 514 b
+156 513 b
+157 513 b
+156 512 b
+157 512 b
+158 512 b
+152 511 b
+153 511 b
+154 511 b
+155 511 b
+156 511 b
+157 511 b
+158 511 b
+156 510 b
+157 510 b
+158 510 b
+156 509 b
+157 509 b
+156 508 b
+159 511 b
+196 618 b
+195 617 b
+196 617 b
+194 616 b
+195 616 b
+196 616 b
+193 615 b
+194 615 b
+195 615 b
+196 615 b
+197 615 b
+198 615 b
+199 615 b
+194 614 b
+195 614 b
+196 614 b
+195 613 b
+196 613 b
+196 612 b
+200 615 b
+500 570 b
+499 569 b
+500 569 b
+498 568 b
+499 568 b
+500 568 b
+497 567 b
+498 567 b
+499 567 b
+500 567 b
+501 567 b
+502 567 b
+503 567 b
+498 566 b
+499 566 b
+500 566 b
+499 565 b
+500 565 b
+500 564 b
+504 567 b
+864 799 600 799 l
+600 743 512 743 t
+/text_height 12 def
+/text_width 6 def
+608 755 moveto 9 (J201) ht
+/text_height 12 def
+/text_width 6 def
+672 755 moveto 9 (\(independent\)) ht
+/text_height 12 def
+/text_width 6 def
+696 779 moveto 9 (Receiver) ht
+/text_height 12 def
+/text_width 6 def
+664 731 moveto 9 (2XX designators) ht
+/text_height 12 def
+/text_width 6 def
+936 579 moveto 9 (\(1 pps\)) ht
+/text_height 12 def
+/text_width 6 def
+944 507 moveto 9 (\(1 pps\)) ht
+/text_height 12 def
+/text_width 6 def
+720 587 moveto 9 (J301) ht
+864 591 600 591 l
+/text_height 12 def
+/text_width 6 def
+632 491 moveto 9 (J31A) ht
+/text_height 12 def
+/text_width 6 def
+800 491 moveto 9 (J31B) ht
+864 471 600 471 l
+648 439 648 471 t
+816 439 816 471 t
+/text_height 12 def
+/text_width 6 def
+688 451 moveto 9 (IBM PC bus) ht
+600 591 600 471 l
+864 591 864 471 l
+432 399 368 399 ds
+/text_height 12 def
+/text_width 6 def
+472 755 moveto 9 (J101) ht
+/text_height 12 def
+/text_width 6 def
+520 579 moveto 9 (8 ms) ht
+352 511 336 511 l
+348 514 b
+348 513 b
+349 513 b
+348 512 b
+349 512 b
+350 512 b
+344 511 b
+345 511 b
+346 511 b
+347 511 b
+348 511 b
+349 511 b
+350 511 b
+348 510 b
+349 510 b
+350 510 b
+348 509 b
+349 509 b
+348 508 b
+351 511 b
+/text_height 12 def
+/text_width 6 def
+360 523 moveto 9 (1 ms) ht
+448 479 448 479 l
+404 514 b
+403 513 b
+404 513 b
+402 512 b
+403 512 b
+404 512 b
+401 511 b
+402 511 b
+403 511 b
+404 511 b
+405 511 b
+406 511 b
+407 511 b
+402 510 b
+403 510 b
+404 510 b
+403 509 b
+404 509 b
+404 508 b
+408 511 b
+400 479 400 479 l
+400 519 400 503 l
+352 519 352 503 l
+208 495 208 479 l
+256 495 256 479 l
+304 495 304 479 l
+352 495 352 479 l
+400 495 400 479 l
+496 495 496 479 l
+448 495 448 479 l
+416 511 400 511 l
+144 423 144 423 l
+496 399 432 399 l
+/text_height 12 def
+/text_width 6 def
+112 547 moveto 9 (CODE) ht
+/text_height 12 def
+/text_width 6 def
+120 603 moveto 9 (GRI) ht
+464 559 160 559 l
+464 575 464 559 l
+544 559 496 559 l
+160 559 160 551 l
+480 431 480 407 l
+/text_height 12 def
+/text_width 6 def
+720 707 moveto 9 (J202) ht
+864 687 600 687 l
+/text_height 12 def
+/text_width 6 def
+824 715 moveto 9 (J206) ht
+896 703 864 703 t
+/text_height 12 def
+/text_width 6 def
+824 739 moveto 9 (J205) ht
+/text_height 12 def
+/text_width 6 def
+824 763 moveto 9 (J204) ht
+/text_height 12 def
+/text_width 6 def
+824 787 moveto 9 (J203) ht
+896 727 864 727 t
+896 751 864 751 t
+896 775 864 775 t
+/text_height 12 def
+/text_width 6 def
+904 787 moveto 9 (5MHZ \(reference output\)) ht
+/text_height 12 def
+/text_width 6 def
+904 739 moveto 9 (PCI \(to scope - synch\)) ht
+/text_height 12 def
+/text_width 6 def
+904 715 moveto 9 (STB \(to scope - intensity\)) ht
+600 799 600 687 l
+864 799 864 687 l
+736 591 736 687 t
+/text_height 12 def
+/text_width 6 def
+744 651 moveto 9 (25-pin shielded cable) ht
+/text_height 12 def
+/text_width 6 def
+904 763 moveto 9 (SIG \(to scope - vertical\)) ht
+/text_height 12 def
+/text_width 6 def
+128 267 moveto 9 (Reg   Function     Load  Hold   Mode) ht
+/text_height 12 def
+/text_width 6 def
+136 243 moveto 9 (1  200-kHz clock  0013  0012  J-0172) ht
+264 415 264 399 l
+268 418 b
+267 417 b
+268 417 b
+266 416 b
+267 416 b
+268 416 b
+265 415 b
+266 415 b
+267 415 b
+268 415 b
+269 415 b
+270 415 b
+271 415 b
+266 414 b
+267 414 b
+268 414 b
+267 413 b
+268 413 b
+268 412 b
+272 415 b
+264 415 248 415 l
+248 415 248 399 l
+/text_height 12 def
+/text_width 6 def
+184 427 moveto 9 (29 us) ht
+164 418 b
+163 417 b
+164 417 b
+162 416 b
+163 416 b
+164 416 b
+161 415 b
+162 415 b
+163 415 b
+164 415 b
+165 415 b
+166 415 b
+167 415 b
+162 414 b
+163 414 b
+164 414 b
+163 413 b
+164 413 b
+164 412 b
+168 415 b
+176 415 160 415 l
+244 418 b
+244 417 b
+245 417 b
+244 416 b
+245 416 b
+246 416 b
+240 415 b
+241 415 b
+242 415 b
+243 415 b
+244 415 b
+245 415 b
+246 415 b
+244 414 b
+245 414 b
+246 414 b
+244 413 b
+245 413 b
+244 412 b
+247 415 b
+248 415 232 415 l
+280 415 264 415 l
+/text_height 12 def
+/text_width 6 def
+288 427 moveto 9 (2 us) ht
+160 439 160 407 l
+368 399 264 399 l
+208 439 208 431 l
+480 431 208 431 l
+176 495 176 479 l
+224 495 224 479 l
+272 495 272 479 l
+368 495 368 479 l
+416 495 416 479 l
+464 495 464 479 l
+464 479 448 479 l
+496 495 464 495 l
+416 479 400 479 l
+448 495 416 495 l
+368 479 352 479 l
+400 495 368 495 l
+352 495 320 495 l
+320 495 320 479 l
+320 479 304 479 l
+272 479 256 479 l
+304 495 272 495 l
+224 479 208 479 l
+256 495 224 495 l
+176 519 176 503 l
+192 511 176 511 l
+180 514 b
+179 513 b
+180 513 b
+178 512 b
+179 512 b
+180 512 b
+177 511 b
+178 511 b
+179 511 b
+180 511 b
+181 511 b
+182 511 b
+183 511 b
+178 510 b
+179 510 b
+180 510 b
+179 509 b
+180 509 b
+180 508 b
+184 511 b
+208 495 176 495 l
+160 447 144 447 l
+160 463 160 447 l
+176 463 160 463 l
+176 463 176 447 l
+208 447 176 447 l
+208 463 208 447 l
+224 463 208 463 l
+224 463 224 447 l
+256 447 224 447 l
+256 463 256 447 l
+272 463 256 463 l
+272 463 272 447 l
+304 447 272 447 l
+304 463 304 447 l
+320 463 304 463 l
+320 463 320 447 l
+352 447 320 447 l
+352 463 352 447 l
+368 463 352 463 l
+368 463 368 447 l
+400 447 368 447 l
+400 463 400 447 l
+416 463 400 463 l
+416 463 416 447 l
+448 447 416 447 l
+448 463 448 447 l
+464 463 448 463 l
+464 463 464 447 l
+496 447 464 447 l
+496 463 496 447 l
+512 463 496 463 l
+512 463 512 447 l
+560 447 512 447 l
+560 527 496 527 l
+544 543 544 527 l
+544 559 544 551 l
+544 519 544 503 l
+544 471 544 455 l
+/text_height 12 def
+/text_width 6 def
+120 419 moveto 9 (STB) ht
+248 399 144 399 l
+176 479 144 479 l
+512 479 496 479 l
+512 495 512 479 l
+544 495 512 495 l
+544 495 544 479 l
+560 479 544 479 l
+160 519 160 487 l
+/text_height 12 def
+/text_width 6 def
+120 507 moveto 9 (PCX) ht
+/text_height 12 def
+/text_width 6 def
+200 523 moveto 9 (100 us) ht
+/text_height 12 def
+/text_width 6 def
+120 467 moveto 9 (PCI) ht
+/text_height 12 def
+/text_width 6 def
+352 875 moveto 9 (Loop Antenna) ht
+/text_height 12 def
+/text_width 6 def
+136 171 moveto 9 (4  STB            0145  0010  L-C172) ht
+/text_height 12 def
+/text_width 6 def
+136 147 moveto 9 (5  FOUT x 10^5    0025  0025  K-8172) ht
+/text_height 12 def
+/text_width 6 def
+136 219 moveto 9 (2  GRI *          9160  0800  J-0272) ht
+/text_height 12 def
+/text_width 6 def
+136 195 moveto 9 (3  PCX *          0500  4500  K-8172) ht
+/text_height 12 def
+/text_width 6 def
+272 379 moveto 9 (Timing Diagram) ht
+/text_height 12 def
+/text_width 6 def
+176 307 moveto 9 (Timing Generator Configuration) ht
+/text_height 12 def
+/text_width 6 def
+208 283 moveto 9 (Master Mode Reg: 8AF0) ht
+/text_height 12 def
+/text_width 6 def
+224 123 moveto 9 (* initial toggle = 1) ht
+/text_height 12 def
+/text_width 6 def
+984 363 moveto 9 (Master        Slaves) ht
+
+showpage
+                                                                                                                        

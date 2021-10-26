@@ -1,0 +1,2217 @@
+
+
+
+
+
+
+
+
+
+
+                                     RUNOFF
+
+                          Revision Date: 15 October 81
+                             Program Version: M02.4
+
+                               Document Revision
+                                 15 October 81
+                           (Scripting Support Added)
+
+
+
+
+
+        NOTICE:  This document describes a  program  which  the  Digital
+        Equipment  Corporation has no committment to offer or support at
+        this time.  This document is, however, believed to be  an  accu-
+        rate description of RUNOFF.
+
+        This version of RUNOFF is not supported by a working group with-
+        in  the  Text Processing Special Interest Group.  If you experi-
+        ence any difficulties, send a description of  the  problem,  to-
+        gether  with  the  .RNO input file and the .DOC output file, to:
+        Text Processing Special Interest Group, c/o DECUS, One Iron Way,
+        MR2-3/E55,  Marlboro,  MA 01752.  Present plans call for support
+        of RUNOFF in source form only.  It is recommended that you  keep
+        a  reference copy of the distributed sources so that corrections
+        and modifications may be distributed with SLP command files.
+
+
+
+
+
+
+
+
+
+
+
+
+                                   CHAPTER 1
+
+                                  INTRODUCTION
+
+
+
+
+        RUNOFF (RNO) is a PDP-11 program to facilitate  the  preparation
+        of  typed  or  printed manuscripts, such as memos, manuals, etc.
+        The user prepares his material on any regular  PDP-11  terminal,
+        and writes it onto a file using an appropriate editor.  The user
+        includes not only textual material, but also case and formatting
+        information.   RUNOFF then takes the file and reproduces it onto
+        the line printer, terminal or other file to produce a final copy
+        or final file image.  It performs the formatting and case shift-
+        ing as directed, and will also perform line justification,  page
+        numbering and titling, etc., as desired.
+
+        The principal benefit of such a program is that  files  prepared
+        for  use  with  it may be easily edited and corrected.  Small or
+        large amounts of material may be added or deleted, and unchanged
+        material  need not be retyped.  After a set of changes, the pro-
+        gram may be operated to produce a new  copy  which  is  properly
+        paged  and  formatted.   Documentation  may  thus  be updated as
+        necessary without requiring extensive retyping.
+
+
+
+
+
+
+
+
+
+
+
+
+                                   CHAPTER 2
+
+                          RSX/IAS OPERATING PROCEDURES
+
+
+
+
+
+
+        2.1  INITIATING RUNOFF
+
+        RUNOFF can be initiated in several ways.   The  general  formats
+        for RSX-11 users are:
+
+                        General and Privileged Users
+                                MCR>RNO <CR>
+                                MCR>RNO filespec
+
+                        Privileged User Only
+                                MCR>RUN ...RNO/UIC=[uic]
+                                MCR>RUN $RNO/UIC=[uic]
+
+
+
+        2.2  RNO COMMAND STRING
+
+        System programs usually require a command string to specify such
+        things  as  input files and various options.  A standard command
+        string has one of the following forms:
+
+                        output-file=input-file
+
+                                or
+
+                        @command-file
+
+        Both output-file and input-file are strings  comprising  a  file
+        specification.
+
+        The second form of command string  (@command-file)  is  used  to
+        specify  an  indirect command file.  In this case each record of
+        the file is used as a command string before any commands follow-
+        ing the indirect command are accepted.
+
+        The command string syntax is described more  completely  in  the
+        User's Guide for the relevant operating system.
+
+        RSX/IAS OPERATING PROCEDURES                            Page 2-2
+
+
+
+        2.2.1  FILE SPECIFICATIONS
+
+        An RSX-11 file specification has the following form:
+
+                        Dev:[UIC]Filename.Typ;Ver
+
+        In this specification Dev must be a legal device code.  The  de-
+        fault  value  is SY:, the system disk.  UIC must be a valid User
+        Identification Code.  Filename is any 1- to 9-character alphanu-
+        meric  string  which  specifies  a  file  name.   Typ is a 1- to
+        3-character alphanumeric file type.  System programs default  to
+        an  appropriate  standard type so the typical user will not have
+        to explicitly specify it.  Finally, Ver is a number which is the
+        version number of the file.  This field also normally can be om-
+        itted since it defaults on input to the highest existing version
+        number  for  the file and on output to the highest existing ver-
+        sion number plus one.
+
+        Default file specifications (any part of which may  be  overrid-
+        den):
+
+                        Input:   SY:RUNOFF.RNO
+
+                        Output:  SY:RUNOFF.DOC
+
+
+
+                             Editing RUNOFF Output
+
+             RUNOFF output files may not be  edited  normally  with
+             the  standard  RSX/IAS  file  editors.  To edit RUNOFF
+             output, the output file must  first  be  processed  by
+             TECO with a command of the format:
+
+                     *ERfilespec$EWfilespec/-CR$EX$$
+
+
+
+
+
+        2.2.2  RNO SWITCHES
+
+        A file specification may have one or  more  switches  associated
+        with  it.  A switch is an indicator, consisting of a slash and a
+        two-character ASCII name, used to select program  options.   The
+        switch  itself  may have three forms.  If the switch designator,
+        for example, is SW, then:
+
+                        /SW sets the switch action;
+                        /-SW negates the switch action, and
+                        /NOSW also negates the switch action.
+
+        In addition the switch identifier may be followed by any  number
+        of  values.   The  permitted  values  are  ASCII  strings, octal
+        numbers, and decimal numbers.  The default for a value is octal.
+
+        RSX/IAS OPERATING PROCEDURES                            Page 2-3
+
+
+
+        Decimal  values  may  be  terminated by a decimal point.  Values
+        preceded by a number sign (#) are octal;  the  octal  option  is
+        included for explicit documentation purposes.  Any numeric value
+        may be preceded with a + or a - sign;  if the number sign (#) is
+        used,  the  +  or  -  must  precede it.  The following are valid
+        switch specifications.
+
+                        /SW:27:XXX:29.
+                        /-SW
+                        /NOSW:NOSWITCH:-#50
+
+
+        RSX/IAS OPERATING PROCEDURES                            Page 2-4
+
+
+
+        Eight switches control the RNO program.   These  switches,  des-
+        cribed  below,  may  be  specified on either the input or output
+        file specification.  the defaults may be set by the system  man-
+        ager at Task Build time.
+
+                /SP     -- Spool the output file
+                /-SP    -- Inhibit spooling of output file
+
+                /UC     -- Force ALL uppercase output
+                /UC     -- Allow normal case conversion
+
+                /FF     -- Force Form-feeds (instead of multi-LFs)
+                /-FF:n  -- Simulate Form-feeds with Line-feeds
+                                    n is paper length, default set by
+                                        your system manager.
+
+                /WA     -- Wait for CR input at beginning of each page
+                /-WA    -- Continue printing each page with no wait
+
+                /PA:L:H -- Output only indicated page range{*}
+                                    L=lowest page number printed
+                                    H=highest page number printed
+                                    The default setting is to print
+                                        all pages.
+
+                /PS:m:n - Set Page Size to m,n
+                                    (See PAGE SIZE command.)
+                                    Default is /PS:58:60.
+
+                /TE:A   -- Output device is an AJ832
+
+                /TE:D   -- Output device is a Diablo
+
+                /TE:N   -- Output device does not support scripting
+
+                /HY     -- Hyphenate output
+                /-HY    -- Do not hyphenate output
+
+                /UL:B   -- Underline with a spacing-backspace
+
+                /UL:L   -- Underline via line overprint with underline
+                                    character
+
+                /UL:S   -- Simulate underline with hyphen character on
+                                    next line
+
+                /UL:N   -- Underlining suppressed.
+
+
+
+
+
+        ----------
+        {*}PA:L:H functions as described only for source files that  are
+        not chapter oriented.
+
+
+
+
+
+
+
+
+
+
+
+
+                                   CHAPTER 3
+
+                          RSTS/E OPERATING PROCEDURES
+
+
+
+
+
+
+        3.1  INITIATING RUNOFF
+
+        For RSTS/E users, RUNOFF is run by the general command format:
+
+                                RUN $RNO
+                                RNO> filespec
+
+        If the RNO CCL command has been added to the system, the follow-
+        ing format may also be used:
+
+                                RNO filespec
+
+
+
+        3.2  RNO COMMAND STRING
+
+        RUNOFF resquire a command string  to  specify  input  files  and
+        various  options.   A  command  string  has one of the following
+        forms:
+
+                        output-file=input-file
+
+                                or
+
+                        @command-file
+
+        Both output-file and input-file are strings  comprising  a  file
+        specification.
+
+        The second form of command string  (@command-file)  is  used  to
+        specify  an  indirect command file.  In this case each record of
+        the file is used as a command string before any commands follow-
+        ing the indirect command are accepted.
+
+        The command string syntax is described more  completely  in  the
+        User's Guide for the relevant operating system.
+
+        RSTS/E OPERATING PROCEDURES                             Page 3-2
+
+
+
+        3.2.1  FILE SPECIFICATIONS
+
+        A RSTS/E file specification has the following form:
+
+                        Dev:[PPN]Filename.Typ
+
+        In this specification Dev must be a legal device code.  The  de-
+        fault  value  is SY:, the system disk.  PPN must be a valid Pro-
+        grammer- Project Number.  Filename is any 1- to 6-character  al-
+        phanumeric  string  which specifies a file name.  Typ is a 1- to
+        3-character alphanumeric file type.  System programs default  to
+        an  appropriate  standard type so the typical user will not have
+        to explicitly specify it.
+
+        Default file specifications (any part of which may  be  overrid-
+        den):
+
+                        Input:   SY:RUNOFF.RNO
+
+                        Output:  SY:RUNOFF.DOC
+
+
+        Under RSTS/E, RUNOFF uses the RSX Run-Time  System  and  may  be
+        task-built  to  output  its data as an RMS compatible sequential
+        file which may be printed by the RSTS/E spooling package without
+        further  processing.   To  convert  the  output  to  a  standard
+        (ASCII-stream) RSTS/E file, the FLX system program may  be  used
+        as follows:
+
+                        RUN $FLX
+                        FLX> OUTPUT.TXT/FA=OUTPUT.DOC
+
+        where OUTPUT.DOC was output by RNO.   Normally,  RSTS/E  systems
+        will use the "ASCII-stream" version of RNO.TSK.  Files output by
+        this version of RUNOFF are compatible with BASIC-PLUS  I/O  for-
+        mats.
+
+
+                                      NOTE
+
+             Source file input to RSTS/E RUNOFF may  be  either  in
+             RMS compatible sequential file format or in BASIC-PLUS
+             compatible ASCII-stream format.  In the  latter  case,
+             all input lines must be terminated by <CR><LF> or <FF>
+             sequences.  Other  sequences,  such  as  <LF><CR>  may
+             cause erroneous output.
+
+
+
+        RSTS/E OPERATING PROCEDURES                             Page 3-3
+
+
+
+        3.2.2  RNO SWITCHES
+
+        A file specification may have one or  more  switches  associated
+        with  it.  A switch is an indicator, consisting of a slash and a
+        two-character ASCII name, used to select program  options.   The
+        switch  itself  may have three forms.  If the switch designator,
+        for example, is SW, then:
+
+                        /SW sets the switch action;
+                        /-SW negates the switch action, and
+                        /NOSW also negates the switch action.
+
+        In addition the switch identifier may be followed by any  number
+        of  values.   The  permitted  values  are  ASCII  strings, octal
+        numbers, and decimal numbers.  The default for a value is octal.
+        Decimal  values  may  be  terminated by a decimal point.  Values
+        preceded by a number sign (#) are octal;  the  octal  option  is
+        included for explicit documentation purposes.  Any numeric value
+        may be preceded with a + or a - sign;  if the number sign (#) is
+        used,  the  +  or  -  must  precede it.  The following are valid
+        switch specifications.
+
+                        /SW:27:XXX:29.
+                        /-SW
+                        /NOSW:NOSWITCH:-#50
+
+
+        RSTS/E OPERATING PROCEDURES                             Page 3-4
+
+
+
+        Seven switches control the RNO program.   These  switches,  des-
+        cribed  below,  may  be  specified on either the input or output
+        file specification.  the defaults may be set by the system  man-
+        ager at Task Build time.
+
+                /UC     -- Force ALL uppercase output
+                /UC     -- Allow normal case conversion
+
+                /FF     -- Force Form-feeds (instead of multi-LFs)
+                /-FF:n  -- Simulate Form-feeds with Line-feeds
+                                    n is paper length, default set by
+                                        your system manager.
+
+                /WA     -- Wait for CR input at beginning of each page
+                /-WA    -- Continue printing each page with no wait
+
+                /PA:L:H -- Output only indicated page range{*}
+                                    L=lowest page number printed
+                                    H=highest page number printed
+                                    The default setting is to print
+                                        all pages.
+
+                /PS:m:n - Set Page Size to m,n
+                                    (See PAGE SIZE command.)
+                                    Default is /PS:58:60.
+
+                /HY     -- Hyphenate output
+                /-HY    -- Do not hyphenate output
+
+                /TE:A   -- Output device is an AJ832
+
+                /TE:D   -- Output device is a Diablo
+
+                /TE:N   -- Output device does not support scripting
+
+                /UL:B   -- Underline with a spacing-backspace
+
+                /UL:L   -- Underline via line overprint with underline
+                                    character
+
+                /UL:S   -- Simulate underline with hyphen character on
+                                    next line
+
+                /UL:N   -- Underlining suppressed.
+
+
+
+
+
+
+
+
+        ----------
+        {*}PA:L:H functions as described only for source files that  are
+        not chapter oriented.
+
+
+
+
+
+
+
+
+
+
+
+
+                                   CHAPTER 4
+
+                           RT-11 OPERATING PROCEDURES
+
+
+
+
+
+
+        4.1  INITIATING RUNOFF
+
+        RUNOFF is initiated with the RUN or R command:
+
+                .R(UN) RUNOFF <CR>
+                RUNOFF/RT-11 Version M02.4  October 1981   /I for Info.
+                *
+
+
+
+        4.2  RUNOFF COMMAND STRING
+
+        RUNOFF's command string follows the format of most other RT-11
+        system programs:
+
+                        outfile{/sw...}=infile{/sw...}
+
+        Only one input file is allowed.  The switch(es) may  be  applied
+        to  either  file  with  no  difference in effect.  See the RT-11
+        User's Guide for more information on command string syntax.
+
+
+
+        4.2.1  FILE SPECIFICATIONS
+
+        An RT-11 file specification has the following form:
+
+                        dev:filnam.typ{[n]}
+
+        In this specification, dev is a legal physical or logical device
+        name.   The default is DK:, the user's default disk.  Filenam is
+        any 1- to 6- character alphanumeric  string  which  specifies  a
+        file.   The filename may be omitted for non directory-structured
+        devices such as TT:, LP:  or PC:.  Typ is the file  "extension".
+        The  default  extension  for input files is .RNO, and for output
+        files, it is .DOC.  Finally, the number [n] may be used only  on
+        output  files.   It is used to reserve space for the output file
+        on disk.  It is normally not needed, as the default  reservation
+        is  for  1/2  the  largest free space on the disk, or the entire
+
+        RT-11 OPERATING PROCEDURES                              Page 4-2
+
+
+
+        second largest space, whichever is larger.  See the RT-11  manu-
+        als for more information on it's useage.
+
+
+
+        4.2.2  RUNOFF/RT-11 SWITCHES
+
+        A file specification may have one or more "switches"  associated
+        with it.  The syntax is:
+
+                /o:oval   or   /o:dval.   or   /o:x{xx}
+
+        The o is an option letter, oval is  an  octal  value  (default),
+        dval  is a decimal value which is signaled by a period after the
+        number, and the x{xx} is a 1 to 3 character alphanumeric  string
+        which must begin with a letter.  See the RT-11 User's Guide con-
+        cerning the command string  interpreter  for  more  information.
+        RUNOFF/RT-11 recognizes the following switches:
+
+                /B:n    -- Start printing with  page n{**}
+                /E:n    -- Stop  printing after page n{**}
+
+                /F      -- Simulate FF's with 66 lines/page
+                           (uses multi-LF's)
+                /F:n    -- Simulate FF's with n  lines/page
+                           (uses multi-LF's)
+
+                /H:NO   -- Disable hyphenation
+                /H:YES  -- Enable  hyphenation (default)
+
+                /I      -- Display useage information
+
+                /T:A    -- Output device is an AJ832
+                /T:D    -- Output device is a Diablo
+                /T:N    -- Output device does not support scripting
+                 (Default)
+
+                /U:B    -- Underline with spacing-backspace (Default)
+                /U:L    -- Use overprint-underscore
+                /U:N    -- Supress underlining
+                /U:S    -- Simulate with hyphen on next line
+
+                /V      -- Display version of this program
+
+                /W      -- Wait for RET> before each page
+
+
+
+
+
+
+
+        ----------
+        {**}the /B:n and /E:n switches do nothing on source files  which
+        are chapter oriented.
+
+
+
+
+
+
+
+
+
+
+
+
+                                   CHAPTER 5
+
+                               SOURCE FILE FORMAT
+
+
+
+
+        The source file contains the textual material which will  appear
+        on the final copy, plus information to specify formatting.  Most
+        importantly, upper and lower case information also may  be  sup-
+        plied so that copy can be prepared on the terminal or other such
+        device which can input only upper case letters.  All command in-
+        formation  consists of regular ASCII printing characters so that
+        a listing of the source file may be examined if the  final  copy
+        is not exactly as desired.
+
+        All material in the source file is taken to be source  text  ex-
+        cept those lines beginning with a period.  A line beginning with
+        a period is assumed to be a command, and must match one of those
+        listed in chapter 4.  The commands provide the formatting infor-
+        mation, and control various optional modes of operation.
+
+        Usually the text is filled and justified  as  it  is  processed.
+        That  is,  the  program  FILLS a line by adding successive words
+        from the source text until one more word would cause  the  right
+        margin to be exceeded.  The line is then JUSTIFIED by making the
+        word spacings larger until the last word  in  the  line  exactly
+        meets the right margin.
+
+        The user may occasionally wish to reproduce the source text  ex-
+        actly,  which  is done by disabling filling and justification or
+        by use of the LITERAL command.  The program may be set  to  fill
+        but  not justify, in which case the output will be normal except
+        that lines will not be justified to the right margin.  The  pro-
+        gram  may  also  be  set  to justify but not fill, although this
+        would probably produce peculiar results and is not recommended.
+
+        When the fill mode is on, spaces, and carriage returns occurring
+        in  the  source  text  are  treated  only  as  word  separators.
+        Multiple separators are ignored.
+
+        Some of the commands cause a BREAK in the output.  A break means
+        that  the  current line is output without justification, and the
+        next word goes at the beginning of the next line.   This  occurs
+        at the end of paragraphs.
+
+        The program will advance to new pages as necessary, placing  the
+        title  (if  given)  and the page number at the top of each page.
+
+        SOURCE FILE FORMAT                                      Page 5-2
+
+
+
+        The user may call explicitly for a page advance  where  desired,
+        and  may  inhibit the occurrence of a page advance within speci-
+        fied material.
+
+
+
+        5.1  CASE INFORMATION
+
+        Specification of case for files prepared on the terminal is done
+        with  two  characters, circumflex (^, 136 octal), and back-slash
+        (\, 134 octal).  The  appearance  of  a  circumflex  causes  the
+        letter  immediately  following  to be transmitted in upper case.
+        The appearance of a back-slash  causes  the  letter  immediately
+        following  to  be  converted to lower case.  Any letter not pre-
+        ceeded by one of these characters is transmitted in the  current
+        mode.   The  mode is initially upper case, and is changed by the
+        occurrance of two successive case control characters.  Two  cir-
+        cumflexes  (^^)  cause the mode to be set to upper case, and two
+        back-slashes (\\) cause the mode to be set to lower case.
+
+        The use of the above corresponds to the use  of  the  shift  and
+        shift-lock  keys  on  a  typewriter.  Usually, typing appears in
+        lower case.  To type one letter in upper case, the shift key  is
+        used.   The  shift-lock  is  set  to type a series of upper case
+        letters, after which it is released.
+
+        The following shows the uses of the case control characters:
+
+        ^HERE IS A ^SAMPLE ^SENTENCE IN ^^UPPER CASE\\ AND LOWER CASE.  
+
+        becomes:
+
+        Here is a Sample Sentence in UPPER CASE and lower case.
+
+
+
+                                      NOTE
+
+             Case conversion takes place only on ASCII codes 101 to
+             132 octal, that is, the upper case letters.  Any actu-
+             al lower case letters (codes 141 to 172 octal) appear-
+             ing  in  the source will be transmitted unchanged.  If
+             the source is prepared on a device such as a DECwriter
+             or  model  37  Teletype  which  produce letters of the
+             proper case, the mode should be set to upper  case  at
+             the  beginning  of the file and left unchanged for the
+             remainder.
+
+
+        An additional character, less-than (<, 074  octal),  capitalizes
+        the  entire  word  it precedes.  It then returns the file to the
+        current case.  This character is not engaged unless preceded  by
+        the  FLAGS  CAPITALIZE  command.  Similarly, the FLAGS HYPHENATE
+        command engages the special character  equals  (=,  075  octal),
+        which  causes hyphenization to be suspended for the word it pre-
+
+        SOURCE FILE FORMAT                                      Page 5-3
+
+
+
+        cedes.
+
+
+
+        5.2  SPECIAL CHARACTERS
+
+        &  Ampersand     Underscoring
+
+             The character ampersand (&, 046 octal) is used  to  specify
+             underscoring.   The ampersand will cause the character fol-
+             lowing it to be underscored, e.g. &f&o&o becomes _f_o_o.
+
+             Underlining of a string of characters can also be specified
+             in  a  manner  similar to that of the shift lock operations
+             described above.  An appearance of  ampersand  preceded  by
+             circumflex  (^&)  will  cause  underlining of all following
+             characters except space.  An appearance of  ampersand  pre-
+             ceded by backslash (\&) will disable this mode.
+
+        #  Number Sign   Explicit space
+
+             It is occasionally necessary to include spaces in the  text
+             which  should  not be treated as word separators.  For this
+             purpose, RUNOFF treats the number-sign  character  (#,  043
+             octal)  as  a quoted space;  i.e.  it will print as exactly
+             one space in the output, will never be expanded nor changed
+             to a carriage return.
+
+        _  Underline     Quote next character
+
+             To allow the appearance of the special  characters  (amper-
+             sand,  number-sign,  circumflex, or back-slash) in the out-
+             put, the underscore character (_, 137 octal) is used  as  a
+             quote  character.   The  character immediately following an
+             underscore will be transmitted to the output with  no  for-
+             matting effect.  The underscore itself is thus another case
+             requiring quoting.  The following five  cases  occur:   _&,
+             _^, _\, __, _#, _{, _}, and _|.
+
+        ^  Circumflex    Upper-case shift or mode lock
+
+             As described above, the circumflex character (^) is used to
+             convert  the  letter  following  to upper-case.  It is also
+             used to lock the case mode in upper case, and the underline
+             mode  to  "underline  all text".  If it is to appear in the
+             printed text, it must be preceded by  the  quote  character
+             (_^).
+
+        \   Backslash    Lower-case shift or mode unlock
+
+             As described above, the backslash character (\) is used  to
+             output the letter following in lower-case.  It is also used
+             to lock the case mode in lower-case, and to disable  under-
+             lining.  If it is to appear in the printed text, it must be
+             preceded by the quote character (_\).
+
+        SOURCE FILE FORMAT                                      Page 5-4
+
+
+
+        <  Less-than     Capitalize next word
+
+             If  FLAGS  CAPITALIZE  has  been  engaged,  the   less-than
+             character (<) is a special character used to capitalize the
+             entire word it precedes.  If it is to appear in the printed
+             text, it must be preceded by the quote character (_<).
+
+        =  Equals-sign   Hypenation disable
+
+             If FLAGS HYPHENATE has been engaged, the  equals  character
+             (=)  used  to disable hyphenation for the word it preceeds.
+             If it is to appear in the printed text, it must be preceded
+             by the quote character (_=).
+
+        {  Left-brace    Reverse half-linefeed
+
+             If the output device type is no  "N",  then  the  left  and
+             right  braces are used for superscripting and subscripting.
+             The  left-brace  ({   173   octal)   produces   a   reverse
+             half-linefeed.   When  combined with the right brace (} 175
+             octal)  scripting  is  created;   e.g.    {super}   becomes
+             {super}, and }sub{ becomes }sub{.
+
+        }  Right-brace   Forward half-linefeed
+
+             As described above, the right brace (} 175 octal) when cou-
+             pled with the left brace will produce scripting.  This will
+             only occure when a scripting output device is selected.
+
+        |  Vertical-bar  Engage/disengage alternate character set
+
+             The vertical bar (|, 174 octal) acts as an  on/off  switch.
+             it  will  alternatly  transmit  a  shift-out  and a sift-in
+             character to  change  the  selected  character  set;   e.g.
+             |ABC| becomes ABC.
+
+        ^N Control-N     enchacement on/off;  red/black ribbon
+
+             If an Anderson-Jacobson output device is selected,  a  con-
+             trol-N (^N, 016 octal) will alternatly engage and disengage
+             the print enchancement;  e.g.  NFOO^N becomes FOO.
+
+             If a Diablo output device is selected, a control-N will al-
+             ternatly  select  the  red  and  black  ribbon color;  e.g.
+             NFOO^N becomes FOO.
+
+
+
+
+
+
+
+
+
+
+
+
+                                   CHAPTER 6
+
+                                RUNOFF COMMANDS
+
+
+
+
+        The following commands will be recognized if they are at the be-
+        ginning of a line started with a period.  Any line in the source
+        file beginning with a period is assumed to be one of these  com-
+        mands.   If it is not, an error diagnostic will be typed and the
+        line will be ignored.  Some commands take one  or  more  decimal
+        numeric  arguments.   These  are separated from the command by a
+        space.  More than one command may be entered on a single line by
+        separating the commands with a semicolon (;) or a period (.).
+
+        Multi-word commands may appear in any form.   Thus,  .NO  HEADER
+        and .NOHEADER are both legal.
+
+        Many commands may be abbreviated.   Standard  abbreviations  are
+        given below each command.
+
+
+
+        6.1  TEXT FORMATTING
+
+
+        .BREAK
+        .BR
+
+             causes a break, i.e. the current line will be  output  with
+             no justification, and the next word of the source text will
+             be placed at the beginning of the next line.
+
+        .SKIP n
+        .SK n
+        .S n
+
+             causes a BREAK after which n is multiplied by the number of
+             spaces  between  lines.   The result is the number of lines
+             skipped.  Output is advanced to the top of the next page if
+             there  is no room on the current page.  If the current page
+             is empty, SKIP does nothing.
+
+
+        RUNOFF COMMANDS                                         Page 6-2
+
+
+
+        .BLANK n
+        .B n
+
+             causes the current line to be output with no justification,
+             skips  n line spaces, and then starts output of the current
+             source text.  BLANK is like SKIP, except that the space  to
+             be  left  is  independent  of line spacing.  If the page is
+             empty, BLANK does nothing.
+
+        .FIGURE n
+        .FG n
+
+             leaves n lines blank to make room for a figure or  diagram.
+             If fewer than n lines remain on the current page, text con-
+             tinues to fill this page, then the page is advanced  and  n
+             blank lines are left at the top of the next page.
+
+        .INDENT n
+        .I n
+
+             causes a BREAK and sets the next line to begin n spaces  to
+             the  right  of  the  left margin.  The n can be negative to
+             allow beginning a line to the  left  of  the  left  margin.
+             However, a line cannot begin to the left of column 0.  If n
+             is not supplied, the current paragraph indent is used.
+
+        .PARAGRAPH n, v, t
+        .P n, v, t
+
+             causes a BREAK and formats the output paragraphs.  The n is
+             optional  and,  if  present,  sets the number of spaces the
+             paragraph is to be indented.  The default value for n is  5
+             (n  can  also  have  a  negative value).  v is the vertical
+             spacing between paragraphs.  v can range from 0 to  5.   (1
+             is  single  spacing, 2 is double spacing, etc.) t causes an
+             automatic TEST PAGE (see the TEST PAGE command).
+
+        .CENTER n;text
+        .CENTRE n;text
+        .C n;text
+
+             causes a BREAK and centers the following text in the source
+             file.   The  centering  is over column (n + left margin)/2.
+             If n is not given, it is assumed to be the right margin.
+
+
+                                        NOTE
+
+                  CENTER, RIGHT MARGIN, LEFT MARGIN, PAGE SIZE, and
+                  STANDARD  take both relative and absolute values.
+                  Relative values are expressed as +n or -n,  while
+                  absolute values of n are unsigned.
+
+
+
+
+        RUNOFF COMMANDS                                         Page 6-3
+
+
+
+        .FOOTNOTE n
+        .FN n
+
+             saves n lines at the bottom of the current page for a foot-
+             note.  The n is multiplied by the number of spaces set with
+             the SPACING command.  If insufficient room remains  on  the
+             current  page, space is allocated at the bottom of the fol-
+             lowing page.  The text of the footnote should begin on  the
+             line  following  the  FOOTNOTE  command.  Indentation, case
+             lock, justify, margins, spacing,  and  fill  are  preserved
+             around  footnotes.  However, commands that affect page for-
+             matting are illegal in a footnote.  Tab stops  are  illegal
+             because  they are not preserved.  A footnote within a foot-
+             note is also illegal.
+
+             The actual space taken by a footnote can be  more  or  less
+             than specified by n.  If necessary adjust n after examining
+             a draft printout.
+
+             The footnote is terminated with a line  beginning  with  an
+             exclamation point (the remainder of which is ignored).
+
+        .NOTE text
+        .NT text
+
+             starts an indented note.  This command  BLANKs  2,  reduces
+             both  margins,  centers  the  text (if no text is given, it
+             centers the word "NOTE"), and then BLANKS 1.  At this point
+             you  enter  the text of the note.  If the left margin is at
+             0, the margin reduction is 15, otherwise it is 5.
+
+        .END NOTE
+        .EN
+
+             terminates the NOTE command, BLANKs 2, and reverts the mar-
+             gins  and  spacing  modes to their settings before the last
+             NOTE command.
+
+        .LIST n
+        .LS n
+
+             starts an indented list with n spacing, moves the left mar-
+             gin 9 spaces to the right for the first LIST command, and 4
+             more spaces for each subsequent nested  LIST.   The  normal
+             FILL  and  JUSTIFY  modes remain in effect.  Therefore, you
+             must disengage them just after the LS command if you want a
+             ragged right.
+
+
+        RUNOFF COMMANDS                                         Page 6-4
+
+
+
+        .LIST ELEMENT;text
+        .LE;text
+
+             starts an item in the list, used in  conjunction  with  the
+             LIST  comand.   The  elements are numbered sequentially and
+             the number is given a negative  indent  so  that  the  list
+             lines  up.   The  number  is  followed  by a period and two
+             spaces so that the indent will be by -4.  The list elements
+             are  separated  by  the standard paragraph spacing and TEST
+             PAGE.  If you want to type the text on the same line as the
+             command,  you  must separate the text from the command with
+             any number of intervening spaces or tabs,  or  (optionally)
+             one semicolon.
+
+        .END LIST
+        .ELS
+
+             terminates the LIST command and returns to settings  before
+             the last LIST command.
+
+        .COMMENT text
+        .; text
+
+             causes the line to be ignored.  The text is not printed  in
+             the  output  file,  but rather is used as a comment line in
+             the source text.
+
+
+
+        6.2  PAGE FORMATTING
+
+
+        .PAGE
+        .PG
+
+             causes a BREAK and an advance to a new page.  If  the  cur-
+             rent page is empty, this command does not advance the page.
+             Just like an automatic page advance,  this  command  prints
+             the title (if given) and page numbers on every page.
+
+        .TEST PAGE n
+        .TP n
+
+             causes a BREAK followed by a conditional page advance.   It
+             skips  to  the  next page if fewer than n lines are left on
+             the page.  This capability is to ensure that the  following
+             n  lines are all output on the same page.  This command has
+             the form t as an optional argument to  the  PARAGRAPH  com-
+             mand.
+
+        RUNOFF COMMANDS                                         Page 6-5
+
+
+
+        .NUMBER n
+        .NM n
+
+             starts page numbering.  This is the default so there is  no
+             reason  to  issue  this  command  unless  page numbering is
+             disengaged.  If resumption of page numbering is desired  at
+             a certain page, specify n.
+
+        .NONUMBER
+        .NNM
+
+             disengages page numbering.  However, pages continue  to  be
+             counted,  so that the normal page number can appear if page
+             numbering is re-entered with the NUMBER command.
+
+        .CHAPTER text
+        .CH text
+
+             starts a new chapter using the text as  the  title  of  the
+             chapter.   This  command  acts  as if the following command
+             string were entered:
+
+                  .BREAK;.PAGE;.BLANK 12;.CENTER;CHAPTER n
+
+             The n is incremented by 1 automatically.  After the CHAPTER
+             n is typed on the page,
+
+                  .BLANK 2;.CENTER;text;.BLANK 3
+
+             occurs.  This command then resets the case, margins,  spac-
+             ing,  and justify/fill modes.  It also clears any subtitles
+             and sets the chapter name as the title.
+
+        .NUMBER CHAPTER n
+
+             supplies a number (n) to be used in  a  subsequent  CHAPTER
+             command.   NUMBER CHAPTER would be used when a chapter of a
+             document occupies a source file of  its  own.   In  such  a
+             case,  NUMBER  CHAPTER  would  be  the first command of the
+             source file.
+
+        .HEADER LEVEL n text
+        .HL n text
+
+             starts a section at the level specified and takes the  fol-
+             lowing  text  as the header.  n can range from 1 to 5.  The
+             sections are incremented by 1 automatically, and the number
+             is  output  in  the  form  i.j.k.l.m.  If this is a chapter
+             oriented document, the i is the chapter number.  Otherwise,
+             it  is the number of the .HL 1 level.  This command acts as
+             a
+
+                  .BREAK;.TEST PAGE 9;.BLANK 3
+
+             followed by the section number, two spaces, and the section
+
+        RUNOFF COMMANDS                                         Page 6-6
+
+
+
+             name.  HEADER LEVELS 1 and 2 end with a BREAK.  HEADER LEV-
+             ELS 3,4, and 5  end  with  a  space-dash-space  combination
+             (#-#).
+
+        .TITLE text
+        .T text
+
+             takes the remaining text as the title  and  outputs  it  on
+             every page at line 0.  The default is no title.  If a title
+             is desired, this command must  be  entered  in  the  source
+             file.
+
+        .FIRST TITLE text
+        .FT text
+
+             Same as TITLE, but used to specify the title to be  printed
+             on  the first page of the document.  This command must pre-
+             cede all text in the source file.  Use of the  FIRST  TITLE
+             command  is the only way to print a title line on the first
+             page of the document.
+
+        .SUBTITLE text
+        .SUBTTL text
+        .ST text
+
+             takes the remaining text as the subtitle and outputs it  on
+             every page.  It appears directly under the title.  The sub-
+             title is not indented, but indentation can be  achieved  by
+             typing leading spaces.
+
+        .INDEX text
+        .X text
+
+             takes the remaining text on the line as a keyword and  adds
+             it,  along  with  the  current page number, to the internal
+             index buffer.  The command does  not  cause  a  break.   It
+             should appear immediately before the item to be indexed.  A
+             keyword may be indexed more than once.
+
+        .DO INDEX text
+        .DX text
+
+             forces a new page, centers the text, if given, otherwise it
+             centers  the  word "INDEX".  This command prints the entire
+             contents of the index buffer.  Entries are printed  in  al-
+             phabetic  order  and  are  set  against  the  left  margin.
+             Regular line spacing is used, except that a blank  line  is
+             left  between entries of different first letters.  The page
+             number of each entry is placed on  the  same  line  as  the
+             entry  and  in  the  middle  of  the page.  Additional page
+             numbers for multiple entries follow, separated  by  commas.
+             The index buffer is left empty.
+
+
+        RUNOFF COMMANDS                                         Page 6-7
+
+
+
+        .PRINT INDEX
+        .PX
+
+             forces a new page after which it prints the entire contents
+             of  the  index buffer.  Entries are printed in alphabetical
+             order and are set against the left  margin.   Regular  line
+             spacing  is  used, except that a blank line is left between
+             entries of different first  letters.   The  number  of  the
+             first  page on which each entry appeared is put on the same
+             line as the entry, beginning at  the  middle  of  the  line
+             (midway  betweeen  the left and right margins).  Additional
+             page numbers for multiple entries follow, separated by com-
+             mas.  The index buffer is left empty.
+
+             .PRINT INDEX and .DO INDEX perform the same task.  The only
+             difference is that .PRINT INDEX does not interrupt the nor-
+             mal chapter and page sequencing.
+
+        .SUBPAGE
+
+             executes a PAGE with page numbering  suspended.   The  page
+             number  is  unchanged, but letters are appended to the page
+             number.  This permits insertion of additional pages  within
+             an  existing  document  without  changing the existing page
+             numbering.
+
+        .END SUBPAGE
+
+             disengages the SUBPAGE command by executing a PAGE  command
+             with page numbering resumed.
+
+        .APPENDIX text
+        .AX text
+
+             starts a new appendix using the text as the  title  of  the
+             appendix.   This  command  acts as if the following command
+             string were entered:
+
+                     .BREAK;.PAGE;.BLANK 12;.CENTER;APPENDIX a
+
+             The a is a letter that is incremented alphabetically  auto-
+             matically.  After the APPENDIX A is typed on the page,
+
+                     .BLANK 2;.CENTER;text;.BLANK 3
+
+             occurs.  This command then resets the case, margins,  spac-
+             ing,  and justify/fill modes.  It also clears any subtitles
+             and sets the appendix name as the title.
+
+        .NUMBER APPENDIX a
+
+             supplies a letter (a) to be used as the letter for a subse-
+             quent APPENDIX command.
+
+
+        RUNOFF COMMANDS                                         Page 6-8
+
+
+
+        .HEADER arg
+        .HD arg
+
+             causes the page header (title, subtitle, and  page  number)
+             to  be  printed.  Arg should be UPPER to specify upper case
+             characters for the title text, LOWER to specify lower case,
+             or MIXED.  The initial setting is HEADER UPPER.
+
+        .NOHEADER
+        .NHD
+
+             causes the page header (title, subtitle, and  page  number)
+             to be omitted.  The header lines are completely omitted, so
+             that text begins at the top of the page with no top margin.
+
+
+
+        6.3  MODE SETTING
+
+
+        .JUSTIFY
+        .J
+
+             Causes a break and sets subsequent output lines to be  jus-
+             tified (initial setting).  The command increases the spaces
+             between words until the last word exactly meets  the  right
+             margin.
+
+        .NOJUSTIFY
+        .NJ
+
+             Causes a break and  prevents  justification  of  subsequent
+             output lines to make a ragged right margin.
+
+        .FILL
+        .F
+
+             Causes a break and specifies that subsequent  output  lines
+             be filled (inital setting).  Sets the justification mode to
+             be that specified by the last appearance of JUSTIFY or  NO-
+             JUSTIFY.   FILL  adds successive words from the source text
+             until the adding of one more word  will  exceed  the  right
+             margin.   It  stops  before  putting the last word in.  (If
+             hyphenation has not been  disabled,  RNO  will  attempt  to
+             break words which cause line overflow into syllables.)
+
+        .NOFILL
+        .NF
+
+             disengages the FILL and JUSTIFY  modes.   This  command  is
+             used to permit typing a table.
+
+
+        RUNOFF COMMANDS                                         Page 6-9
+
+
+
+                                        NOTE
+
+                  1. The nofill-nojustify mode need  be  used  only
+                  where  there  are several lines of material to be
+                  copied exactly.  A single line example  will  not
+                  require  using these commands if there are breaks
+                  before and after.
+
+                  2. Normally FILL and NOFILL are used to turn both
+                  filling and justification on and off.  It is usu-
+                  ally desirable to do both.  A subsequent  appear-
+                  ance of a justification command will override the
+                  fill command however.
+
+                  3. Because of the action of FILL, a single occur-
+                  rance  of  NOJUSTIFY  will cause the remainder of
+                  the file to be unjustified, with filling as spec-
+                  ified.  In order to justify but not fill (not re-
+                  commended), a JUSTIFY command must  follow  every
+                  NOFILL command.
+
+
+
+        .UPPER CASE
+        .UC
+
+             sets the output mode to upper case.  This comand  acts  the
+             same  as typing two circumflexes (^^).  This is the default
+             mode.  There is no need to type  this  command  unless  the
+             mode was previously altered to lower case.
+
+        .LOWER CASE
+        .LC
+
+             sets the typeout mode to lower case.  This command acts the
+             same as typing two backslashes (\\).
+
+        .FLAGS CAPITALIZE
+        .FL CAPITALIZE
+
+             enables the less-than (<) character to capitalize  the  en-
+             tire  word  it  precedes.   It then returns the file to the
+             current case mode.  This special character is  usually  off
+             and  must be typed at the very beginning of the source text
+             to enable  this  character.   Typing  a  space  or  another
+             less-than (<) returns the file to the current case lock.
+
+        .NO FLAGS CAPITALIZE
+        .NFC
+
+             disengages the FLAG CAPITALIZE command (inital setting).
+
+
+        RUNOFF COMMANDS                                        Page 6-10
+
+
+
+        .HYPHENATION
+        .HY
+
+             engages hyphenization (initial setting).
+
+        .NO HYPHENATION
+        .NHY
+
+             disengages hyphenization.
+
+        .FLAGS HYPHENATE
+        .FL HYPHENATE
+
+             enables the equals character (=) to disengage hyphenization
+             for  the  word it precedes.  This special character is ini-
+             tially off and must be typed at the beginning of the source
+             file   to  enable  this  character.   The  FLAGS  HYPHENATE
+             character is used to disengage hyphenization for words  im-
+             properly hyphenated by the hyphenization algorithm.
+
+        .NO FLAGS HYPHENATE
+        .NFH
+
+             Disengages the FLAGS HYPHENATE command (initial setting).
+
+        .NFL
+
+             Disengages the FLAGS CAPITALIZE  and  the  FLAGS  HYPHENATE
+             commands (initial setting).
+
+        .PERIOD
+        .PR
+
+             enables printing of two spaces after every period (.)  that
+             is  followed  by  at least one separator character (initial
+             setting).
+
+        .NOPERIOD
+        .NPR
+
+             disengages conversion  of  period/separator  to  period/two
+             spaces.
+
+        .LITERAL
+        .LIT
+
+             disengages FILL/JUSTIFY to permit printing of text  exactly
+             as entered in source file.
+
+        .END LITERAL
+        .ELI
+
+             used after LITERAL command to re-engage FILL/JUSTIFY.
+
+        RUNOFF COMMANDS                                        Page 6-11
+
+
+
+        6.4  PARAMETER SETTING
+
+
+        .LEFT MARGIN n
+        .LM n
+
+             sets the left margin to n.  The n must  be  less  than  the
+             right  margin  but not less than 0.  The initial setting is
+             0.  If n is not supplied, 0 is used.
+
+        .RIGHT MARGIN n
+        .RM n
+
+             sets the right margin n.  The n must be  greater  than  the
+             left  margin.  The initial setting is 60.  If n is not sup-
+             plied, the current page width (set with the PAGE SIZE  com-
+             mand) is used.
+
+        .PAPER SIZE n,m
+        .PAGE SIZE n,m
+        .PS n,m
+
+             sets the size of the page n lines by m columns and sets the
+             right margin to m.  The default setting is 58,60.
+
+        .PITCH n,m
+        .PIT n,m
+
+             sets the horizontal and vertical pitch on a supporting out-
+             put  device.   The horizontal pitch is "n" and is specified
+             as characters per inch.  The value must divide evenly  into
+             60  for  Anderson-Jacobson  devices and into 120 for Diablo
+             devices.  The default is 12.
+
+             The vertical pitch is "m" and is  specified  as  lines  per
+             inch.   "m" must divide evenly into 48.  The default is the
+             hardware setting.  "n" and "m" may be set independently.
+
+        .SPACING n
+        .SP n
+
+             sets the number of spaces between lines.  The n  can  range
+             from  1 to 5.  The default setting is 1.  SPACING 1 is like
+             single spacing on a typewriter and SPACING 2 is like double
+             spacing.   SPACING  2  puts one blank line between lines of
+             text.
+
+
+        RUNOFF COMMANDS                                        Page 6-12
+
+
+
+        .STANDARD n
+        .SD n
+
+             returns all parameters, except the pitch settings, to their
+             initial settings and sets n as the page width.  If STANDARD
+             60 is specified, margins are reset LM 0, RM 60,  PAGE  SIZE
+             58,60,  SPACING 1, paragraph indent 5, and FILL and JUSTIFY
+             are enabled.  STANDARD 70 sets right margin to 70 and  page
+             size to 58,70.
+
+        .TAB STOPS n,n,...
+        .TS n,n,...
+
+             sets tabs.  The n must be greater than 0 and listed in  as-
+             cending  order.   If  tabs  already  exist,  the issuing of
+             another TAB STOPS command clears all previous  tabs  before
+             setting new ones.  The default tabs are set at eight-column
+             intervals to match the Digital  hardware  standard.   These
+             tabs  are at columns 8, 16, 24, 32, 40, 48, 56, 64, 72, and
+             80.  The tabs are converted to the  appropriate  number  of
+             non-expandable  spaces.   If there are no regular spaces to
+             the left of the tabs, they will print out at the  appropri-
+             ate  position,  even  if FILL is on.  If LITERAL is on, the
+             tabs are not converted to spaces, but are output as tabs.
+
+        .AUTOPARAGRAPH
+        .AP
+
+             causes any blank line or any line starting with a space  or
+             tab to be considered as the start of a new paragraph.  This
+             command allows normally typed text to be justified  without
+             special  commands.   It does not cause a paragraph if blank
+             lines are followed by a command.
+
+        .NOAUTOPARAGRAPH
+        .NAP
+
+             disengages the AUTOPARAGRAPH mode.
+
+
+
+
+
+
+
+
+
+
+
+
+                                   APPENDIX A
+
+                             RUNOFF ERROR MESSAGES
+
+
+
+        RUNOFF produces error messages in the following format:
+
+                        ?RUNOFF-level-error message
+
+        This appendix tabulates the error messages produced  by  RUNOFF.
+        Most of the error messages are self-explanatory.  In some cases,
+        RUNOFF prints the line in which the error has occurred, so  that
+        the  user  can  examine the source line which caused the problem
+        and correct it.
+
+        The RT-11 version has some system-specific  messages  which  are
+        listed at the end of this appendix.
+
+             1.  ?RUNOFF-F-INTERNAL BUFFER OVERFLOW
+
+                 This message is an internal program  error  and  should
+                 never occur in normal use.
+
+             2.  ?RUNOFF-E-ILLEGAL COMMAND text ON OUTPUT PAGE nn
+
+                 where nn is the page on  which  the  command  text  oc-
+                 curred.
+
+             3.  ?RUNOFF-E-CAN'T JUSTIFY LINE:  text
+
+                 where text is a line containing no spaces  (other  than
+                 quoted spaces), so that RUNOFF is unable to justify it.
+
+             4.  ?RUNOFF-F-FATAL ERROR, ABORTING
+
+                 This an message is internal program  error  and  should
+                 never occur under normal use.
+
+             5.  ?RUNOFF-F-ERROR ON OUTPUT FILE
+
+                 A write error has occurred on the output file.  One  of
+                 the following conditions exists:
+
+                 1.  The device is full or is write protected.
+
+                 2.  The hardware has failed.
+
+        RUNOFF ERROR MESSAGES                                   Page A-2
+
+
+
+                 3.  The user does not have write access  privileges  to
+                     the file.
+
+
+             6.  ?RUNOFF-F-ERROR ON INPUT FILE
+
+                 A read error has occurred on an input file.  One of the
+                 following conditions may exist:
+
+                 1.  A problem  exists  with  a  physical  device  (e.g.
+                     device cycled down).
+
+                 2.  The file is corrupted or the format is wrong.
+
+                 3.  The file is a nonsource file.  (Object file, etc.)
+
+
+             7.  ?RUNOFF-F-NOT ENOUGH MEMORY
+
+                 The input file contained either too many INDEX  entries
+                 and  RUNOFF ran out of index buffer space or a FOOTNOTE
+                 command has caused overflow of the buffer reserved  for
+                 footnotes.   RUNOFF  stops  processing  the input file.
+                 The user should delete some index entries and/or reduce
+                 the  amount  of  footnote  text  for the last page pro-
+                 cessed.
+
+             8.  ?RUNOFF-E-CAN'T INDENT LIST ELEMENT
+
+                 The user has nested lists that cause RUNOFF to  attempt
+                 indenting beyond the right margin.
+
+             9.  ?RUNOFF-E-CAN'T REDUCE MARGINS
+
+                 A NOTE command occurred after the margins were  set  to
+                 values that prevent the NOTE command from reducing mar-
+                 gins by 15.
+
+             10. ?RUNOFF-E-COMMAND SYNTAX ERROR
+
+                 The user has entered a command in a  format  that  does
+                 not conform to syntax rules.
+
+             11. ?RUNOFF-E-OUTPUT FILE SPECIFICATION ERROR
+
+                 An error  exists  in  the  output  file  specification.
+                 Correct the specification and re-enter the command.
+
+             12. ?RUNOFF-F-OUTPUT FILE OPEN FAILURE
+
+                 The file system, while attempting to  open  the  output
+                 file, has detected an error.  One of the following con-
+                 ditions may exist:
+
+                 1.  The user's directory file is protected  against  an
+
+        RUNOFF ERROR MESSAGES                                   Page A-3
+
+
+
+                     open.
+
+                 2.  A problem exists with the physical device.
+
+                 3.  The volume is not mounted.
+
+                 4.  The specified file directory does not exist.
+
+                 5.  The device is full of write protected.
+
+
+             13. ?RUNOFF-E-INPUT FILE SPECIFICATION ERROR
+
+                 An  error  exists  in  the  input  file  specification.
+                 Correct the specification and re-enter the command.
+
+             14. ?RUNOFF-F-INPUT FILE OPEN ERROR
+
+                 The file system, while  attempting  to  open  an  input
+                 file, has detected an error.  One of the following con-
+                 ditions may exist.
+
+                 1.  The user directory file  is  protected  against  an
+                     open.
+
+                 2.  A problem exists with the physical device.
+
+                 3.  The volume is not mounted.
+
+                 4.  The specified file directory does not exist.
+
+                 5.  The file does not exist as specified.
+
+
+             15. ?CSI-F-error message (RT-11 only)
+
+                 The RT-11 command string interpreter  was  unable  com-
+                 plete successfully.  see the RT-11 System Messages Man-
+                 ual for the meanings of these messages.
+
+             16. Bad switch /x (RT-11 only)
+
+                 The indicated switch is not recognized by RUNOFF/RT-11.
+
+             17. Bad value with /x switch.  (RT-11 only)
+
+                 The value given with the indicated switch was invalid.
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                   APPENDIX B
+
+                                BUILDING RUNOFF
+
+
+
+        RSX-11M MAPPED SYSTEMS
+
+        All command files follow the standard RSX-11M conventions.
+
+             1.  [100,10] should contain all source modules.
+
+             2.  [100,20] should contain the file RNOASM.CMD.
+
+             3.  [100,20] will recieve the object output files.
+
+             4.  [100,30] will receive listing files.
+
+             5.  [1,20] should contain the file RNOBLD.ODL
+
+             6.  [1,24] should contain the file RNOBLD.CMD
+
+             7.  [1,34] will receive the map output file.
+
+             8.  [1,54] will receive the task image file.
+
+        Procedure:
+
+             1.  Use UFD to set up the proper UFDs, if necessary.   Note
+                 that all command files must be changed if you do not do
+                 this.
+
+             2.  Use FLX to move the files to their proper UICs.
+
+             3.  Set the UIC to [100,20] and assemble.
+                                 SET /UIC=[100,20]
+                                 MAC @RNOASM
+
+             4.  Use PIP to construct a concatenated object file for all
+                 RNO files:
+                                 PIP>RNO.OBS=*.OBJ
+
+             5.  SET THE UIC to [1,20] and build  a  library  containing
+                 the RNO object files:
+                                 SET /UIC=[1,20]
+                                 LBR>RNO/CR=[100,20]RNO.OBS
+
+        BUILDING RUNOFF                                         Page B-2
+
+
+
+             6.  Edit the Task Build command file to reflect your  indi-
+                 vidual  system needs.  The Task Build command file con-
+                 tains parameters to set the default  switches,  default
+                 paper size (for /-FF) and default underline mode.
+
+             7.  Build the task image file.  The map will go  to  [1,34]
+                 and the task image to [1,54].
+                                 TKB @[1,24]RNOBLM
+
+
+        RSX-11M UNMAPPED SYSTEMS
+
+        Users of unmapped systems should follow the  procedure  outlined
+        for  mapped  systems,  but  selecting UICs as appropriate.  File
+        RNOBLD.CMD will have to be edited to delete the /MM  switch  and
+        to change the PAR directive to match system requirements.
+
+
+        RSX-11D/IAS
+
+        Users of RSX-11D/IAS should follow the  procedure  outlined  for
+        users  of  RSX-11M  Mapped  systems.   Since the conventions for
+        source and object files are installation dependent, all .CMD and
+        .ODL   files   should   be  edited  accordingly.   Additionally,
+        RSX-11D/IAS users should alter  RNOBLD.CMD  to  change  the  /MM
+        switch to /MU and to change the PAR directive as needed.
+
+        Alternatively, IAS users may use command file RNOIAS.CMD to  as-
+        semble  and  build RUNOFF.  The command file contains parameters
+        to set the default switches, default paper size (for  /-FF)  and
+        default underline mode.
+
+
+        RSTS/E
+
+        To build RUNOFF under RSTS/E V06C-03  systems,  run  the  $BUILD
+        program and specify the RNOBLD.CTL control file on the distribu-
+        tion medium.  RNOBLD.CTL assumes that all files have been copied
+        to  account  [100,100]  (use PIP.SAV).  If users desire to build
+        directly from the distribution or from another account, it  will
+        be   necessary  to  edit  RNOBLD.CLT  to  change  references  to
+        [100,100] to the [p,pn] used in the distribution.  Both the RT11
+        and  RSX  Run-Time Systems are assumed present in the system, as
+        the PIP.SAV, MAC.TSK, LBR.TSK, and TKB.TSK programs are required
+        in the build procedure.  The Task Builder run will normally pro-
+        duce the message:
+
+        ?TKB -- *DIAG*-MODULE ERR    MULTIPLY DEFINES SYMBOL EOF
+
+        This is not an error.  At the  (successful)  completion  of  the
+        procedure, RNO will be ready to run.
+
+        The last step of RNOBLD.CTL copies the files  necessary  to  use
+        RNO  (i.e., RNO.TSK and RUNOFF.RNO) to account [1,2].  This step
+        should be deleted or changed if users do not desire to store RNO
+
+        BUILDING RUNOFF                                         Page B-3
+
+
+
+        in [1,2].
+
+        To use the Concise-command language feature of RSTS/E, the  fol-
+        lowing CCL command should be installed:
+
+                        CCL RNO=[P,PN]RNO.TSK
+
+        RNO.TSK is not a privileged program.  It should, however, be in-
+        stalled with an <104> protection code if it is desirable for all
+        users on the system to access it.
+
+
+        RT-11
+
+        First copy all of the files from the distribution  medium  to  a
+        disk with at least 500 blocks free.  Delete the files RUNOFF.RNO
+        and RUNOFF.DOC from the disk.  Assign that disk as DK:Then type:
+
+                @RNOASM<cr>
+
+        After the assembly is complete, link RUNOFF by typing:
+
+                @RNOLNK<cr>
+
+        There should be no error messages.  RUNOFF  takes  approximately
+        8KW of memory.  If it is desired to make RUNOFF smaller, the de-
+        finition of the symbol H$$PHN in the file RNPRE.MAC may be edit-
+        ed  out, which will eliminate the hyphenation feature.  then the
+        file RNOLNK.COM should be edited to remove the line which  links
+        HYPHEN.OBJ into RUNOFF.  In addition, processor that support the
+        EIS instruction  set  may  speed  the  operation  of  Runoff  by
+        un-commenting  I$$EIS  in  RT11.MAC.   Reassemble RUNOFF.MAC and
+        UARITH.MAC and then relink.
+
+        A good test is to process the RUNOFF.RNO documentation file.
+
+
+        DISTRIBUTION FILES
+
+        RNOASM   .CMD    RNOBLD   .CMD    RNOBLDFCS.CMD    RNOIAS   .CMD
+        RSTASM   .CMD    RSTBLD   .CMD    RNOASM   .COM    RNOLNK   .COM
+        RNOBLD   .CTL    CMTAB    .MAC    COMND    .MAC    ERMSG    .MAC
+        FMTCM    .MAC    HYPHEN   .MAC    INDEX    .MAC    PINDX    .MAC
+        RNCMD    .MAC    RNFIO    .MAC    RNORSX   .MAC    RNPRE    .MAC
+        RNRT11   .MAC    RSTS     .MAC    RT11     .MAC    RUNOFF   .MAC
+        SMAC     .MAC    START    .MAC    UARITH   .MAC    SMAC     .MLS
+        RNO      .ODL    RNOBLD   .ODL    RNOBLDFCS.ODL    RNOIAS   .ODL
+        RUNOFF   .DOC    RUNOFF   .RNO
+
+
+
+
+
+
+
+
+
+
+
+
+                                   APPENDIX C
+
+                               SPECIAL CHARACTERS
+
+
+
+        Below is a list of RUNOFF's special characters.   To  appear  in
+        the text, each must be preceded by the underscore character (it-
+        self a special character).
+
+
+                  ^     shift character for upper case
+                  \     shift character for lower case
+                  <     flag character for upper case {*}
+                  #     quoted space character
+                  =     flag character for disabling hyphenation {**}
+                  &     underscore
+                  _     quote special character
+                  {    reverse half-linefeed for scripting
+                  }    forward half-linefeed for scripting
+                  |    switch on/off the alternate character set
+                 ^n    switch on/off the print enchancement or
+                       switch to the red/black ribbon color
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        ----------
+        {*}Only becomes a special character if FLAGS CAPITALIZE  is  en-
+        gaged.
+        {**}Only becomes a special character if FLAGS HYPHENATE  is  en-
+        gaged.
+
+
+
+
+
+
+
+
+
+
+
+
+                                   APPENDIX D
+
+                        List of Commands (Alphabetical)
+
+
+
+        _C_o_m_m_a_n_d _o_r _A_b_b_r_e_v_i_a_t_i_o_n             _R_e_l_a_t_e_d _C_o_m_m_a_n_d_s
+
+
+        AP          (=autoparagraph)
+        APPENDIX text (AX)                  NUMBER APPENDIX a
+        AX          (=appendix)
+        AUTOPARAGRAPH (AP)                  NOAUTOPARAGRAPH (NAP)
+
+
+        B           (=blank)
+        BLANK n (B)                         SKIP n (S)
+        BR          (=break)
+        BREAK (BR)
+
+
+        C           (=centre)
+        CENTER      (=centre)
+        CENTRE n;text (C)
+        CH          (=chapter)
+        CHAPTER text (CH)                   NUMBER CHAPTER n
+        COMMENT text
+
+
+        DO INDEX text (DX)                  PRINT INDEX (PX)
+        DX          (=do index)
+
+
+        ELS         (=end list)
+        EN          (=end note)
+        END LIST (ELS)                      LIST n (LS)
+        END LITERAL (ELI)                   LITERAL (LIT)
+        END NOTE (EN)                       NOTE text (NT)
+        END SUBPAGE                         SUBPAGE
+
+
+        F           (=fill)
+        FG          (=figure)
+        FIGURE n (FG)
+        FILL (F)                            NOFILL (NF)
+        FIRST TITLE text (FT)               TITLE text
+        FLAGS CAPITALIZE (FL CAPITALIZE)    NO FLAGS CAPITALIZE (NFL)
+        FLAGS HYPHENATE  (FL HYPHENATE )    NO FLAGS HYPHENATE  (NFH)
+
+        List of Commands (Alphabetical)                         Page D-2
+
+
+
+        FN          (=footnote)
+        FOOTNOTE n (FN)
+        FT          (=first title)
+
+
+        HD          (=header)
+        HEADER arg (HD)                     NOHEADER (NHD)
+           [arg=UPPER, LOWER, or MIXED]
+        HEADER LEVEL n text (HL)
+        HL          (=header level)
+        HY          (=hyphenation)
+        HYPHENATION (HY)                    NO HYPHENATION (NHY)
+
+
+        I           (=indent)
+        INDENT n (I)
+        INDEX text (X)
+
+
+        J           (=justify)
+        JUSTIFY (J)                         NOJUSTIFY (NJ)
+
+
+        LC          (=lower case)
+        LE          (=list element)
+        LEFT MARGIN n (LM)                  RIGHT MARGIN n (RM)
+        LIST n (LS)                         END LIST (ELS)
+        LIST ELEMENT;text (LE)              END LIST (ELS)
+        LIT         (=literal)
+        LITERAL (LIT)                       END LITERAL (ELI)
+        LM          (=left margin)
+        LOWER CASE (LC)                     UPPER CASE (UC)
+        LS          (=list)
+
+
+        NAP         (=noautoparagraph)
+        NF          (=nofill)
+        NFC         (=no flags capitalize)
+        NFH         (=no flags hyphenate)
+        NFL         (=no flags capitalize AND no flags hyphenate)
+        NHD         (=no header)
+        NHY         (=no hyphenation)
+        NJ          (=no justify)
+        NM          (=number)
+        NNM         (=no number)
+        NOAUTOPARAGRAPH (NAP)               AUTOPARAGRAPH (AP)
+                                            PARAGRAPH n,v,t (P)
+        NOFILL (NF)                         FILL (F)
+        NO FLAGS CAPITALIZE (NFL)           FLAGS CAPITALIZE
+                                             (FL CAPITALIZE)
+        NO FLAGS HYPHENATE (NFH)            FLAGS HYPHENATE
+                                            (FL HYPHENATE)
+        NOHEADER (NHD)                      HEADER arg (HD)
+        NO HYPHENATION (NHY)                HYPHENATION (HY)
+        NOJUSTIFY (NJ)                      JUSTIFY (J)
+
+        List of Commands (Alphabetical)                         Page D-3
+
+
+
+        NONUMBER (NNM)                      NUMBER n (NM)
+        NOPERIOD (NPR)                      PERIOD (PR)
+        NOTE text (NT)                      END NOTE (EN)
+        NPR         (=no period)
+        NT          (=note)
+        NUMBER APPENDIX a                   APPENDIX text
+        NUMBER CHAPTER n                    CHAPTER text
+
+
+        P           (=paragraph)
+        PAGE (PG)
+        PAGE SIZE   (=paper size)
+        PAPER SIZE v,h (PS, PAGE SIZE)
+        PARAGRAPH h,v,t (P)
+        PERIOD (PR)                         NOPERIOD (NPR)
+        PG          (=page)
+        PITCH (PIT)
+        PRINT INDEX (PX)                    DO INDEX text (DX)
+        PS          (=paper size)
+        PX          (=print index)
+
+
+        RIGHT MARGIN n (RM)
+        RM          (=right margin)
+
+
+        S           (=skip)
+        SD          (=standard)
+        SKIP n (S)                          BLANK n (B)
+        SP          (=spacing)
+        SPACING n (SP)
+        ST          (=subtitle)
+        SUBPAGE                             END SUBPAGE
+        SUBTITLE text (ST)
+
+
+        T           (=title)
+        TAB STOPS n,n, ... ,n (TS)
+        TEST PAGE n (TP)
+        TITLE text (T)
+        TP          (=test page)
+        TS          (=tab stops)
+
+
+        UC          (=upper case)
+        UPPER CASE (UC)                     LOWER CASE (LC)
+
+
+        X           (=index)
+
+
+
+
+
+
+
+
+
+
+
+
+                                   APPENDIX I
+
+                                     INDEX
+
+
+
+
+
+
+                    (RUNOFF commands appear in upper case.)
+
+        Alternate character set  . 5-4
+        APPENDIX . . . . . . . . 6-7
+        AUTOPARAGRAPH  . . . . . 6-12
+
+        BLANK n  . . . . . . . . 6-2
+        BREAK  . . . . . . . . . 5-1, 6-1
+
+        Case . . . . . . . . . . 2-4, 3-4
+        Case Information . . . . 5-2
+        CENTER n . . . . . . . . 6-2
+        CENTRE n . . . . . . . . 6-2
+        CHAPTER  . . . . . . . . 6-5
+        Command format . . . . . 6-1
+        Command string . . . . . 2-1, 3-1, 4-1
+        Commands, formatting . . 6-1
+        Commands, mode setting . 6-8
+        Commands, page formatting 6-4
+        COMMENT  . . . . . . . . 6-4
+
+        DO INDEX . . . . . . . . 6-6
+
+        Enchanced print mode . . 5-4
+        END LIST . . . . . . . . 6-4
+        END LITERAL  . . . . . . 6-10
+        END NOTE . . . . . . . . 6-3
+        END SUBPAGE  . . . . . . 6-7
+        Error messages . . . . . A-1
+
+        FIGURE n . . . . . . . . 6-2
+        File Specifications  . . 2-2, 3-2, 4-1
+        FILL . . . . . . . . . . 6-8
+        Filling of text  . . . . 5-1
+        FIRST TITLE  . . . . . . 6-6
+        FLAGS CAPITALIZE . . . . 6-9
+        FLAGS HYPHENATE  . . . . 6-10
+        FOOTNOTE n . . . . . . . 6-3
+        Form-feeds . . . . . . . 2-4, 3-4
+
+        INDEX                                                   Page I-2
+
+
+
+        Formatting . . . . . . . 6-1
+
+        HEADER . . . . . . . . . 6-8
+        HEADER LEVEL n . . . . . 6-5
+        HYPHENATION  . . . . . . 6-10
+        Hyphenation  . . . . . . 2-4, 3-4, 5-2
+
+        INDENT n . . . . . . . . 6-2
+        INDEX  . . . . . . . . . 6-6
+
+        Justification of text  . 5-1
+        JUSTIFY  . . . . . . . . 6-8
+
+        LEFT MARGIN n  . . . . . 6-11
+        LIST ELEMENT . . . . . . 6-4
+        LIST n . . . . . . . . . 6-3
+        LITERAL  . . . . . . . . 6-10
+        Literals . . . . . . . . 5-1
+        LOWER CASE . . . . . . . 6-9
+
+        Mode Setting . . . . . . 6-8
+
+        NO FLAGS CAPITALIZE  . . 6-9
+        NO FLAGS HYPHENATE . . . 6-10
+        NO HYPHENATION . . . . . 6-10
+        NOAUTOPARAGRAPH  . . . . 6-12
+        NOFILL . . . . . . . . . 6-8
+        NOHEADER . . . . . . . . 6-8
+        NOJUSTIFY  . . . . . . . 6-8
+        NONUMBER . . . . . . . . 6-5
+        NOPERIOD . . . . . . . . 6-10
+        NOTE . . . . . . . . . . 6-3
+        NUMBER APPENDIX a  . . . 6-7
+        NUMBER CHAPTER n . . . . 6-5
+        NUMBER n . . . . . . . . 6-5
+
+        Operation  . . . . . . . 2-1, 3-1, 4-1
+
+        PAGE . . . . . . . . . . 6-4
+        Page formatting  . . . . 6-4
+        Page Numbering . . . . . 5-1
+        PAGE SIZE n,m  . . . . . 6-11
+        PAPER SIZE n,m . . . . . 6-11
+        PARAGRAPH n,v,t  . . . . 6-2
+        Parameter setting  . . . 6-11
+        PERIOD . . . . . . . . . 6-10
+        PIT  . . . . . . . . . . 6-11
+        PITCH  . . . . . . . . . 6-11
+        PRINT INDEX  . . . . . . 6-7
+
+        Quote character  . . . . 5-3
+        Quoted Space . . . . . . 5-3
+
+        Relative arguments . . . 6-2
+        Ribbon color select  . . 5-4
+
+        INDEX                                                   Page I-3
+
+
+
+        RIGHT MARGIN n . . . . . 6-11
+        RSTS/E output formats  . 3-2
+        Runoff Commands  . . . . 6-1
+
+        Scripting  . . . . . . . 2-4, 3-4, 4-2, 5-4
+        SKIP n . . . . . . . . . 6-1
+        Source File Format . . . 5-1
+        Space  . . . . . . . . . 5-1, 5-3
+        SPACING n  . . . . . . . 6-11
+        Special characters . . . 5-3, C-1
+        Spooling . . . . . . . . 2-4
+        STANDARD n . . . . . . . 6-12
+        SUBPAGE  . . . . . . . . 6-7
+        Subscripting . . . . . . 5-4
+        SUBTITLE . . . . . . . . 6-6
+        Superscripting . . . . . 5-4
+        Switches . . . . . . . . 2-2, 3-3
+
+        TAB STOPS n,n  . . . . . 6-12
+        TEST PAGE n  . . . . . . 6-4
+        TITLE  . . . . . . . . . 6-6
+        Title  . . . . . . . . . 5-1
+
+        Underlining  . . . . . . 2-4, 3-4
+        Underscoring . . . . . . 5-3
+        UPPER CASE . . . . . . . 6-9
+
+        Word spacing . . . . . . 5-1
+                                                                                                                                                                                                                                                                                       

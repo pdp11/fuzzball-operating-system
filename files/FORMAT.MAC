@@ -1,0 +1,702 @@
+	.TITLE	FORMAT	Output formatting routines
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn - output formatting routines
+;
+; External symbols
+;
+	.GLOBL	PRBYT		;output byte
+;
+; Entry symbols
+;
+	.GLOBL	FORMAT		;format interpreter
+	.GLOBL	PRDEC,PRCLK,PRDAT,PRINT,PRD50 ;convert utilities
+	.GLOBL	PRFIL,PRCON,PROCT,PROCB
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.PSA,.CLP,.IOD ;dcnlib definitions
+	.MCALL	.GVAL,.DATE,.GTIM ;rt-11 macros
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.PSA			;define psa and par areas
+	.CLP			;rt-11 monitor area definitions
+	.IOD			;emulator monitor area extension
+;
+; Module definitions
+;
+	.MACRO	TABLE ARG	;generate month table
+..N	=	0
+	.IRP	X,<ARG>
+	.WORD	..N
+..N	=	..N+X
+	.ENDR
+	.ENDM	TABLE
+;
+; Format switches
+;
+SGNBIT	=	100000		;signed argument
+DBLBIT	=	040000		;double-word argument
+BYTBIT	=	020000		;byte argument
+SWPBIT	=	010000		;swap-bytes bit
+LITBIT	=	004000		;literal argument bit
+MODBIT	=	002000		;argument modifier bit
+;
+; Procedure segment
+;
+	.PSECT	$BOSI,RO,I
+;
+; Format (fmt) compose and output formatted lines
+; R0 = format string, r1 = parameter offset
+;
+FORMAT:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	MOV	R0,R2		;align pointers
+	MOV	R1,R3
+FMTNXT:	CLR	R4		;initialize switches
+	MOVB	(R2)+,R0	;get next format char
+	BEQ	FMT51		;branch if end
+	CMPB	#'^,R0		;is this escape char
+	BEQ	FMTCTL		;branch if yes
+	JSR	PC,PRBYT	;no. output it
+	BR	FMTNXT
+;
+FMTCTL:	MOVB	(R2)+,R0	;get format control
+	BEQ	FMT51		;branch if end
+	MOV	PC,R1
+	ADD	#FMTTBL-.,R1
+1$:	TSTB	@R1		;is this end of table
+	BEQ	2$		;branch if yes
+	CMPB	R0,(R1)+	;no. do it match
+	BEQ	3$		;branch if yes
+	TSTB	(R1)+		;no. go around again
+	BR	1$
+;
+2$:	JSR	PC,PRBYT	;not found. output it anyway
+	BR	FMTXIT
+;
+3$:	CLR	R0		;found. convert to offset
+	BISB	(R1)+,R0
+	ASH	#2,R0
+	ADD	R0,PC
+	JMP	FMT0		;0 / new line
+	JMP	FMT1		;1 s signed
+	JMP	FMT2		;2 b byte
+	JMP	FMT3		;3 l literal
+	JMP	FMT4		;4 p process
+	JMP	FMT5		;5 i decimal
+	JMP	FMT6		;6 k octal
+	JMP	FMT7		;7 r rad50
+	JMP	FMT10		;10 f file name
+	JMP	FMT11		;11 c connection name
+	JMP	FMT12		;12 d date
+	JMP	FMT13		;13 t time
+	JMP	FMT14		;14 g generate
+	JMP	FMT15		;15 + suppress new line
+	JMP	FMT16		;16 a ascii string
+	JMP	FMT17		;17 x swap bytes
+	JMP	FMT20		;20 h hexadecimal
+	JMP	FMT22		;22 m modifier
+;
+FMT51:	BIT	#MODBIT,R4	;is new line happening
+	BNE	1$		;branch if no
+	JSR	PC,CRLF		;yes. do it
+1$:	MOV	(SP)+,R4	;evas
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Qualifiers
+;
+FMT15:	BIS	#MODBIT,R4	;+ modifier
+	BR	FMTCTL
+;
+FMT1:	BIS	#SGNBIT,R4	;s signed
+	BR	FMTCTL
+;
+FMT2:	BIS	#BYTBIT,R4	;b byte
+	BR	FMTCTL
+;
+FMT3:	BIS	#LITBIT,R4	;l literal
+	BR	FMTCTL
+;
+FMT17:	BIS	#SWPBIT,R4	;x swap bytes
+	BR	FMTCTL
+;
+FMT22:	BIS	#DBLBIT,R4	;m double-word
+	BR	FMTCTL
+;
+; Operators
+;
+FMT0:	JSR	PC,CRLF		;new line. output cr/lf
+	BR	FMTXIT
+;
+FMT4:	CLR	-(SP)		;process. is argument literal
+	BIT	#LITBIT,R4
+	BEQ	1$		;branch if no
+	CMP	-(SP),-(SP)	;yes. is this a fuzzball
+	MOV	SP,R0
+	.GVAL	R0,#CONFIG
+	CMP	(SP)+,(SP)+
+	BIT	#FUZZY$,R0
+	BEQ	2$		;branch if no
+	MOV	@#SYSPTR,R0	;yes. find my index
+	MOV	IOHPAR(R0),R0
+	MOVB	PARIDX(R0),@SP
+	BR	2$
+;
+1$:	BIS	#BYTBIT,R4	;process name. fetch offset byte
+	JSR	PC,FMTARG
+	MOV	R0,@SP
+2$:	MOV	@#SYSPTR,R0	;fumble via $pnam
+	ADD	R0,@SP
+	ADD	PNPTR(R0),@SP
+	MOV	@(SP)+,R0
+	JSR	PC,PRD50	;output rad50 name
+FMTXIT:	JMP	FMTNXT
+;
+FMT5:	JSR	PC,FMTARG	;decimal. get argument
+	BIT	#DBLBIT,R4	;is this double-word
+	BEQ	1$		;branch if no
+	JSR	PC,PRDBL	;yes. output double-word integer
+	BR	FMTXIT
+;
+1$:	JSR	PC,PRDEC	;output integer
+	BR	FMTXIT
+;
+FMT6:	JSR	PC,FMTARG	;octal. get argument
+	BIT	#BYTBIT,R4	;is it byte
+	BNE	1$		;branch if yes
+	JSR	PC,PROCT	;no. output octal word
+	BR	FMTXIT
+;
+1$:	JSR	PC,PROCB	;output octal byte
+	BR	FMTXIT
+;
+FMT20:	JSR	PC,FMTARG	;hexadecimal. get argument
+	BIT	#BYTBIT,R4	;is it byte
+	BNE	1$		;branch if yes
+	MOV	R0,-(SP)	;no. output high byte
+	SWAB	R0
+	JSR	PC,PRHEX
+	MOV	(SP)+,R0
+1$:	JSR	PC,PRHEX	;output low byte
+	BR	FMTXIT
+;
+FMT7:	JSR	PC,FMTARG	;rad50. get argument
+	JSR	PC,PRD50	;output rad50
+	BR	FMTXIT
+;
+FMT10:	CLR	R0		;file name. get argument pointer
+	BISB	(R2)+,R0
+	ADD	R3,R0
+	JSR	PC,PRFIL	;output file name
+	BR	FMTXIT
+;
+FMT11:	CLR	R0		;internet address. get argument pointer
+	BISB	(R2)+,R0
+	ADD	R3,R0
+	JSR	PC,PRCON	;output internet address
+	BR	FMTXIT
+;
+FMT12:	BIT	#LITBIT,R4	;date. is argument literal
+	BEQ	1$		;branch if no
+	.DATE			;yes. fetch rt-11 date
+	BR	2$
+;
+1$:	JSR	PC,FMTARG	;get argument
+	BIT	#MODBIT,R4	;is modifier set
+	BEQ	2$		;branch if no
+	JSR	PC,DATRT	;yes. convert to rt-11 format
+2$:	JSR	PC,RTDAT	;output date
+	BR	FMTXIT
+;
+FMT13:	BIT	#LITBIT,R4	;time. is argument literal
+	BEQ	1$		;branch if no
+	CMP	-(SP),-(SP)	;yes. get rt-11 time
+	MOV	SP,R1
+	CMP	-(SP),-(SP)
+	MOV	SP,R0
+	.GTIM	R0,R1
+	CMP	(SP)+,(SP)+
+	MOV	(SP)+,R0
+	MOV	(SP)+,R1
+	BR	2$
+;
+1$:	BIS	#DBLBIT,R4	;get double-word argument
+	JSR	PC,FMTARG
+	BIT	#MODBIT,R4	;is modifier set
+	BNE	3$		;branch if yes
+2$:	JSR	PC,LINMS	;no. convert to milliseconds
+3$:	JSR	PC,PRCLK	;output time of day
+	BR	FMTXIT
+;
+FMT14:	JSR	PC,FMTARG	;generate. get argument
+	MOV	R0,R1		;save count
+	BEQ	2$		;branch if trivial
+1$:	MOVB	@R2,R0		;propagate char
+	JSR	PC,PRBYT
+	DEC	R1
+	BGT	1$
+2$:	TSTB	(R2)+
+	BR	FMTXIT
+;
+FMT16:	CLR	R0		;ascii string. get argument pointer
+	BISB	(R2)+,R0
+	ADD	R3,R0
+	JSR	PC,PRINT	;output string
+	BR	FMTXIT
+;
+; Fmtarg (fmt) fetch format argument
+;
+FMTARG:	CLR	R0		;get argument address
+	BISB	(R2)+,R0
+	ADD	R3,R0
+	BIT	#DBLBIT,R4	;is it double-word
+	BEQ	1$		;branch if no
+	MOV	2(R0),R1	;yes. fetch double-word
+	MOV	@R0,R0
+	BIT	#SWPBIT,R4	;is it byte-swapped
+	BEQ	3$		;branch if no
+	SWAB	R0		;yes. wiggle
+	SWAB	R1
+	BR	3$
+;
+1$:	BIT	#BYTBIT,R4	;is it byte
+	BEQ	2$		;branch if no
+	MOVB	@R0,R0		;yes. fetch byte
+	BR	3$
+;
+2$:	MOV	@R0,R0		;fetch word
+	BIT	#SWPBIT,R4	;is it byte-swapped
+	BEQ	3$		;branch if no
+	SWAB	R0		;yes. wiggle
+3$:	BIT	#SGNBIT,R4	;is it signed
+	BEQ	5$		;branch if no
+	TST	R0		;yes. is it negative
+	BPL	5$		;branch if no
+	MOV	R0,-(SP)	;yes. output sign
+	MOVB	#'-,R0
+	JSR	PC,PRBYT
+	MOV	(SP)+,R0	;restore argument
+	BIT	#DBLBIT,R4	;is this double-word
+	BEQ	4$		;branch if no
+	NEG	R0		;yes. negate double-word
+	NEG	R1	
+	SBC	R0
+	RTS	PC
+;
+4$:	NEG	R0		;negate word
+5$:	BIT	#BYTBIT,R4	;is this byte
+	BEQ	6$		;branch if no
+	BIC	#^C377,R0	;yes. trim to eight bits
+6$:	RTS	PC
+;
+; Routines to convert and output data
+;
+; PRDEC (prd) output decimal number
+; R0 = decimal number (unsigned)
+;
+PRDEC:	MOV	R1,-(SP)	;adjust arguments
+	MOV	R0,R1
+	CLR	R0
+	JSR	PC,PRDBL
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; PRDBL (prd) output double-word decimal number
+; R0-R1 = decimal number (unsigned)
+;
+PRDBL:	MOV	R2,-(SP)	;save
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	MOV	R0,R2		;align for divide
+	MOV	R1,R3
+	MOV	SP,R4
+1$:	MOV	#-10.,R0	;reduce modulo radix
+	JSR	PC,CLK83
+	MOV	R1,-(SP)
+	TST	R2		;is division complete
+	BNE	1$		;branch if no
+	TST	R3
+	BNE	1$		;branch if no
+2$:	MOV	(SP)+,R0	;output digit string
+	ADD	#'0,R0
+	JSR	PC,PRBYT
+	CMP	SP,R4
+	BLO	2$
+	MOV	(SP)+,R4	;evas
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	RTS	PC
+;
+; PROCB (pro) output octal byte
+; R0 = octal byte
+;
+PROCB:	MOV	R1,-(SP)	;save registers
+	MOV	#3.,R1		;initialize loop count
+	SWAB	R0
+	ROL	R0		;output high-order two bits
+	ROL	R0
+	MOV	R0,-(SP)
+	BIC	#^C3,R0
+	BR	PRO3
+;
+; PROCT (pro) output octal word
+; R0 = octal word
+;
+PROCT:	MOV	R1,-(SP)	;save registers
+	MOV	#6.,R1		;initialize loop count
+	ROL	R0		;write high-order digit
+	MOV	R0,-(SP)
+	BIC	#^C0,R0		;first digit only one bit
+PRO3:	ROL	R0
+	ADD	#'0,R0
+	JSR	PC,PRBYT
+	MOV	(SP)+,R0	;restore argument
+	DEC	R1		;is shift-write fini
+	BEQ	1$		;branch if yes
+	ROL	R0		;rotate next digit
+	ROL	R0
+	ROL	R0
+	MOV	R0,-(SP)	;save argument
+	BIC	#^C3,R0		;mask to three bits
+	BR	PRO3
+;
+1$:	MOV	(SP)+,R1
+	RTS	PC
+;
+; PRCLK (clk) output clock in hh:mm:ss format
+; R0-r1 = milliseconds past midnight
+;
+PRCLK:	MOV	R2,-(SP)	;save registers
+	MOV	R3,-(SP)
+	MOV	R1,R3
+	MOV	R0,R2
+	MOV	#-1000.,R0	;get ticks
+	JSR	PC,CLK83
+	MOV	#-60.,R0	;get seconds
+	JSR	PC,CLK83
+	MOV	R1,-(SP)
+	JSR	PC,CLK83	;get minutes
+	MOV	R1,-(SP)
+	MOV	R3,R0		;output hours
+	CMP	R0,#100.	;is field > 2 digits
+	BHIS	1$		;branch if yes
+	JSR	PC,CLK85	;no. output 2-digit field
+	BR	2$
+;
+1$:	JSR	PC,PRDEC	;output full field
+2$:	MOV	#':,R0
+	JSR	PC,PRBYT
+	MOV	(SP)+,R0	;output minutes
+	JSR	PC,CLK85
+	MOV	#':,R0
+	JSR	PC,PRBYT
+	MOV	(SP)+,R0	;output seconds
+	JSR	PC,CLK85
+	MOV	(SP)+,R3	;restore registers
+	MOV	(SP)+,R2
+	RTS	PC
+;
+; Subroutine to divide double-precision integer by integer
+; R0 = divisor, r2-r3 = dividend, returns r1 = remainder, r2-r3 = quotient
+;
+CLK83:	MOV	R4,-(SP)	;initialize
+	CLR	R1
+	MOV	#33.,R4
+1$:	ROL	R1		;shift partial remainder left
+	ADD	R0,R1
+	BCS	2$		;branch if no underflow
+	SUB	R0,R1		;underflow. restore partial remainder
+2$:	ROL	R3		;rotate partial quotient left
+	ROL	R2
+	DEC	R4
+	BNE	1$
+	MOV	(SP)+,R4
+	RTS	PC
+;
+; Subroutine to output clock fields
+; (called only by prclk)
+; R0 = decimal number in range 0-59
+;
+CLK85:	MOV	R1,-(SP)	;initialize
+	MOV	R0,R1
+	CLR	R0
+	DIV	#10.,R0		;cleave the digits
+	ADD	#'0,R0		;output first digit
+	JSR	PC,PRBYT
+	MOV	R1,R0		;output second digit
+	ADD	#'0,R0
+	JSR	PC,PRBYT
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; PRDAT (prd) output date in dd-mmm-yy format
+; R0 = date (system format)
+;
+PRDAT:	JSR	PC,DATRT	;convert to rt-11 format
+;
+; RTDAT (prd) output date in dd-mmm-yy format
+; R0 = date (rt-11 format)
+;
+RTDAT:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R0,-(SP)
+	ASH	#-5,R0		;extract day (bits 5-9)
+	BIC	#^C37,R0
+	JSR	PC,PRDEC
+	MOV	@SP,R1		;extract month (bits 10-14)
+	ASH	#-10.+2,R1
+	BIC	#^C74,R1
+	ADD	PC,R1
+	ADD	#MONTH-.,R1
+	MOV	#5,R2
+1$:	MOVB	(R1)+,R0
+	JSR	PC,PRBYT
+	SOB	R2,1$
+	MOV	(SP)+,R0	;extract year (bits 0-4)
+	BIC	#^C37,R0
+	BEQ	2$		;branch if none
+	ADD	#72.,R0
+2$:	JSR	PC,PRDEC
+	MOV	(SP)+,R2	;restore registers
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to convert system date to rt-11 date and print modifiers
+; r0 = system date, returns r0 = rt-11 date
+;
+DATRT:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R0,R1		;print modifiers
+	BIC	#140000,R1
+	ASH	#-14.,R0
+	BIC	#^C3,R0
+	BEQ	1$		;branch if none
+	ADD	PC,R0
+	MOVB	FLGTAB-.(R0),R0
+	JSR	PC,PRBYT
+1$:	CLR	R0		;convert to rt-11 format
+	DIV	#1461.,R0	;(4*365+1)
+	ASH	#2,R0
+	MOV	R0,R2
+	CMP	R1,#366.	;is this leap year
+	BHIS	2$		;branch if no
+	MOV	PC,R0		;yes. use leap year table
+	ADD	#LEPYER-.,R0
+	BR	3$
+;
+2$:	SUB	#366.,R1	;standard year. account for leap
+	INC	R2
+	CLR	R0
+	DIV	#365.,R0
+	ADD	R0,R2
+	MOV	PC,R0		;use standard year table
+	ADD	#STDYER-.,R0
+3$:	ADD	#2000,R2	;accumulate month
+	TST	(R0)+
+	CMP	@R0,R1
+	BLOS	3$
+	SUB	-(R0),R1
+	INC	R1		;accumulate day
+	ASH	#5,R1
+	ADD	R1,R2
+	MOV	R2,R0
+	MOV	(SP)+,R2	;evas
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; PRFIL (prf) output file name in dev:file.ext format
+; R0 = file name pointer
+;
+PRFIL:	MOV	R1,-(SP)	;initialize
+	MOV	R0,R1
+	MOV	(R1)+,R0	;output device name
+	JSR	PC,PRD50
+	MOV	#':,R0
+	JSR	PC,PRBYT
+	MOV	(R1)+,R0	;output file name
+	BEQ	3$		;branch if missing
+	JSR	PC,PRD50
+	MOV	(R1)+,R0
+	JSR	PC,PRD50
+	MOV	#'.,R0
+	JSR	PC,PRBYT
+	MOV	(R1)+,R0	;output extension
+	JSR	PC,PRD50
+3$:	MOV	(SP)+,R1
+	RTS	PC
+;
+; PRCON	(prc) output internet address in [n.n.n.n] format
+; R0 = address pointer
+;
+PRCON:	MOV	R1,-(SP)	;initialize
+	MOV	R2,-(SP)
+	MOV	R0,R1
+	MOV	#'[,R0		;output "["
+	JSR	PC,PRBYT
+	MOV	#4,R2
+10$:	CLR	R0		;output next field
+	BISB	(R1)+,R0
+	JSR	PC,PRDEC
+	DEC	R2
+	BEQ	11$		;branch if done
+	MOV	#'.,R0		;output "."
+	JSR	PC,PRBYT
+	BR	10$
+;
+11$:	MOV	#'],R0		;output "]"
+	JSR	PC,PRBYT
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; PRD50 (r50) output rad50 word (three ascii chars)
+; R0 = rad50 char
+;
+PRD50:	MOV	R1,-(SP)	;save a few
+	MOV	R2,-(SP)
+	MOV	R0,R2		;save arg
+	MOV	PC,R1
+	ADD	#DIVTAB-.,R1	;r1 -> division table
+2$:	MOV	#-1,R0		;initialize quotient reg
+	CMP	R2,#174777	;rad50 value too large?
+	BLO	3$		;branch if no
+	MOV	#'?,R0		;branch if yes
+	BR	4$
+;
+3$:	INC	R0		;divide by appropriate power of 50(8)
+	SUB	@R1,R2
+	BCC	3$
+	ADD	@R1,R2		;restore dividend
+	TST	R0		;character is a blank?
+	BEQ	5$		;yes
+	CMP	R0,#33		;decode rad50 char
+	BLO	7$		;branch if alpha
+	BEQ	9$		;$
+	CMP	R0,#35
+	BNE	6$		;digit or .
+	ADD	#-5,R0		;* (35 -> 52)
+6$:	ADD	#11,R0		;digit or . (34 -> 56)
+9$:	ADD	#11-100,R0	;$ (33 -> 44)
+7$:	ADD	#100,R0		;alpha
+4$:	JSR	PC,PRBYT
+5$:	TST	-(R1)		;is conversion done
+	BNE	2$		;branch if no
+	MOV	(SP)+,R2	;yes. restore registers
+PRD2:	MOV	(SP)+,R1	;restore registers
+	RTS	PC
+;
+; PRINT (prn) output string
+; R0 = string pointer (terminated  by zero byte)
+;
+PRINT:	MOV	R1,-(SP)	;save
+	MOV	R0,R1
+2$:	MOVB	(R1)+,R0
+	BEQ	3$
+	JSR	PC,PRBYT
+	BR	2$
+;
+3$:	MOV	(SP)+,R1
+	RTS	PC
+;
+; CRLF (crl) output cr/lf
+;
+CRLF:	MOV	#CR,R0		;end line
+	JSR	PC,PRBYT
+	MOV	#LF,R0
+	JSR	PC,PRBYT
+	RTS	PC
+;
+; PRHEX (prx) output hexadecimal byte
+; R0 = byte
+;
+PRHEX:	MOV	R0,-(SP)	;save argument
+	ASH	#-4,R0		;output low nibble
+	BIC	#^C17,R0
+	ADD	PC,R0
+	MOVB	HEXTAB-.(R0),R0
+	JSR	PC,PRBYT
+	MOV	(SP)+,R0	;output low nibble
+	BIC	#^C17,R0
+	ADD	PC,R0
+	MOVB	HEXTAB-.(R0),R0
+	JSR	PC,PRBYT
+	RTS	PC
+;
+; Subroutine to convert line ticks to milliseconds
+; R0-r1 = line ticks, returns r0-r1 = milliseconds
+;
+LINMS:	MOV	R2,-(SP)	;preservatives
+	MOV	R3,-(SP)
+	CLR	R2		;initialize to multiply by 50
+	MOV	#33.,R3
+3$:	ASR	R2		;shift partial product right
+	ROR	R0
+	ROR	R1
+	BCC	4$		;branch if lsb = 0
+	ADD	#50.,R2		;lsb ~= 0. add multiplier
+4$:	DEC	R3
+	BNE	3$
+	CLR	R2		;initialize to divide by 3
+	MOV	#33.,R3
+1$:	ROL	R2		;shift partial remainder left
+	ADD	#-3.,R2
+	BCS	2$		;branch if no underflow
+	SUB	#-3.,R2		;underflow. restore partial remainder
+2$:	ROL	R1		;rotate partial quotient left
+	ROL	R0
+	DEC	R3
+	BNE	1$
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D	;read-only data
+;
+;		 jan feb mar apr may jun jul aug sep oct nov dec
+STDYER:	TABLE	<31.,28.,31.,30.,31.,30.,31.,31.,30.,31.,30.,31.,999.>
+LEPYER:	TABLE	<31.,29.,31.,30.,31.,30.,31.,31.,30.,31.,30.,31.,999.>
+;
+	.WORD	0		;rad50 convert table
+	.WORD	1
+	.WORD	50
+DIVTAB:	.WORD	3100
+;
+; Format interpreter branch table
+;
+FMTTBL:	.BYTE	'/,0		;new line
+	.BYTE	'S,1		;signed
+	.BYTE	'B,2		;byte
+	.BYTE	'L,3		;literal
+	.BYTE	'P,4		;process
+	.BYTE	'I,5		;decimal
+	.BYTE	'K,6		;octal
+	.BYTE	'R,7		;rad50
+	.BYTE	'F,10		;file name
+	.BYTE	'C,11		;connection name
+	.BYTE	'D,12		;date
+	.BYTE	'T,13		;time
+	.BYTE	'G,14		;generate
+	.BYTE	'+,15		;modifier
+	.BYTE	'A,16		;ascii string
+	.BYTE	'X,17		;swap bytes
+	.BYTE	'H,20		;hexadecimal
+	.BYTE	'M,21		;double-word
+	.BYTE	0,0		;end of table
+;
+MONTH:	.ASCII	'-BAD-Jan-Feb-Mar-Apr-May-Jun-Jul-Aug-Sep-Oct-Nov-Dec-'
+HEXTAB:	.ASCII	'0123456789ABCDEF' ;hex convert table
+FLGTAB:	.ASCII	' +-*'		;date modifiers
+	.EVEN
+;
+	.END
+                                                                                                                                                                                                                             

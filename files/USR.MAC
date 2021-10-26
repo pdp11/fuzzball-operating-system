@@ -1,0 +1,800 @@
+	.TITLE	USR	RT-11 Directory processor
+	.SBTTL	System and module definitions
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn - rt-11 directory processor
+;
+; External symbols
+;
+	.GLOBL	STRTIO,STAT,DELAY,DATE,GTIM ;$usei
+;
+; Entry symbols
+;
+	.GLOBL	RENAME,ENTER,LOOKUP,DELETE,CLOSE,FPROT,SFDAT
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.ERR,.PSA,.CLP,.IOD,.SMF,.PRT,.TRDEF ;dcnlib definitions
+	.MCALL	.PSEM,.VSEM,.TRAP ;dcnlib macros
+	.COM			;common definitions
+	.ERR			;error code definitions
+	.PSA			;defince process save areas
+	.CLP			;rt-11 monitor area definitions
+	.IOD			;emulator extension definitions
+	.SMF			;define semaphore codes
+	.PRT			;define queue file entry format
+	.TRDEF			;define trap codes
+;
+; Module definitions
+;
+DIRBLK	=	6		;first block of rt-11 directory
+MAXSIZ	=	1000.		;max file blocks
+SEGSIZ	=	1000		;directory segment size (words)
+READ	=	10*400		;read code
+WRITE	=	11*400		;write code
+;
+; Directory entry format
+;
+.	=	0
+E.CTRL:	.BLKW	1		;control word
+PROTEK	=	100000		;protected file
+ENDBLK	=	004000		;end of segment marker
+PERM	=	002000		;permanent file
+EMPTY	=	001000		;empty entry
+TENT	=	000400		;tentative file
+E.NAME:	.BLKW	3		;file name and extension
+E.BLOK:	.BLKW	1		;size of hole allocated (blocks)
+E.CHAN:	.BLKB	1		;channel number of tentative file
+E.JNUM:	.BLKB	1		;process id of tentative file
+E.DATE:	.BLKW	1		;creation date
+E.LENG	=	.		;end of directory entry (extra words follow)
+;
+; Directory segment header format
+;
+.	=	0
+D.SMAX:	.BLKW	1		;maximum segments
+D.LINK:	.BLKW	1		;link to next segment
+D.USED:	.BLKW	1		;last segment used (first segment only)
+D.XTRA:	.BLKW	1		;extra bytes in directory entry
+D.STRT:	.BLKW	1		;start block this segment
+D.LENG	=	.		;end of directory segment header
+	.PAGE
+;
+; Process state procedure
+;
+	.PSECT	$USEI,RO,I
+;
+; Common exit linkage
+;
+COMXIT:	MOVB	ERRSW,R4	;save error code
+	MOV	STKSV1,SP	;restore registers
+	.VSEM	#SF.USR		;unlock usr
+	ASRB	R4		;set error code
+	BCC	1$
+	MOVB	R4,@#ERRBYT
+1$:	MOV	(SP)+,R1	;evas
+	MOV	(SP)+,R2
+	MOV	(SP)+,R3
+	MOV	(SP)+,R4
+	RTS	PC
+;
+; .looku (emt 375/1) open existing file
+; Emt 375 linkage, returns r0 = file size (blocks)
+; 0	channel in use
+; 1	file not found
+;
+LOOKUP:	JSR	R4,USRCOM	;common setup
+	 BR	LOOXIT		;branch if sequential device
+	JSR	R4,DLEET	;get a permanent entry of a file name.
+	 BR	LKER1		;branch if not found
+	ADD	#E.BLOK,R1	;offset to business end
+	MOV	R3,R0		;insert channel info
+	TST	(R0)+
+	MOV	BLOCK,(R0)+	;c.sblk
+	MOV	(R1)+,(R0)+	;c.leng
+	MOV	(R1)+,(R0)+	;c.used
+LOOXIT:	MOV	C.LENG(R3),R0	;return c.leng
+	BR	COMXIT
+;
+; .renam (emt 375/4) rename existing file
+; Emt 375 linkage
+; 0	channel in use
+; 1	file not found
+; 3	protected file already exists
+;
+RENAME:	JSR	R4,USRCOM	;common setup
+	 BR	LKER1		;branch if sequential device
+	JSR	R4,DLEET	;get a permanant ewntry of a file name
+	 BR	LKER1		;branch if not found
+	BIS	#RENAM$,@R3	;mark for rename
+	ADD	#10,R0		;point to new name
+	JMP	CLOCOM		;close and collect garbage
+;
+; .fprot (emt 375/43) set/clear file protection on existing file;
+; Emt 375 linkage
+; 0	channel in use
+; 1	file not found
+;
+FPROT:	JSR	R4,USRCOM	;common setup
+	 BR	LKER1		;branch if sequential device
+	JSR	R4,DLEET	;get a permanant ewntry of a file name
+	 BR	LKER1		;branch if not found
+	BIC	#PROTEK,@R1	;clear protect
+	BIT	#1,SIZE		;is this protect
+	BEQ	1$		;branch if no
+	BIS	#PROTEK,@R1	;yes. set protect
+1$:	JMP	CLSQSH		;close and collect garbage
+;
+; .sfdat (emt 375/42) set date on existing file;
+; Emt 375 linkage
+; 0	channel in use
+; 1	file not found
+;
+SFDAT:	JSR	R4,USRCOM	;common setup
+	 BR	LKER1		;branch if sequential device
+	JSR	R4,DLEET	;get a permanant ewntry of a file name
+	 BR	LKER1		;branch if not found
+	MOV	SIZE,R0		;reset date
+	BNE	1$		;branch if specified
+	JSR	PC,DATE		;not specifed. plug in today
+1$:	MOV	R0,E.DATE(R1)
+	JMP	CLSQSH		;close and collect garbage
+;
+; .delet (emt 375/0) delete existing file
+; Emt 375 linkage
+; 0	channel in use
+; 1	file not found
+; 3	protected file already exists
+;
+DELETE:	JSR	R4,USRCOM	;setup the channel for directory io
+	 BR	DELOUT		;branch if sequential device
+	JSR	R4,DLEET	;find the file. r0 points to it.
+	 BR	LKER1		;no such file to delete
+	BIT	#PROTEK,@R1	;is file protected
+	BNE	PRER1		;branch if yes
+	MOV	#EMPTY,@R1	;make entry an empty
+	JMP	CLSQSH		;close and collect garbage
+;
+PRER1:	MOVB	#3*2+1,ERRSW	;protected file
+	BR	DELOUT
+;
+LKER1:	MOVB	#1*2+1,ERRSW	;file not found
+DELOUT:	BIC	#ACTIV$,@R3	;close channel
+	BR	COMXIT
+;
+; .enter (emt 375/2) enter new file
+; Emt 375 linkage, returns r0 = file size (blocks)
+; 0	channel in use
+; 1	device or directory full
+; 3	protected file already exists
+;
+ENTER:	MOVB	#^C<CD.DIR+CD.BLK+CD.SPQ>,SPQSW ;an enter
+	JSR	R4,USR1		;do common startup
+	 BR	LOOXIT		;branch if sequential device
+	BIC	#DBLK$M,@R3	;start search at block 1
+	BIS	#1*400+DWRIT$,@R3 ;set directory rewrite needed
+	CLR	FILNAM		;use filnam block to find largest
+	CLR	FILNAM+2	;  and 2nd largest entries
+	JSR	R4,BLKCHK
+	MOV	USRBUF+D.USED,LSTSEG ;last segment used
+ENT10:	JSR	PC,CONSOL	;consolidate this block
+	MOV	USRBUF+D.STRT,BLOCK ;start block
+1$:	MOV	PC,R4
+	ADD	#FILNAM-.,R4	;point to 2nd largest so far
+2$:	BIT	@R1,#ENDBLK
+	BNE	5$		;branch if end of block
+	BIT	@R1,#EMPTY
+	BNE	4$		;branch if empty
+	BIT	@R1,#PERM
+	BEQ	3$		;branch if not permanent
+	BIT	@R1,#PROTEK
+	BEQ	3$		;branch if not protected
+	MOV	FILE,R0		;permanent protected. is it same file
+	MOV	R1,R2
+	CMP	(R0)+,(R2)+
+	CMP	(R0)+,(R2)+
+	BNE	3$		;branch if no
+	CMP	(R0)+,(R2)+
+	BNE	3$		;branch if no
+	CMP	(R0)+,(R2)+
+	BEQ	PRER1		;branch if yes
+3$:	ADD	E.BLOK(R1),BLOCK ;no. update length
+	ADD	SIZENT,R1
+	BR	2$		;and loop
+;
+4$:	MOV	E.BLOK(R1),R0	;get length of empty
+	MOV	SIZE,R2		;get requested size
+	BEQ	6$		;0 => get largest two
+	CMP	#-1,R2		;-1 => largest
+	BEQ	6$		;branch if not specific
+	CMP	R0,R2		;specific request satisfied?
+	BHIS	ENT11		;branch if yes
+	BR	8$		;no. get next
+;
+5$:	JSR	R4,NXBLK	;read next block into core
+	 BR	9$		;no more directory
+	BR	ENT10
+;
+6$:	CMP	(R4)+,R0	;2nd largest : this hole
+	BHIS	8$		;no good, ignore it
+	CMP	@R4,R0		;largest : this hole
+	BHIS	7$		; greater => this is new 2nd largest
+	TST	-(R4)		;move former largest to 2nd spot
+	MOV	2(R4),@R4
+	ADD	#8.,R4		;advance pointer
+	MOV	-(R4),-(R4)	;copy block index
+7$:	MOV	R0,-(R4)	;save hole size
+	MOV	@R3,4(R4)	;save block pointer
+8$:	ADD	R0,BLOCK	;maintain start block
+	ADD	SIZENT,R1
+	BR	1$		;keep looking
+;
+9$:	CMP	C.LENG(R3),BLOCK ;end of pass 1. does sum tally
+	BNE	ENT12		;branch if no
+	TST	(R4)+		;yes. point R4 to largest
+	MOV	SIZE,R2		;get request size
+	BNE	11$		;might have been specific or max
+	ROR	@R4		;take half the largest hole
+	TST	-(R4)		;compare it to the 2nd largest hole
+	CMP	2(R4),@R4
+	BLO	10$		;2nd largest is bigger
+	TST	(R4)+		;that half is bigger
+10$:	CMP	#MAXSIZ,@R4	;asking for too much?
+	BHIS	12$		;no. leave it alone
+	MOV	#MAXSIZ,@R4	;give only the maximum
+	BR	12$
+;
+11$:	INC	R2		;if it wasn't -1,
+	BNE	LKER1		;then it was a failing specific request
+12$:	MOV	@R4,SIZE	;convert request to specific
+	BEQ	LKER1		;golly, there's no room at all
+	BIC	#DBLK$M,@R3	;clear out block number
+	BIS	4(R4),@R3	;start rescan at a good place
+	JSR	R4,BLKCHK	;restart enter
+	BR	ENT10
+;
+ENT12:	JMP	IOER		;sum of blocks not equal to size
+;
+ENT11:	MOV	DREND,R4	;is there room for 3 new entries
+	ADD	SIZENT,R4
+	ADD	SIZENT,R4
+	ADD	SIZENT,R4
+	MOV	PC,-(SP)
+	ADD	#2*SEGSIZ+USRBUF-.,@SP
+	CMP	R4,(SP)+
+	BHI	EXTEND		;branch if no
+	MOV	BLOCK,-(SP)	;yes. save starting block
+	SUB	SIZE,E.BLOK(R1)	;decrease length of empty
+	MOV	R1,R4		;is previous entry tentative
+	SUB	SIZENT,R4
+	MOV	PC,-(SP)
+	ADD	#USRBUF+D.LENG-.,@SP
+	CMP	R4,(SP)+
+	BLO	1$		;branch if no
+	BIT	#TENT,@R4
+	BEQ	1$		;branch if no
+	JSR	PC,PUSH		;yes. insert entry with size 0
+	MOV	#EMPTY,@R1
+	CLR	E.BLOK(R1)
+	ADD	SIZENT,R1
+1$:	JSR	PC,PUSH		;make room for real entry
+	MOV	FILE,R0		;point to file name
+	TST	(R0)+
+	MOV	#TENT,(R1)+	;e.ctrl. insert entry
+	MOV	(R0)+,(R1)+	;e.name
+	MOV	(R0)+,(R1)+
+	MOV	(R0)+,(R1)+
+	MOV	SIZE,(R1)+	;e.blok
+	MOV	CHKEY$,(R1)+	;e.chan, e.jnum
+	JSR	PC,DATE		;e.date
+	MOV	R0,(R1)+
+	MOV	#WRITE,R0	;write the segment
+	JSR	PC,SEGRW2
+	MOV	(SP)+,C.SBLK(R3) ;insert channel info
+	MOV	SIZE,C.LENG(R3)
+	BITB	#CD.SPQ,C.DEVQ(R3) ;is this spool file
+	BEQ	3$		;branch if no
+	MOV	FILE,R1		;yes. fill in control fields
+	ADD	#SQ.USR,R1
+	MOV	R5,R0		;user string
+	ADD	#IOHUSR,R0
+40$:	MOVB	(R0)+,(R1)+
+	BNE	40$
+	MOV	FILE,R1
+	JSR	PC,DATE		;date queued
+	MOV	R0,SQ.DAT(R1)
+	MOV	PC,R0		;time queued
+	ADD	#ARGBLK-.,R0
+	MOV	R1,2(R0)
+	ADD	#SQ.TIM,2(R0)
+	JSR	PC,GTIM
+	MOV	PC,R0		;write control block
+	ADD	#ARGBLK-.,R0
+	CLR	2(R0)		;block number
+	MOV	R1,4(R0)	;address
+	MOV	#SQ.LEN/2,6(R0)	;word count
+	JSR	PC,STRTIO	;(note remaining arguments set above)
+	BCS	ENT12		;branch if error
+	INC	C.USED(R3)	;cheat like crazy
+3$:	JMP	LOOXIT
+;
+; Find the total number of entries in the directory segment. divide that by 2,
+; and set r1 to the entry that is roughly 1/2 the way down in the directory.
+; Starting there, search for a permanent or tentative or empty entry. When an
+; entry is found the current segment is terminated with an end block mark, and
+; written out. The remaining entries are the first entries in a new segment.
+; The segments are linked, and the newly created segment is written out. block
+; 1 of the directory is updated to reflect the highest block used in the
+; directory, and enter is restarted at the directory block which was split.
+;
+EXTEND:	INC	LSTSEG		;is there another segment
+	CMP	LSTSEG,MAXSEG
+	BLOS	1$		;yes, use it
+	MOVB	#ER.OVF*2+1,ERRSW ;directory overflow error
+	JMP	COMXIT
+;
+1$:	CLR	R2		;now look for end mark
+	JSR	PC,NTHENT	;this call counts the entries
+	ASR	R2
+	NEG	R2		;get the half way entry
+	JSR	PC,NTHENT
+3$:	BIT	#PERM!TENT,(R1)	;is it permanent or tentative?
+	BNE	2$
+	ADD	E.BLOK(R1),R4	;no-increase start block of new file
+	ADD	SIZENT,R1
+	BR	3$
+;
+2$:	MOV	@R1,-(SP)	;save type of entry
+	MOV	#ENDBLK,@R1	;terminate segment
+	MOV	USRBUF+D.LINK,-(SP) ;save link to next block
+	MOV	LSTSEG,USRBUF+D.LINK ;link to new block
+	MOV	#WRITE,R0	;write out shortened block
+	JSR	PC,SEGRW2
+	MOV	PC,R0
+	ADD	#USRBUF-.,R0	;now create new segment header
+	TST	(R0)+		;d.smax
+	MOV	(SP)+,(R0)+	;d.link
+	CMP	(R0)+,(R0)+	;d.used, d.xtra
+	MOV	R4,(R0)+	;d.strt
+	MOV	(SP)+,@R1	;restore original type
+4$:	MOV	(R1)+,(R0)+	;slide directory buff up to header
+	MOV	PC,-(SP)
+	ADD	#2*SEGSIZ+USRBUF-.,@SP
+	CMP	R1,(SP)+
+	BLOS	4$
+	MOVB	LSTSEG,SEGMNT+1	;write out new directory block
+	MOV	#WRITE,R0
+	JSR	PC,SEGRW2
+	MOV	#1*400,SEGMNT	;read in segment 1
+	MOV	#READ,R0
+	JSR	PC,SEGRW2
+	INC	USRBUF+D.USED	;update highest segment used
+	MOV	#WRITE,R0	;and rewrite the block
+	JSR	PC,SEGRW2
+	JSR	R4,BLKCHK	;restart enter
+	JMP	ENT10
+;
+; Subroutine to search for nth entry
+;
+NTHENT:	MOV	PC,R1
+	ADD	#USRBUF+D.STRT-.,R1 ;get n'th entry in directory
+	MOV	(R1)+,R4	;initial start block of files
+1$:	BIT	(R1),#ENDBLK	;at end of segment?
+	BNE	2$		;yes. exit now
+	ADD	E.BLOK(R1),R4	;update start block
+	ADD	SIZENT,R1
+	INC	R2		;R2 has desired entry, in neg. form
+	BNE	1$
+2$:	RTS	PC
+;
+; Subroutine to perform common setup operations
+; Returns r0 = file pointer, r3 = channel pointer
+;
+USRCOM:	MOVB	#^C<CD.DIR+CD.BLK>,SPQSW ;not an enter
+USR1:	MOV	R3,-(SP)	;save remaining registers
+	MOV	R2,-(SP)
+	MOV	R1,-(SP)
+	.PSEM	#SF.USR		;wait and lock usr
+	MOV	SP,STKSV1
+	MOV	(R0)+,CHKEY$	;save arguments
+	MOV	(R0)+,FILE
+	MOV	(R0)+,SIZE
+	CLRB	ERRSW
+	CLR	SEGMNT		;assemble keys
+	MOVB	IOHRPY(R5),CHKEY$+1
+	MOVB	CHKEY$,R0	;delay for pending operation
+	JSR	PC,DELAY
+	MOV	R0,R3		;get channel pointer
+	BCC	EROPEN		;branch if already open
+	CLR	C.DEVQ(R3)
+1$:	MOV	FILE,R0		;get device info
+	MOV	PC,R1
+	ADD	#FILNAM-.,R1
+	JSR	PC,STAT
+	BCS	EROPEN		;branch if invalid
+	MOV	4(R1),R2	;get par pointer
+	MOV	R3,R0		;initialize channel
+	MOVB	PARIDX(R2),(R0)+ ;c.stat	
+	MOVB	#200,(R0)+
+	CLR	(R0)+		;c.sblk
+	MOV	6(R1),(R0)+	;c.leng
+	CLR	(R0)+		;c.used
+	BIC	#^C340,@R0	;c.devq (ldn/unit)
+	MOV	2(R1),R1
+	BIS	R1,(R0)+
+	MOVB	R1,R1		;get device table pointer
+	ASH	#3,R1
+	ADD	IOHPAR(R5),R1
+	MOV	PARLDN+6(R1),R1	;is this virtual disk
+	BEQ	2$		;branch if no
+	MOV	R1,C.LENG(R3)	;yes. amend max size
+2$:	MOVB	PARTPE(R2),R0	;extract magic bits
+	BIC	SPQSW,R0
+	BEQ	USR3		;branch if sequential device
+	BISB	R0,C.DEVQ(R3)	;block-transfer device
+	CMPB	PARTPE(R2),#43	;is this autospool device
+	BNE	4$		;branch if no
+	ADD	#PARLDN,R2	;yes. point to spool filespec
+	MOV	R2,FILE
+	MOV	IOHPAR(R5),R0	;use process name as first 3 chars
+	CLR	R0
+	BISB	PARIDX(R0),R0
+	ADD	R5,R0
+	ADD	PNPTR(R5),R0
+	MOV	@R0,2(R2)
+	MOV	#<^R000>,4(R2)
+	CLR	SIZE
+	BR	1$
+;
+4$:	TSTB	PARTPE(R2)	;is this directory device
+	BPL	USR3		;branch if no
+	MOV	FILE,R0		;yes. point to file name
+	TST	(R0)+
+	TST	@R0		;is the name null?
+	BEQ	USR3		;if yes, it's non file op.
+	BITB	#CD.SPQ,C.DEVQ(R3) ;is this spool file
+	BEQ	10$		;branch if no
+3$:	INC	2(R0)		;yes. is file name unique
+	JSR	R4,DLEET
+	 BR	10$		;branch if yes
+	BR	3$
+;
+10$:	TST	(R4)+		;return +2 for file op
+	JMP	@R4
+;
+USR3:	JMP	@R4
+;
+EROPEN:	MOVB	#0*2+1,ERRSW	;channel already open
+	JMP	COMXIT
+;
+; Subroutine to find an entry of specified type
+; R0 = type, r1 = entry pointer, returns r1 = updated entry pointer
+; Jsr	r4,entry
+;	+0 not found
+;	+2 found
+;
+ENTRY:	BIT	@R1,R0		;a match?
+	BNE	1$		;yes, get out
+	BIT	@R1,#ENDBLK	;end of block?
+	BNE	2$		;yes, return
+	ADD	E.BLOK(R1),BLOCK ;update length
+	ADD	SIZENT,R1
+	BR	ENTRY		;and loop
+;
+1$:	TST	(R4)+		;found. exit+2
+2$:	RTS	R4
+;
+; Subroutine to enlarge directory segment
+; R1 = segment pointer
+;
+PUSH:	MOV	R3,-(SP)	;save vital pointer
+	MOV	R1,R4		;mark position of empty
+	CLR	R0		;find end of directory
+	JSR	R4,ENTRY
+	 MOV	R1,R3		;not found
+	ADD	SIZENT,R1
+	CMP	(R3)+,(R1)+	;move all entries
+2$:	MOV	-(R3),-(R1)
+	CMP	R3,R4
+	BNE	2$
+	MOV	R4,R1		;point back to where file goes.
+	MOV	(SP)+,R3
+	RTS	PC
+;
+; Subroutine to read next directory segment
+; R3 = channel pointer, returns r1 = segment pointer
+; Exit +0 if not found, +2 if found
+;
+NXBLK:	MOV	USRBUF+D.LINK,R0 ;is there a next block?
+	BEQ	ENRTS		;no.
+	SWAB	R0		;put block # in place
+	BIC	#^CDBLK$M,R0	;isolate block number
+	BIC	#DBLK$M,@R3	;clear out block # in csw
+	BIS	R0,@R3
+	TST	(R4)+		;set normal return, fall into blkchk
+;
+; Subroutine to read directory segment
+; R3 = channel pointer, returns r1 = segment pointer
+;
+BLKCHK:	MOV	R0,-(SP)	;save name pointer
+	MOV	@R3,R0		;isolate block number
+	BIC	#^CDBLK$M,R0
+	CMP	R0,SEGMNT	;correct segment # in core ?
+	BEQ	2$		;shortcut if no
+	MOV	R0,SEGMNT
+	MOV	#READ,R0	;read it in
+	JSR	PC,SEGRW2
+2$:	MOV	USRBUF+D.SMAX,MAXSEG ;maximum segments
+	MOV	USRBUF+D.XTRA,SIZENT ;entry size
+	ADD	#E.LENG,SIZENT
+	MOV	PC,R1
+	ADD	#USRBUF+D.LENG-.,R1 ;point r1 at entry header
+	MOV	(SP)+,R0
+ENRTS:	RTS	R4
+;
+; Subroutine to read/write directory segment
+; R0 = read/write code, blkey = segment number
+;
+SEGRW2:	MOV	R0,-(SP)	;save argument
+	MOV	PC,R0		;point to argument block
+	ADD	#ARGBLK-.+12,R0
+	CLR	-(R0)		;10 completion code
+	MOV	#SEGSIZ,-(R0)	;6 word count
+	MOV	PC,-(R0)
+	ADD	#USRBUF-.,@R0	;4 address
+	MOV	SEGMNT,-(R0)	;2 segment
+	CMP	@R0,#DBLK$M
+	BHI	IOER		;branch if out of bounds
+	SWAB	@R0		;convert to block number
+	ASL	@R0
+	ADD	#DIRBLK-2,@R0
+	MOV	(SP)+,-(R0)	;0 channel/op code
+	MOVB	CHKEY$,@R0
+	JSR	PC,STRTIO
+	BCS	IOER
+	RTS	PC
+;
+IOER:	MOVB	#ER.DIR*2+1,ERRSW ;directory i/o error
+	JMP	COMXIT
+;
+; Subroutine to consolodate directory
+;
+; This is done before an enter and after a close.
+; Unnecessary entries come in several flavors:
+;	A) unassociated tentative entries
+;	B) multiple consecutive empties
+;	C) empties of length 0 following a permanent entry
+;
+; Consol makes two passes over the directory segment.
+; In pass 1, unassociated tentatives are made into empties.
+; In pass 2, consecutive empties are consolidated and
+; Empty entries preceeded by a permanent entry are deleted.
+;
+CONSOL:	MOV	R3,-(SP)	;save active registers
+	MOV	R1,-(SP)	;r1 points to top of directory
+1$:	MOV	#TENT,R0	;get a tentative entry
+	JSR	R4,ENTRY
+	 BR	4$		;no more. do pass 2
+	CMPB	E.CHAN+1(R1),CHKEY$+1 ;did this proc create entry
+	BNE	3$		;don't get cute if not
+	MOVB	E.CHAN(R1),R0	;yes. get channel in r4
+	CMPB	CHKEY$,R0	;is tentative on this channel?
+	BEQ	2$		;yes, clobber it
+	JSR	PC,DELAY
+	BCS	2$		;branch if not open
+	TSTB	@R0		;is it enter'ed waiting for close
+	BMI	3$		;branch if yes
+2$:	MOV	#EMPTY,@R1	;cream it. convert tent. to empty
+3$:	ADD	SIZENT,R1	;next entry
+	BR	1$
+;
+4$:	MOV	@SP,R1		;point r1 back to top
+5$:	MOV	#EMPTY,R0	;get an empty entry
+	JSR	R4,ENTRY
+	 BR	10$		;done. get out
+	MOV	R1,R2
+	ADD	SIZENT,R2	;point r2 to next entry
+	BIT	#EMPTY,@R2	;is it empty?
+	BEQ	8$		;no. check for empty of lth 0
+	ADD	E.BLOK(R2),E.BLOK(R1) ;yes. combine lengths.
+6$:	MOV	R2,R4		;the entry at r2 will be crunched
+	ADD	SIZENT,R4	;one entry beyond
+	MOV	R1,-(SP)	;save entry pointer
+	CLR	R0		;get end of directory mark
+	JSR	R4,ENTRY
+	 MOV	R1,R3		;not found
+7$:	MOV	(R4)+,(R2)+	;squeeze the entry
+	CMP	R4,R3
+	BLOS	7$
+	MOV	(SP)+,R1	;restore entry pointer
+	BR	5$
+;
+8$:	TST	E.BLOK(R1)	;no. empty. is it zero length
+	BNE	9$		;branch if no
+	MOV	R1,R2		;yes. is previous permanent
+	MOV	R1,R3
+	SUB	SIZENT,R3
+	MOV	PC,-(SP)
+	ADD	#USRBUF+D.LENG-.,@SP ;doing first entry in direct?
+	CMP	R3,(SP)+
+	BLO	9$		;yes. get next entry
+	BIT	#PERM,@R3	;permanent entry?
+	BNE	6$		;yes, squeeze it out
+9$:	ADD	SIZENT,R1	;advance to next entry
+	BR	5$
+;
+10$:	MOV	R1,DREND	;save position of end of direct
+	MOV	(SP)+,R1
+	MOV	(SP)+,R3
+	RTS	PC
+;
+; .close (emt 374/6) close file
+; Emt 374 linkage
+; 3	protected file already exists
+;
+CLOSE:	MOV	R4,-(SP)	;save registers
+	MOV	R3,-(SP)
+	MOV	R2,-(SP)
+	MOV	R1,-(SP)
+	.PSEM	#SF.USR		;wait and lock usr
+	MOV	SP,STKSV1
+	CLRB	ERRSW
+	CLR	SEGMNT		;assemble keys
+	MOVB	R0,CHKEY$
+	MOVB	IOHRPY(R5),CHKEY$+1
+	JSR	PC,DELAY	;delay for pending operation
+	MOV	R0,R3
+	BCS	CLSOUT		;branch if not open
+	TSTB	@R3
+	BPL	CLSOUT		;branch if not enter
+	TST	C.SBLK(R3)
+	BEQ	CLSOUT		;branch if sequential device
+	CLR	C.SBLK(R3)	;reset for directory ops
+;
+; Find the entry to be closed
+;
+	JSR	R4,BLKCHK
+2$:	MOV	#TENT,R0	;find the tentative entry
+	JSR	R4,ENTRY
+	 BR	1$		;not in this segment
+	CMP	E.CHAN(R1),CHKEY$ ;found. does it belong here
+	BEQ	3$		;branch if yes
+	ADD	SIZENT,R1	;no. keep going
+	BR	2$
+;
+1$:	JSR	R4,NXBLK	;get next segment
+	 BR	CLSOUT		;not found. forget it
+	BR	2$
+;
+3$:	MOV	PC,R0		;found. save status and name
+	ADD	#FILNAM-.,R0
+	MOV	(R1)+,(R0)+
+	MOV	(R1)+,(R0)+
+	MOV	(R1)+,(R0)+
+	MOV	@R1,@R0
+	CMP	-(R0),-(R0)	;point to file name
+	SUB	#6,R1		;point to entry
+;
+; Search for original entry
+; R0 = file name pointer, r1 = directory entry pointer
+;
+CLOCOM:	MOV	R1,-(SP)	;save current position
+	MOV	SEGMNT,-(SP)
+	JSR	R4,DLEET	;find old (permanent) copy
+	 BR	1$		;none to delete
+	BIT	#PROTEK,@R1	;is file protected
+	BNE	ERPROT		;branch if yes
+	MOV	#EMPTY,@R1	;no. delete the one we found
+	CMP	SEGMNT,@SP	;is the segment already in buffer
+	BEQ	1$		;branch if yes
+	JSR	PC,CLOSUP	;no. consolidate and rewrite segment
+1$:	BIC	#DBLK$M,@R3	;restore tentative entry
+	BIS	(SP)+,@R3
+	JSR	R4,BLKCHK
+	MOV	(SP)+,R1	;point to entry
+	BIT	#RENAM$,@R3	;no. is this rename
+	BNE	4$		;branch if yes
+	MOV	#PERM,@R1	;no. make it permanent
+	CMP	C.LENG(R3),C.USED(R3) ;*** has ked diddled the size
+	BHIS	2$		;*** branch if no
+	MOV	C.LENG(R3),C.USED(R3) ;*** yes. correct the entry !@#$%^&*
+2$:	MOV	E.BLOK(R1),R2	;compute size of buddy
+	SUB	C.USED(R3),R2
+	BMI	3$		;branch if overflow (error)
+	MOV	C.USED(R3),E.BLOK(R1) ;insert size used
+	ADD	SIZENT,R1
+	ADD	R2,E.BLOK(R1)
+	JSR	PC,CLOSUP	;consolidate and rewrite
+	BITB	#CD.SPQ,C.DEVQ(R3) ;is this spool file
+	BEQ	CLSOUT		;branch if no
+	.TRAP	#TR.SMP,#<^RPRT>,#1 ;yes. flag for prtq
+	BR	CLSOUT
+
+3$:	JMP	IOER		;channel screwed up
+;
+4$:	TST	(R1)+		;rename. insert new name
+	MOV	(R0)+,(R1)+	;e.name
+	MOV	(R0)+,(R1)+
+	MOV	(R0)+,(R1)+
+CLSQSH:	JSR	PC,CLOSUP	;consolidate and rewrite
+	BR	CLSOUT
+;
+ERPROT:	MOVB	#3*2+1,ERRSW	;protected file
+CLSOUT:	JMP	DELOUT
+;
+; Subroutine to consolidate directory segment and rewrite
+;
+CLOSUP:	MOV	R0,-(SP)	;save file name pointr
+	MOV	PC,R1		;set entry pointer
+	ADD	#USRBUF+D.LENG-.,R1
+	JSR	PC,CONSOL	;consolidate segment
+	MOV	#WRITE,R0	;rewrite segment
+	JSR	PC,SEGRW2
+	MOV	(SP)+,R0
+	RTS	PC
+;
+; Subroutine to locate permanent file
+; R0 = file pointer, returns r1 = entry pointer
+; jsr	r4,dleet
+;	+0 not found
+;	+2 found
+;
+DLEET:	MOV	R0,-(SP)	;save file pointer
+	BIC	#DBLK$M,@R3	;start search at block 1
+	BIS	#1*400,@R3
+	JSR	R4,BLKCHK
+	MOV	USRBUF+D.STRT,BLOCK
+1$:	MOV	#PERM,R0	;get a perm entry
+	JSR	R4,ENTRY
+	 BR	5$		;branch if not found
+	MOV	@SP,R0		;restore pointer
+	MOV	R1,R2
+	TST	(R2)+		;found. point to name
+	CMP	(R0)+,(R2)+	;do entries match
+	BNE	4$		;branch if no
+	CMP	(R0)+,(R2)+
+	BNE	4$		;branch if no
+	CMP	(R0)+,(R2)+
+	BNE	4$		;branch if no
+	TST	(R4)+		;yes. exit +2
+3$:	MOV	(SP)+,R0
+	RTS	R4
+;
+4$:	ADD	E.BLOK(R1),BLOCK ;compute start block for lookup
+	ADD	SIZENT,R1
+	BR	1$
+;
+5$:	JSR	R4,NXBLK	;advance to next block
+	 BR	3$		;branch if no more
+	CMP	USRBUF+D.STRT,BLOCK ;does start block agree
+	BEQ	1$		;branch if yes
+	JMP	IOER		;no. directory format error
+	.PAGE
+;
+; Data segment
+;
+	.PSECT	$DATA,RW,D
+;
+; Local storage
+;
+STKSV1:	.BLKW	1		;stack base
+CHKEY$:	.BLKW	1		;0 channel and process key
+FILE:	.BLKW	1		;2 file name pointer
+SIZE:	.BLKW	1		;4 requested file size (blocks)
+BLOCK:	.BLKW	1		;current block number
+MAXSEG:	.BLKW	1		;maximum segments
+LSTSEG:	.BLKW	1		;last segment used
+SEGMNT:	.BLKW	1		;current segment number
+SIZENT:	.BLKW	1		;entry size
+DREND:	.BLKW	1		;pointer to last entry in segment
+SPQSW:	.BLKB	1		;spool switch
+ERRSW:	.BLKB	1		;error switch
+	.EVEN
+FILNAM:	.BLKW	4		;file name
+ARGBLK:	.BLKW	5		;i/o argument block
+USRBUF:	.BLKW	SEGSIZ		;directory segment buffer
+;
+	.END
+                                                                                                                                                                                          

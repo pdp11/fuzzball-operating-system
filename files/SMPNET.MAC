@@ -1,0 +1,645 @@
+	.TITLE	SMPNET	DCN/SMTP USER PROCESS SUBROUTINES
+	.SBTTL	SYSTEM AND MODULE DEFINITONS
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn basic operating system - dcn/smtp user process subroutines
+;
+; External symbols
+;
+	.GLOBL	RDLIN,RDASC,RDDEC,HASH
+	.GLOBL	CTRL,RECV,SEND
+	.GLOBL	FLAGS,PRTPTR,PRIDNT
+	.GLOBL	ABOR,STATE,FILFCB,RPYBUF
+	.GLOBL	NAMRST
+	.GLOBL	MRCTAB,ARGBLK,SRCRUT,OPNBLK,SHOST
+;
+; Entry symbols
+;
+	.GLOBL	NETDAT,NETSIG,NETSTR,NETRST,EXIT
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.CHN,.SMF,.TRDEF ;dcnlib definitions
+	.MCALL	.GCLK,.VSEM,.PSEM,.TRAP,.MSG ;dcnlib macros
+	.MCALL	.EXIT,.PRINT,.READW,.WRITW,.MRKT,.CMKT ;rt-11 macros
+	.MCALL	$DFSIG		;moslib definitions
+	.MCALL	DFCON,DFFCB,OPNBLK,ADDR,CALL,FORMAT ;netlib macros
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.CHN			;define argument area
+	.SMF			;define semaphore codes
+	.TRDEF			;define trap codes
+	$DFSIG			;define interprocess signals
+	DFCON			;define connection block
+	DFFCB			;define file control block
+;
+; Module definitions
+;
+; Transport header codes (first char of reply code)
+;
+MS.REQ	=	'M		;message queued (4xx)
+MS.SNT	=	'S		;message sent (2xx)
+MS.DLV	=	'D		;message delivered
+MS.ERR	=	'F		;receiver hard error (5xx)
+MS.EXP	=	'X		;message marked for deletion
+;
+; Assembly parameters
+;
+OPNSIZ	=	4096.		;smtp tcb size (bytes)
+FILSIZ	=	2.		;buffer size (blocks >= 2)
+RUTSIZ	=	256.		;max route string length
+RPYSIZ	=	512.		;max reply string length
+;
+; Status flags (flags)
+;
+OPXBIT	=	100000		;connection open bit
+RPYBIT	=	040000		;file read active
+TIMBIT	=	020000		;timer running bit
+	.PAGE
+	.SBTTL	DATA TRANSFER ROUTINES
+;
+	.PSECT	$BOSI,RO,I
+;
+; Initialize overlay
+;
+NETRST:	MOV	#STOBGN,@#50	;reset storage
+	MOV	#OPNSIZ+<FILSIZ*512.>,R0 ;allocate buffers
+	JSR	PC,NAMRST
+	MOV	R0,OPNBLK+CONPTR
+	MOV	#OPNSIZ,OPNBLK+CONFMT
+	ADD	#OPNSIZ,R0
+	MOV	R0,FILFCB+FCBBUF
+	MOV	#RPYBUF,RPYPTR
+	CLR	STATE
+	RTS	PC
+;
+; Process net signals
+;
+NETSIG:	CMPB	R0,#SG.SC	;is this send complete
+	BEQ	NETSNC		;branch if yes
+	CMPB	R0,#SG.EST	;no. is this connection established
+	BNE	1$		;branch if no
+	.MRKT	#ARGBLK,#TIME,#SND02,#1 ;yes. set timer
+	BIS	#TIMBIT,FLAGS
+	RTS	PC
+;
+1$:	CMP	STATE,#1	;is this quit
+	BNE	3$		;branch if no
+	CMPB	R0,#SG.CC	;yes. is this close complete
+	BNE	2$		;branch if no
+	.CMKT	#ARGBLK,#1,#0	;reset timer
+	BIC	#OPXBIT+TIMBIT,FLAGS ;yes. mark closed
+	JSR	PC,SEQ99	;continue with next msg
+	RTS	PC
+;
+2$:	CALL	CTRL,#CM.CLS,#0,OPNBLK+CONPTR ;close connection
+	RTS	PC
+;
+3$:	CMPB	R0,#SG.CC	;not quit. is this close complete
+	BNE	2$		;branch if no
+	BIC	#OPXBIT,FLAGS	;yes. mark closed
+	JSR	PC,GOOFUP	;flush this host
+	RTS	PC
+;
+; Send complete received from net
+;
+NETSNC:	BIT	#RPYBIT,FLAGS	;is file read active
+	BNE	SNC02		;branch if yes
+SNC00:	RTS	PC		;ignore this
+;
+SNC02:	CMP	STATE,#8.	;is this end of text
+	BNE	SNC01		;branch if no
+	BIC	#RPYBIT,FLAGS	;yes. clear text mode
+	.MRKT	#ARGBLK,#TIME,#SND02,#1 ;set timer
+	BIS	#TIMBIT,FLAGS
+	MOV	#3,R0		;send "."<cr><lf>
+	MOV	#MAL04,R1
+	JMP	SNC03
+;
+SNC01:	MOV	FILBCT,R0	;states 4, 5, 7. is text still in buffer
+	BNE	2$		;branch if yes
+	.READW	#ARGBLK,#0,FILFCB+FCBBUF,#FILSIZ*256.,FILFCB+FCBBLK
+	BCC	1$		;branch if no error
+	FORMAT	#COM33,#FILFCB	;file read error
+	JSR	PC,ABOR
+	RTS	PC
+;
+1$:	MOV	R0,R1		;update block number
+	SWAB	R1
+	BIC	#^C377,R1
+	ADD	R1,FILFCB+FCBBLK
+	ASL	R0		;compute byte count
+	MOV	FILFCB+FCBBUF,FILPTR
+	MOV	R0,FILBCT
+2$:	MOV	FILPTR,R1	;get text pointer
+	CMP	STATE,#7.	;is this text
+	BEQ	SNC04		;branch if yes
+	MOV	HDRCNT,R0	;copy text to header buffer
+	CMP	R0,#RUTSIZ	;did it overflow
+	BHIS	SNC05		;branch if yes
+	ADD	#HDRBUF,R0	;no. stash byte
+	MOVB	@R1,@R0
+	INC	FILPTR
+	DEC	FILBCT
+	DEC	TXTCNT		;is text long enough
+	BEQ	SNC05		;branch if no
+	BICB	#^C177,@R0
+	CMPB	@R0,#040
+	BLO	3$
+	INC	HDRCNT
+3$:	CMPB	#LF,@R0		;is header complete
+	BNE	SNC01		;branch if no
+	CLRB	@R0		;yes. plant backstop
+	CLR	HDRCNT
+	MOV	#ARG,PRTPTR	;format output line
+	MOV	#HDRBUF,R1	;skip to "<"
+4$:	TSTB	@R1		;is this end
+	BEQ	SNC05		;branch if yes
+	CMPB	(R1)+,#'<	;no. is it beginning
+	BNE	4$
+	MOV	#COM38,R0	;"rcpt to:<[host]>"
+	CMP	STATE,#5	;is this rcpt
+	BEQ	8$		;branch if yes
+	MOV	#COM37B,R0	;no. "rctp to:<>"
+	CMPB	@R1,#'>		;is return-route empty
+	BEQ	8$		;branch if yes
+	MOV	R1,-(SP)	;no. construct return-route string
+	MOV	#COM39,R0	;"mail from:<[host]"
+	MOV	#SHOST,R1
+	JSR	PC,FORMAT
+7$:	MOV	(SP)+,R1
+	MOV	#COM37,R0	;",[route]>"
+	CMPB	@R1,#'@		;is this mailbox
+	BEQ	8$		;branch if no
+	MOV	#COM37A,R0	;":[route]>"
+8$:	JSR	PC,FORMAT
+	.PRINT	#ARG		;print for check
+	BIC	#RPYBIT,FLAGS	;wait for reply
+	.MRKT	#ARGBLK,#TIME,#SND02,#1 ;set timer
+	BIS	#TIMBIT,FLAGS
+	MOV	PRTPTR,R0	;send to server
+	MOV	#ARG,R1
+	SUB	R1,R0
+	BR	SNC03
+;
+SNC05:	CLR	PRTPTR
+	FORMAT	#COM34,#FILFCB	;invalid file format
+	JSR	PC,ABOR
+	RTS	PC
+;
+SNC04:	CMP	R0,TXTCNT	;text. fiddle pointers
+	BLOS	1$
+	MOV	TXTCNT,R0
+1$:	ADD	R0,FILPTR
+	SUB	R0,FILBCT
+	SUB	R0,TXTCNT
+	BNE	SNC03		;branch if more
+	INC	STATE		;send "." next time
+SNC03:	CLR	PRTPTR
+	BIS	#100000,R0	;force eol
+	CALL	SEND,R0,R1,OPNBLK+CONPTR ;tcp send data
+	TST	R0		;did it take
+	BEQ	2$		;branch if yes
+	JSR	PC,PRIDNT	;no. print error comment
+	JSR	PC,GOOFUP
+2$:	RTS	PC
+;
+; Data received from net
+;
+NETDAT:	MOV	RPYPTR,R1	;go get data
+	MOV	#RPYBUF+RPYSIZ-1,R0
+	SUB	R1,R0
+	BGT	1$		;branch if room
+	MOV	#RPYBUF,RPYPTR	;no room. flush buffer
+	TST	ERRLVL		;is detail requested
+	BNE	NETDAT		;branch if no
+	MOVB	#200,(R1)+	;yes. print it so far
+	.PRINT	#RPYBUF
+	BR	NETDAT
+;
+1$:	CALL	RECV,R0,R1,OPNBLK+CONPTR ;get next glob
+	BIC	#100000,R0	;update pointer
+	BNE	2$		;branch if data
+	RTS	PC
+;
+2$:	ADD	R0,RPYPTR	;update pointer
+3$:	MOV	#RPYBUF,R1
+4$:	CMP	R1,RPYPTR	;is this end of data
+	BHIS	NETDAT		;branch if yes
+	MOVB	(R1)+,R0	;no. get next byte
+	BICB	#^C177,R0
+	CMPB	R0,#CR		;is it <cr>
+	BNE	5$		;branch if no
+	CLRB	-1(R1)		;yes. plant backstop
+5$:	CMPB	R0,#LF		;is it <lf>
+	BNE	4$		;branch if no
+	MOV	R1,-(SP)	;yes. save pointer
+	CLRB	-(R1)		;plant backstop
+	TST	ERRLVL		;is detail requested
+	BNE	6$		;branch if no
+	.PRINT	#RPYBUF
+6$:	MOV	#RPYBUF,R0	;set up to parse reply
+	JSR	PC,RDLIN
+	JSR	PC,DOGOOD	;execute reply
+	MOV	(SP)+,R1
+	MOV	#RPYBUF,R0	;copy tail to beginning
+7$:	CMP	R1,RPYPTR	;is this end of data
+	BHIS	8$		;branch if yes
+	MOVB	(R1)+,(R0)+	;no. copy byte
+	BR	7$
+;
+8$:	MOV	R0,RPYPTR	;update pointer
+	BR	3$
+	.PAGE
+	.SBTTL	STATE MACHINE CONTROL FUNCTIONS
+;
+; Reply timeout
+;
+SND02:	FORMAT	#COM67		;reply timeout
+	MOV	#REPLY,R1	;simulate 600 reply (timeout)
+	MOV	#<" 6>,(R1)+
+	MOV	#<"00>,(R1)+
+	BR	DOG1
+;
+; Subroutine to execute reply code
+; Reply is in rpybuf
+;
+DOGOOD:	MOV	#REPLY+4,R1	;initialize reply code
+	MOV	#<"  >,-(R1)
+	MOV	#<"  >,-(R1)
+	TSTB	(R1)+		;leave room for handling type
+20$:	JSR	PC,RDASC	;go get first digit
+	BEQ	DOG1		;branch if eor
+	BMI	2$		;branch if numeric
+	CMP	R0,#<' >	;is it sp
+	BNE	20$		;branch if no
+	BR	DOG1
+;
+2$:	CMPB	R0,#'5		;numeric. is code valid
+	BHI	DOG1		;branch if no
+44$:	CMP	R1,#REPLY+4	;yes. is string too long
+	BHIS	DOG1		;branch if yes
+	MOVB	R0,(R1)+	;no. save it
+	JSR	PC,RDASC	;get next char
+	BEQ	DOG1		;branch if eor
+	BMI	44$		;continue if numeric
+	CMP	R0,#'-		;is it line continuation
+	BNE	DOG1		;branch if yes
+	CLRB	REPLY+1		;yes. zap code for comment line
+DOG1:	MOVB	REPLY+1,R1
+	BIC	#^C17,R1
+	BEQ	1$		;branch if nonsignificant code
+	.CMKT	#ARGBLK,#1,#0	;0 =< code =< 6. reset timer
+	BIC	#TIMBIT,FLAGS
+1$:	MOVB	MSCODE(R1),REPLY ;complete reply string
+	MOV	STATE,R0	;state transition
+	ASL	R0
+	ADD	STATE,R0
+	ASL	R0
+	ADD	STATE,R0
+	ADD	R1,R0
+	MOVB	STATAB(R0),R0
+	ASH	#2,R0
+	ADD	R0,PC		;branch to service segment
+	JMP	SEQ00		;0 idle
+	JMP	SEQ01		;1 open
+	JMP	SEQ02		;2 helo ok
+	JMP	SEQ03		;3 print reply and continue
+	JMP	SEQ04		;4 text complete
+	JMP	SEQ05		;5 mail ok
+	JMP	SEQ08		;6 error reply
+	JMP	SEQ11		;7 rcpt ok 2xx
+	JMP	SEQ12		;8 rcpt error 4xx
+	JMP	SEQ10		;9 data ok
+	JMP	SEQ12		;10 rcpt error 5xx *** same as 4xx
+	JMP	GOOFUP		;11 timeout
+	JMP	SEQ17		;12 close timeout
+;
+SEQ17:	.MRKT	#ARGBLK,#TIME,#SND02,#1 ;set timer
+	BIS	#TIMBIT,FLAGS
+SEQ03:	TST	ERRLVL		;is detail requested
+	BEQ	SEQ00		;branch if already printed
+	.PRINT	#RPYBUF		;no. do it now
+SEQ00:	RTS	PC
+;
+SEQ08:	JSR	PC,SEQ03	;error. print reply
+GOOFUP:	.CMKT	#ARGBLK,#1,#0	;reset timer just in case
+	BIC	#TIMBIT,FLAGS
+	JSR	PC,CHKMRC	;check next entry
+	BCC	GOOFUP		;discard if same host
+	BIT	#OPXBIT,FLAGS	;is connection open
+	BEQ	SEQ99		;branch if no
+	CALL	CTRL,#CM.CLS,#0,OPNBLK+CONPTR ;yes. close it
+	MOV	#1,STATE	;wait for it to close
+	RTS	PC
+;
+; Begin mail-queue transfer
+;
+NETSTR:	TST	MRCTAB		;is queue empty
+	BNE	1$		;branch if no
+	FORMAT	#COM51,#FILFCB	;no mail queued
+	BR	SEQ95
+;
+1$:	MOV	#MRCTAB,MRCPTR	;initialize table pointer
+	.GCLK			;start timer
+	MOV	R0,FILTIM
+	MOV	R1,FILTIM+2
+	FORMAT	#COM07,#FILFCB	;mail transfer begins [file]
+SEQ99:	MOV	MRCPTR,R2	;get recipient table pointer
+	TST	@R2		;is this end of list
+	BEQ	SEQ96		;branch if yes
+	MOV	@R2,OPNBLK+CONRMT ;no. try next host
+	MOV	2(R2),OPNBLK+CONRMT+2
+	CLR	OPNBLK+CONSIZ
+	CALL	CTRL,#CM.OPN,#OPNBLK+CONPAR,OPNBLK+CONPTR
+	TST	R0
+	BEQ	1$		;branch if ok
+	JSR	PC,PRIDNT	;print reason for failure
+	JMP	GOOFUP
+;
+1$:	BIS	#OPXBIT,FLAGS	;mark connection open
+	FORMAT	#COM21,#OPNBLK	;trying [host]
+	MOV	#2,STATE	;wait for herald
+	RTS	PC
+;
+SEQ96:	CLR	STATE		;end of list. clean house
+	JSR	PC,ABOR
+	.GCLK			;compute transfer time
+	SUB	FILTIM+2,R1
+	SBC	R0
+	SUB	FILTIM,R0
+	DIV	#1000.,R0
+	MOV	R0,FILTIM
+	FORMAT	#COM43,#FILTIM	;mail transfer complete
+	MOV	#MRCTAB,R2	;scan table for overwrites
+1$:	TST	@R2		;is this end of table
+	BEQ	SEQ95		;branch if yes
+	TST	14.(R2)		;no. is this one ok
+	BNE	2$		;branch if no
+	ADD	#16.,R2		;yes. advance to next entry
+	BR	1$
+;
+2$:	.MSG	<#^RTT >	;flush output buffer
+	.TRAP	#TR.SMP,<#^RSMP>,#1 ;flag for later scan
+SEQ95:	.VSEM	#SF.SMP		;unlock mail file
+	BIT	#CHNBIT,FLAGS	;was this chained to
+	BNE	EXIT		;branch if yes
+	RTS	PC		;no. keep truckin'
+;
+EXIT:	.EXIT
+;
+; State 2 - herald received
+;
+SEQ01:	JSR	PC,SEQ03	;print herald
+	INC	STATE		;exit to state 3
+	MOV	#MAL01,R0	;send "helo [host]"
+	MOV	#SHOST,R1
+SEQ01X:	MOV	#ARG,PRTPTR	;construct line
+	JSR	PC,FORMAT
+	.MRKT	#ARGBLK,#TIME,#SND02,#1 ;set timer
+	BIS	#TIMBIT,FLAGS
+	MOV	PRTPTR,R0
+	MOV	#ARG,R1
+	SUB	R1,R0
+	JMP	SNC03
+;
+; State 5 - rcpt reply
+;
+SEQ11:	MOV	MRCPTR,R2	;2xx ok
+	CLR	14.(R2)		;mark entry ok
+	INC	RCPCNT
+	BR	SEQ14
+;
+SEQ12:	MOV	MRCPTR,R2	;4xx/5xx reply. restore unsent code
+	JSR	PC,SEQ03	;print reply
+	MOV	#REPLY,R0	;overwrite reply code
+	JSR	PC,CONFRM
+SEQ14:	TST	STATE		;was there a disk error
+	BEQ	2$		;branch if yes
+	JSR	PC,CHKMRC	;check next entry
+	BEQ	SEQMRC		;branch if same host and msg
+	SUB	#16.,MRCPTR	;different. back up pointer
+	MOV	MRCPTR,R2
+	TST	RCPCNT		;did any rcpts succeed
+	BNE	1$		;branch if yes
+	FORMAT	#COM29		;no recipients
+	BR	SEQ04		;abort text
+;
+1$:	MOV	#6,STATE	;exit to state 6
+	MOV	#DAT01,R0	;send "data"
+	BR	SEQ01X
+;
+2$:	RTS	PC
+;
+; State 6 - data ok
+;
+SEQ10:	MOV	MRCPTR,R2	;save message position
+	MOV	TXTSAV,TXTCNT	;restore remaining text count
+	MOV	#7,STATE	;exit to state 7
+	BIS	#RPYBIT,FLAGS
+	BR	SEQ02A
+;
+; State 4 - mail reply
+;
+SEQ05:	MOV	MRCPTR,R2	;save message position
+	MOV	R2,MRCSAV
+	MOV	TXTCNT,TXTSAV	;save remaining text count
+	CLR	RCPCNT
+	INC	STATE		;exit to state 5
+SEQMRC:	MOV	14.(R2),SRCRUT	;save source route string pointer
+	MOV	12.(R2),TXTCNT	;compute remaining text count
+	SUB	8.(R2),TXTCNT
+	BIS	#RPYBIT,FLAGS
+	BR	SEQ02A
+;
+; State 8 - text complete
+;
+SEQ04:	MOV	MRCSAV,R2	;2xx/4xx/5xx. scan table for overwrites
+2$:	TST	14.(R2)		;is this one ok
+	BNE	1$		;branch if no
+	MOV	#REPLY,R0	;yes. overwrite reply
+	JSR	PC,CONFRM
+1$:	ADD	#16.,R2		;advance to next entry
+	CMP	R2,MRCPTR
+	BLOS	2$
+	JSR	PC,CHKMRC	;check next entry
+	BCC	3$		;branch if same host
+	MOV	#1,STATE	;different host. close connection
+	MOV	#QUI01,R0	;send "quit"
+	JMP	SEQ01X
+;
+3$:	MOV	#3,STATE	;exit to state 3
+	MOV	#DAT02,R0	;send "rset"
+	JMP	SEQ01X
+;
+; State 3 - helo reply
+;
+SEQ02:	MOV	MRCPTR,R2	;save message position
+	MOV	4(R2),MSGPOS
+	MOV	6(R2),MSGPOS+2
+	MOV	12.(R2),TXTCNT	;compute remaining text count
+	SUB	10.(R2),TXTCNT
+	MOV	#4,STATE	;exit to state 4
+	BIS	#RPYBIT,FLAGS
+SEQ02A:	MOV	12.(R2),R1	;compute text position
+	SUB	TXTCNT,R1
+	MOV	4(R2),R0
+	ADD	6(R2),R1
+	ADC	R0
+	MOV	R1,FILBCT	;compute offset
+	BIC	#^C<FILSIZ*512.-1>,FILBCT
+	ASHC	#-9.,R0
+	BIC	#FILSIZ-1,R1
+	MOV	R1,FILFCB+FCBBLK
+	.READW	#ARGBLK,#0,FILFCB+FCBBUF,#FILSIZ*256.,FILFCB+FCBBLK
+	BCC	2$		;branch if no error
+	FORMAT	#COM33,#FILFCB	;file read error
+	JSR	PC,ABOR
+	RTS	PC
+;
+2$:	MOV	R0,R1		;update block number
+	SWAB	R1
+	BIC	#^C377,R1
+	ADD	R1,FILFCB+FCBBLK
+	ASL	R0		;compute byte count
+	MOV	FILFCB+FCBBUF,FILPTR
+	ADD	FILBCT,FILPTR
+	SUB	FILBCT,R0
+	MOV	R0,FILBCT
+	CLR	HDRCNT
+	JSR	PC,NETSNC
+	RTS	PC
+;
+; Subroutine to test next mrcp command
+; Returns r2 = entry pointer, cc = z if no change, cc = c if new host
+;
+CHKMRC:	ADD	#16.,MRCPTR	;advance to next entry
+	MOV	MRCPTR,R2
+	TST	@R2		;is this end of list
+	BEQ	1$		;branch if yes
+	CMP	@R2,OPNBLK+CONRMT ;no. is this the same host
+	BNE	1$		;branch if no
+	CMP	2(R2),OPNBLK+CONRMT+2
+	BEQ	8$		;branch if yes
+1$:	CCC			;set cc = c
+	SEC
+	RTS	PC
+;
+8$:	CMP	4(R2),MSGPOS	;is this the same message
+	BNE	3$		;branch if no
+	CMP	6(R2),MSGPOS+2
+3$:	CLC
+	RTS	PC
+;
+; Subroutine to overwrite file headers for delivery info
+;
+CONFRM:	MOV	R0,-(SP)	;save string pointer
+	.PSEM	#SF.UPD		;lock file
+	MOV	4(R2),R0	;compute mrcp position
+	MOV	6(R2),R1
+	ADD	8.(R2),R1
+	ADC	R0
+	MOV	R1,-(SP)	;save offset
+	ASHC	#-9.,R0		;compute block number
+	MOV	R1,FILFCB+FCBBLK
+	MOV	(SP)+,R1	;compute buffer address
+	BIC	#^C<512.-1>,R1
+	ADD	FILFCB+FCBBUF,R1
+	.READW	#ARGBLK,#0,FILFCB+FCBBUF,#512.,FILFCB+FCBBLK
+	BCC	2$		;branch if no error
+	FORMAT	#COM33,#FILFCB	;file read error
+	JSR	PC,ABOR
+	BR	5$
+;
+2$:	MOV	R0,FILBCT	;save word count
+	MOV	(SP)+,R0	;restore string pointer
+4$:	MOVB	(R0)+,(R1)+	;overwrite string to buffer
+	MOVB	(R0)+,(R1)+
+	MOVB	(R0)+,(R1)+
+	MOVB	(R0)+,(R1)+
+	.WRITW	#ARGBLK,#0,FILFCB+FCBBUF,FILBCT,FILFCB+FCBBLK
+	BCC	5$		;branch if no error
+	FORMAT	#COM32,#FILFCB	;file write error
+	JSR	PC,ABOR
+5$:	.VSEM	#SF.UPD		;unlock file
+	RTS	PC
+	.PAGE
+	.SBTTL	TABLES, TEXT STRINGS AND VARIABLES
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+TIME:	.WORD	0,120.*60.	;reply timeout (120 sec)
+;
+; State tables
+;
+;		0 1 2 3 4 5 6	(reply code)
+STATAB:	.BYTE	3,3,3,3,3,3,0	;0 idle
+	.BYTE	3,12.,12.,12.,12.,12.,11. ;1 quit
+	.BYTE	3,3,1,3,6,6,11.	;2 conn
+	.BYTE	3,3,2,3,6,6,11.	;3 helo
+	.BYTE	3,3,5,3,6,6,11.	;4 mail
+	.BYTE	3,3,7,3,8.,10.,8. ;5 rcpt
+	.BYTE	3,3,3,9.,6,6,11. ;6 data
+	.BYTE	3,3,3,3,6,6,11.	;7 text
+	.BYTE	3,3,4,3,4,4,11.	;8 .
+;
+; Reply decode table
+;		   0      1      2      3      4      5      6
+MSCODE:	.BYTE	MS.ERR,MS.ERR,MS.SNT,MS.ERR,MS.REQ,MS.ERR,MS.REQ
+;
+; Text strings for smtp user protocol
+;
+COM51:	.ASCIZ	'?SMTP-F-No mail queued ^F'<FCBNAM>'[^I'<FCBMAX>']'
+COM07:	.ASCIZ	'?SMTP-I-Transfer begins ^F'<FCBNAM>'[^I'<FCBMAX>']'
+COM43:	.ASCIZ	'?SMTP-I-Transfer complete ^I'<0>' sec'
+COM21:	.ASCIZ	'?SMTP-I-Trying ^C'<CONRMT>
+MAL01:	.ASCIZ	'HELO ^A'<0><CR><LF>'^+'
+COM37B:	.ASCIZ	'MAIL from:<>'
+COM39:	.ASCIZ	'MAIL from:<@^A'<0>'^+'
+COM37:	.ASCIZ	',^A'<0><CR><LF>'^+'
+COM37A:	.ASCIZ	':^A'<0><CR><LF>'^+'
+COM38:	.ASCIZ	'RCPT to:<^A'<0><CR><LF>'^+'
+COM36:	.ASCIZ	'SENT'
+DAT01:	.ASCIZ	'DATA'<CR><LF>'^+'
+DAT02:	.ASCIZ	'RSET'<CR><LF>'^+'
+MAL04:	.ASCIZ	'.'<CR><LF>'^+'
+QUI01:	.ASCIZ	'QUIT'<CR><LF>'^+'
+;
+; Text strings for error conditions
+;
+COM29:	.ASCIZ	'?SMTP-F-No recipients'
+COM33:	.ASCIZ	'?SMTP-F-Read error on file ^F'<FCBNAM>
+COM32:	.ASCIZ	'?SMTP-F-Write error on file ^F'<FCBNAM>
+COM34:	.ASCIZ	'?SMTP-F-Invalid format on file ^F'<FCBNAM>
+COM67:	.ASCIZ	'?SMTP-F-Reply timeout'
+	.EVEN
+;
+	.PSECT	$ERAS,RW,I
+;
+; Variables
+;
+FILPTR:	.BLKW	1		;buffer pointer
+FILBCT:	.BLKW	1		;buffer byte count remaining
+FILTIM:	.BLKW	2		;transmission timer
+RCPCNT:	.BLKW	1		;recipient count
+HDRCNT:	.BLKW	1		;header byte count
+TXTCNT:	.BLKW	1		;remaining text byte count
+TXTSAV:	.BLKW	1		;remaining text after mail command
+MSGPOS:	.BLKW	2		;file header position
+REPLY:	.BLKW	2		;current handling type and reply code
+RPYPTR:	.BLKW	1		;reply buffer pointer
+MRCPTR:	.BLKW	1		;recipient table pointer
+MRCSAV:	.BLKW	1		;saved ponter for overwrite
+ARG:	.BLKB	RUTSIZ		;temporary buffer
+HDRBUF:	.BLKB	RUTSIZ		;header buffer
+	.EVEN
+;
+	.PSECT	$STOR,RW,I
+STOBGN	=	.		;beginning of allocatable storage
+;
+	.END
+                                                

@@ -1,0 +1,375 @@
+	.TITLE	PRINT	Queue print file
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Queue print file
+;
+; This program queues files to be printed by PRTQ. Note that the DK: device
+; is assumed the user directory assigned by the LOGIN sequence.
+;
+; Options:
+; /b:n		output n banner pages
+; /c:n		output n copies
+; /d		delete source file after printing
+; /l		list entire output queue
+; /l:n		list nth output queue entry (long form)
+; /m		mail file (mpm)
+; /r		remote userid/host (prompt)
+; /u		unix file (no cr's)
+; /v		filter option
+; /x:n		delete nth output queue entry
+;
+; External symbols
+;
+	.GLOBL	FNDQUE		;collect queue info
+	.GLOBL	GTUSER		;get local user
+	.GLOBL	CONECT		;user routine
+	.GLOBL	RNAME		;name server routine
+	.GLOBL	TYPE,RTNMSG	;utility routines
+;
+; Entry symbols
+;
+	.GLOBL	RDBYT,PRBYT	;char i/o routines
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.MSG,.COM,.CHR,.TRDEF,.TRAP,.PRT ;dcnlib macros
+	.MCALL	.GTJB,.CSISP,.GTLIN,.EXIT,.TTYOU,.TTYIN ;rt-11 definitions
+	.MCALL	.LOOKU,.ENTER,.PURGE,.WRITW,.CLOSE,.DATE,.GTIM,.DELET,.QSET
+	.MCALL	CALL,FORMAT	;netlib macros
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.TRDEF			;define trap codes
+	.PRT			;define queue file entry format
+;
+; Module definitions
+;
+QUESIZ	=	20.		;max elements on completion queue
+SPQSIZ	=	20.		;max elements on special queue
+;
+; Procedure segment
+;
+	.PSECT	$BOSI,RO,I
+;
+; Entry point
+;
+START:	BIS	#40000,@#44	;disable folding
+	.QSET	#QUEUE,#QUESIZ	;allocate space for completion queue
+	CLR	QUECNT
+	MOV	#512,R1		;is argument in chain area
+	TSTB	@R1
+	BEQ	2$		;branch if no
+	JSR	PC,HEAD		;yes. queue file
+	BCS	1$
+	JSR	PC,QUEUP
+1$:	.EXIT
+;
+2$:	MOV	#BUFFER,R1	;get argument
+	.GTLIN	R1,#PROMPT
+	JSR	PC,HEAD		;queue file
+	BCS	2$
+	JSR	PC,QUEUP
+	BR	2$
+;
+; Subroutine to parse source and destination filespecs and attributes
+; R1 = filespec pointer
+;
+HEAD:	MOV	SP,R5		;safety first
+	MOV	#HEADER,R0	;clear header area
+	MOV	#SQ.LEN/2,R2
+1$:	CLR	(R0)+
+	SOB	R2,1$
+	MOV	#<^RLP >,HEADER+SQ.DEV ;default destination filespec
+	CLR	HEADER+SQ.DEV+2
+	CLR	HEADER+SQ.DEV+4
+	CLR	HEADER+SQ.DEV+6
+	CALL	GTUSER,#HEADER+SQ.USD ;default destination userid
+	.CSISP	#AREA,#DEFEXT,R1 ;parse filespecs
+	BCC	2$		;branch if no error
+	FORMAT	#COM14		;invalid syntax
+	JMP	20$
+;
+2$:	TST	(SP)+		;pop off count
+3$:	CMP	SP,R5		;more switches specified
+	BHIS	17$		;branch if no
+	MOV	(SP)+,R1	;yes. get option switch
+	CMPB	R1,#140
+	BLO	4$
+	SUB	#040,R1
+4$:	TST	R1
+	BPL	9$		;branch if no value
+	MOV	(SP)+,R0	;value. retrieve it
+	CMPB	R1,#'B		;is this /b:value
+	BNE	5$		;branch if no
+	MOVB	R0,HEADER+SQ.BAN ;yes. stash banner pages
+	BR	3$
+;
+5$:	CMPB	R1,#'C		;is this /c:value
+	BNE	6$		;branch if no
+	MOVB	R0,HEADER+SQ.CPY ;yes. stash copies
+	BR	3$
+;
+6$:	CMPB	R1,#'L		;is this /l:queid
+	BNE	7$		;branch if no
+	JSR	PC,LSTELM	;yes. display specified queue entry
+	BR	3$
+;
+7$:	CMPB	R1,#'X		;is this /x:queid
+	BNE	16$		;branch if no
+	CMP	R0,QUECNT	;yes. is queid in range
+	BHIS	15$		;branch if no
+	MUL	#SQ.LEN,R0	;yes. delete specified queue entry
+	ADD	#QUELST+SQ.QUE,R1
+	TST	@R1		;is this autospool file
+	BEQ	8$		;branch if yes
+	.DELET	#ARGBLK,#0,R1	;no. delete control file
+	BCS	15$		;branch if unavailable
+	BIT	#SX.DEL,QUELST+SQ.FLG ;is source file marked for delete
+	BEQ	3$		;branch if no
+8$:	ADD	#SQ.FIL-SQ.QUE,R1 ;yes. delete data file
+	.DELET	#ARGBLK,#0,R1
+	BR	3$
+;
+9$:	CMPB	R1,#'D		;is this /d
+	BNE	10$		;branch if no
+	BIS	#SX.DEL,HEADER+SQ.FLG ;yes. specify delete
+	BR	3$
+;
+10$:	CMPB	R1,#'L		;is this /l
+	BNE	11$		;branch if no
+	JSR	PC,LIST		;yes. display queue
+	BR	3$
+;
+11$:	CMPB	R1,#'M		;is this /m
+	BNE	12$		;branch if no
+	BIS	#SX.MPM,HEADER+SQ.FLG ;yes. specify mail (mpm) file
+	BR	3$
+;
+12$:	CMPB	R1,#'R		;is this /r
+	BNE	13$		;branch if no
+	BIS	#SX.RMT,HEADER+SQ.FLG ;yes. mark for later
+	BR	3$
+;
+13$:	CMPB	R1,#'U		;is this /u
+	BNE	14$		;branch if no
+	BIS	#SX.UNX,HEADER+SQ.FLG ;yes. specify unix file
+	BR	3$
+;
+14$:	CMPB	R1,#'V		;is this /v
+	BNE	16$		;branch if no
+	BIS	#SX.FLT,HEADER+SQ.FLG ;yes. specify filter
+	BR	3$
+;
+15$:	FORMAT	#COM22		;queue entry unavailable
+	BR	20$
+;
+16$:	FORMAT	#COM13		;invalid option
+	BR	20$
+;
+17$:	BIT	#SX.RMT,HEADER+SQ.FLG ;was remote host specified
+	BEQ	18$		;branch if no
+	JSR	PC,MBOX		;yes. go get it
+	BCS	20$		;branch if error
+18$:	TST	AREA		;was destination file specified
+	BEQ	19$		;branch if no
+	MOV	AREA,HEADER+SQ.DEV ;yes. insert destination filespec
+	MOV	AREA+2,HEADER+SQ.DEV+2
+	MOV	AREA+4,HEADER+SQ.DEV+4
+	MOV	AREA+6,HEADER+SQ.DEV+6
+19$:	TST	AREA+30.	;was source file specified
+	BEQ	20$		;branch if no
+	MOV	AREA+30.,HEADER+SQ.FIL ;yes. insert source filespec
+	MOV	AREA+32.,HEADER+SQ.FIL+2
+	MOV	AREA+34.,HEADER+SQ.FIL+4
+	MOV	AREA+36.,HEADER+SQ.FIL+6
+	.LOOKU	#ARGBLK,#0,#HEADER+SQ.FIL ;open source file for check
+	BCC	21$		;branch if ok
+	FORMAT	#COM28		;file not found
+20$:	SEC			;error return
+	BR	22$
+;
+21$:	MOV	R0,HEADER+SQ.SIZ ;save file size
+	CLC			;normal return
+22$:	MOV	R5,SP		;safety first
+	RTS	PC
+;
+; Subroutine to queue file
+;
+QUEUP:	MOV	#<^RBGN>,AREA+22 ;(for rt-11: kludge something)
+	.GTJB	#ARGBLK,#AREA,#-1 ;get process name
+	MOV	DEVEXT,FILNAM	;construct unique file name
+	MOV	AREA+22,FILNAM+2
+	MOV	DEVEXT+4,FILNAM+4
+	MOV	DEVEXT+6,FILNAM+6
+2$:	INC	FILNAM+4	;does file already exist
+	.PURGE	#0
+	.LOOKU	#ARGBLK,#0,#FILNAM
+	BCC	2$		;branch if yes
+	MOV	FILNAM,HEADER+SQ.QUE ;no. control filespec
+	MOV	FILNAM+2,HEADER+SQ.QUE+2
+	MOV	FILNAM+4,HEADER+SQ.QUE+4
+	MOV	FILNAM+6,HEADER+SQ.QUE+6
+	.DATE			;timestamp
+	MOV	R0,HEADER+SQ.DAT
+	.GTIM	#ARGBLK,#HEADER+SQ.TIM
+	CALL	GTUSER,#HEADER+SQ.USR ;source userid
+	CALL	CONECT,#HEADER+SQ.USR,#0,#0
+	TST	R0
+	BEQ	3$		;branch if ok
+	FORMAT	#COM60,#STOBGN	;unknown userid
+	RTS	PC
+;
+3$:	.ENTER	#ARGBLK,#0,#HEADER+SQ.QUE,#1 ;open control file
+	BCS	4$		;branch if error
+	.WRITW	#ARGBLK,#0,#HEADER,#SQ.LEN/2,#0 ;write control file
+	BCS	4$		;branch if error
+	.CLOSE	#0
+	FORMAT	#COM12,#STOBGN	;queue...
+	.MSG	<#^RLOG>	;tell log, too
+	FORMAT	#COM12,#STOBGN	;queue...
+	.MSG	<#^RTT >	;yes. flush output buffer
+	.TRAP	#TR.SMP,#<^RPRT>,#1 ;flag for prtq
+	RTS	PC
+;
+4$:	FORMAT	#COM10,#STOBGN	;file write error
+	RTS	PC
+;
+; Subroutine to list queue contents
+;
+LIST:	MOV	#DEVEXT,R0	;build queue list
+	MOV	#QUELST,R1
+	JSR	PC,FNDQUE
+	MOV	R0,QUECNT	;is anything doing
+	BNE	2$		;branch if yes
+	FORMAT	#COM15		;no spool files queued
+1$:	RTS	PC
+;
+2$:	FORMAT	#COM18		;display header line
+	CLR	IDENT
+	MOV	#QUELST,R1	;scan queue list
+3$:	TST	@R1		;is this end of list
+	BEQ	1$		;branch if yes
+	MOV	R1,-(SP)	;no. list entry
+	FORMAT	#COM11,#STOBGN
+	MOV	(SP)+,R1
+	MOV	#COM17,R0
+	JSR	PC,FORMAT
+	ADD	#SQ.LEN,R1
+	INC	IDENT
+	BR	3$
+;
+; Subroutine to list specified queue element
+; R0 = queueid
+;
+LSTELM:	MOV	R0,-(SP)	;save queueid
+	MOV	#DEVEXT,R0	;build queue list
+	MOV	#QUELST,R1
+	JSR	PC,FNDQUE
+	MOV	R0,QUECNT
+	MOV	(SP)+,R0	;restore queueid
+	CMP	R0,QUECNT	;is it in range
+	BHIS	1$		;branch if no
+	MOV	R1,-(SP)	;yes. compute queue address
+	MUL	#SQ.LEN,R0
+	ADD	(SP)+,R1
+	MOV	#COM21,R0	;display entry
+	JSR	PC,FORMAT
+	RTS	PC
+;
+1$:	FORMAT	#COM22		;queue entry unavailable
+	RTS	PC
+;
+; Subroutine to parse destination <userid> @ <host>
+; Returns <user> in sq.usd, <host> in sq.dst
+;
+MBOX:	.GTLIN	#BUFFER,#COM09	;get userid @ host
+	MOV	#HEADER+SQ.USD,R1 ;clear fields
+	MOV	#16.,R2
+1$:	CLRB	(R1)+
+	SOB	R2,1$
+	CLR	HEADER+SQ.DST
+	CLR	HEADER+SQ.DST+2
+	MOV	#BUFFER,R1	;get userid
+	MOV	#HEADER+SQ.USD,R2
+2$:	MOVB	(R1)+,R0
+	JSR	PC,TYPE
+	BEQ	4$		;branch if none
+	CMPB	R0,#'@
+	BEQ	3$		;branch if host name follows
+	MOVB	R0,(R2)+
+	BR	2$
+;
+3$:	CALL	RNAME,R1,#HEADER+SQ.DST,#0 ;fetch Internet address
+	MOV	R0,R1
+	BEQ	4$		;branch if found
+	MOV	#COM00,R0	;display program ident
+	JSR	PC,FORMAT
+	MOV	R1,R0
+	JSR	PC,RTNMSG	;display error message
+	SEC			;error exit
+	RTS	PC
+;
+4$:	CLC			;normal exit
+	RTS	PC
+;
+; Subroutine to read byte
+; R0 = byte
+;
+RDBYT:	.TTYIN			;fetch byte
+	CMPB	R0,#LF		;set cc
+	RTS	PC
+;
+; Subroutine to write byte
+; R0 = byte
+;
+PRBYT:	.TTYOU			;put byte
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D	;read-only data
+;
+DEVEXT:	.RAD50	'SY $$$000SPQ'	;control file name prototype
+DEFEXT:	.RAD50	'LSTLSTLSTLST'	;default list file extensions
+;
+PROMPT:	.ASCIZ	'*'<200>
+COM09:	.ASCIZ	'Destination? '<200>
+COM00:	.ASCIZ	'?PRINT-^+'
+COM60:	.ASCIZ	'?PRINT-F-Unknown userid ^A'<HEADER+SQ.USR-STOBGN>
+COM14:	.ASCIZ	'?PRINT-F-Invalid syntax'
+COM13:	.ASCIZ	'?PRINT-F-Invalid option'
+COM22:	.ASCIZ	'?PRINT-F-Queue entry unavailable'
+COM28:	.ASCIZ	'?PRINT-F-File not found'
+COM10:	.ASCIZ	'?PRINT-F-File write error ^F'<HEADER+SQ.QUE-STOBGN>
+COM12:	.ASCII	'?PRINT-I-Queue ^A'<HEADER+SQ.USR-STOBGN>
+	.ASCIZ	' ^F'<HEADER+SQ.FIL-STOBGN>'[^I'<HEADER+SQ.SIZ-STOBGN>']'
+COM15:	.ASCIZ	'?PRINT-I-No output files queued'
+COM18:	.ASCII	'QueID	Submitted	Owner, file, destination^/'
+	.ASCII	'------------------------------------------------------------'
+	.ASCIZ	'-------'
+COM11:	.ASCIZ	'^I'<IDENT-STOBGN>'^+'
+COM17:	.ASCII	'	^T'<SQ.TIM>'	^A'<SQ.USR>', ^F'<SQ.FIL>'[^I'<SQ.SIZ>
+	.ASCIZ	'], ^F'<SQ.DEV>' ^C'<SQ.DST>
+COM21:	.ASCII	'Queue: ^F'<SQ.QUE>'  ^D'<SQ.DAT>' ^T'<SQ.TIM>
+	.ASCII	'  flags: ^K'<SQ.FLG>'  copies: ^BI'<SQ.CPY>
+	.ASCII	'  banners: ^BI'<SQ.BAN>
+	.ASCII	'^/Source: ^A'<SQ.USR>' ^F'<SQ.FIL>'[^I'<SQ.SIZ>']'
+	.ASCIZ	'  destination: ^A'<SQ.USD>' ^F'<SQ.DEV>' ^C'<SQ.DST>
+	.EVEN
+;
+	.PSECT	$ERAS,RW,I	;read/write data
+;
+STOBGN	=	.		;format fence
+HEADER:	.BLKW	SQ.LEN/2	;control file header
+IDENT:	.BLKW	1		;entry identifier
+QUECNT:	.BLKW	1		;queue count
+ARGBLK:	.BLKW	5		;rt-11 argument block
+FILNAM:	.BLKW	4		;control file name
+AREA:	.BLKW	39.		;csi argument block
+BUFFER:	.BLKB	128.		;command buffer
+QUEUE:	.BLKW	QUESIZ.*7.	;space for completion queue
+QUELST:	.BLKW	SPQSIZ*SQ.LEN/2+1 ;spool queue
+;
+	.END	START
+                                                                                                                                                                                                                                                                                         

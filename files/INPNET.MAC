@@ -1,0 +1,415 @@
+	.TITLE	INPNET	Network interface routines
+	.SBTTL	System and module definitions
+	.NLIST	BEX,CND
+	.ENABL	LC
+;
+; Pdp11/dcn network interface routines
+;
+; This module contains a number of interface subroutines called both
+; by the internet process and its protocol modules and by user programs
+; (by means of the rt-11 emulator).
+;
+; External symbols
+;
+	.GLOBL	$NETID,$HOSAD,$GATPT,GATVPT ;host/gateway tables
+	.GLOBL	WOLFF		;sneaky pete
+;
+; Entry symbols
+;
+	.GLOBL	NETIN		;input packet
+	.GLOBL	NETOT		;output packet
+	.GLOBL	NETPKT		;allocate packet
+	.GLOBL	GATE		;get net process pid
+	.GLOBL	ADRMAP,ADRGAT	;match logical address
+	.GLOBL	NETMAP		;test local net
+	.GLOBL	NETCHK		;test special address
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM		;dcnlib definitions
+	.MCALL	.FPKT,.GPKT,.UNIQ,.WIND ;dcnlib macros
+	.MCALL	$DFTCB,$DFIH,$DFTIM,$DFSIG,$DFTBL ;moslib definitions
+	.MCALL	$SGNLI		;moslib macros
+	.COM			;define common data
+	$DFTCB			;define connection control block
+	$DFIH			;define internet header
+	$DFTIM			;define timer values
+	$DFSIG			;define interprocess signals
+	$DFTBL			;define gateway/host table formats
+	.PAGE
+;
+; Module definitions
+;
+MAXPKT	=	2		;max packets
+;
+	.SBTTL	Network interface routines
+;
+; Procedure segment
+;
+	.PSECT	$SUPI,RO,I
+;
+; Process-state procedure
+; Dsects: r5 = psa
+;
+; This module is the interface between the internet process and its
+; Protocol modules and the gateway/bridge processes. it consists of
+; A number of subroutines to open/close net connections, construct,
+; Send and discard net packets.
+;
+; Netin (net) release input packet
+; R1 = packet ptr, r5 = control block ptr, returns r0 = status
+;
+NETIN:	MOV	R1,R0		;is there another fragment
+	BEQ	2$		;branch if no
+	MOV	PH.LNK(R0),R1	;yes. release it
+	.FPKT
+	DECB	SNDCNT(R5)	;regain credit
+	BR	NETIN
+;
+2$:	RTS	PC
+;
+; Netot (net) send packet to net
+; R1 = packet ptr, r5 = control block ptr, returns r0 = status (conn code)
+;
+NETOT:	MOV	R2,-(SP)	;save
+	MOV	#PK.OPN,R2	;presume guilty
+	MOV	INPCID(R5),R0	;is connection id assigned
+	BEQ	9$		;branch if no
+	MOV	R1,-(SP)	;yes. preserve pointers and mapping
+	MOV	(R0)+,-(SP)
+	MOV	(R0)+,-(SP)
+	MOV	#IH.LEN,R2	;point to options area
+1$:	CMP	R2,PH.OFS(R1)	;are more options present
+	BHIS	7$		;branch if no
+	ADD	R1,R2		;yes. scan for route options
+	TSTB	@R2		;is this end
+	BEQ	7$		;branch if yes
+	CMPB	(R2)+,#1	;no. is this no-op
+	BEQ	2$		;branch if yes
+	CMPB	-(R2),#203	;no. is this loose source route
+	BEQ	3$		;branch if yes
+	CMPB	@R2,#211	;no. is this strict source route
+	BEQ	3$		;branch if yes
+	CLR	R0		;no. advance to next option
+	BISB	1(R2),R0
+	ADD	R0,R2
+2$:	SUB	R1,R2
+	BR	1$
+;
+3$:	MOVB	1(R2),R0	;get route pointers
+	ADD	R2,R0
+	ADD	#7,R2
+4$:	CMP	R2,R0		;slide all entries up one slot
+	BHIS	5$
+	MOVB	-4(R2),-(SP)
+	MOVB	@R2,-4(R2)
+	MOVB	(SP)+,(R2)+
+	BR	4$
+;
+5$:	MOV	R1,R0		;exchange new last entry with destination
+	ADD	#IH.DST+4,R0
+	MOV	#4,R1
+6$:	MOVB	-(R0),-(SP)
+	MOVB	-(R2),@R0
+	MOVB	(SP)+,@R2
+	SOB	R1,6$
+7$:	MOV	$GATPT,R0	;map to routing tables
+	MOV	$GATPT+2,R1
+	.WIND
+	MOV	4(SP),R1	;restore packet pointer
+	JSR	PC,GATE		;yes. unravel route
+	MOV	R0,R2		;save pid/error code
+	MOV	(SP)+,R1	;restore control block pointers
+	MOV	(SP)+,R0
+	BCS	8$		;branch if error
+	.WIND			;restore mapping
+	MOV	(SP)+,R1	;send packet
+	JSR	PC,WOLFF
+	$SGNLI	R2,#SG.INP,INPPID(R5),INPCID(R5),R1,IH.ID(R1)
+	CLR	R2		;return inoccuous status
+	BR	10$
+;
+8$:	.WIND			;restore mapping
+	MOV	(SP)+,R1	;free packet
+9$:	JSR	PC,NETIN
+10$:	ASL	R2		;translate return code
+	MOV	ERRCOD(R2),R0
+	MOV	(SP)+,R2	;evas
+	RTS	PC
+;
+; Netpkt (net) allocate packet
+; R5 = control block ptr, returns r0 = status, r1 = packet ptr
+; Also sets ph.ofs(r1) = data offset, ph.lng(r1) = data length
+;
+NETPKT:	MOVB	SNDCNT(R5),R1	;is internal quota exceeded
+	CMPB	R1,#MAXPKT
+	BHIS	3$		;branch if yes
+	MOV	MAXSIZ(R5),R0	;allocate packet buffer
+	MUL	R0,R1
+	.GPKT
+	BNE	2$		;branch if ok
+3$:	MOV	#PK.RES,R0	;insufficient resources
+	RTS	PC
+;
+2$:	INCB	SNDCNT(R5)	;charge packet
+	MOV	R0,R1		;align for nethdr
+;
+; Nethdr (net) preset ip header and options
+; R1 = packet ptr, r5 = control block ptr, returns r0 = status
+; Also sets ph.ofs(r1) = data offset, ph.lng(r1) = data length
+;
+NETHDR:	MOV	R2,-(SP)	;save registers
+	MOV	R1,-(SP)
+	MOV	R1,R2		;initialize leader
+	.UNIQ
+	MOV	R0,PH.TIM(R2)
+	MOV	R1,PH.TIM+2(R2)
+	MOV	R1,R0
+	CLR	PH.LNK(R2)
+	ADD	#BUFLDR,R2
+	MOV	R5,R1		;get options pointer
+	ADD	#TYPSRV,R1
+	MOVB	#<P.IP*20>,(R2)+ ;0 ih.ver
+	MOVB	(R1)+,(R2)+	;1 ih.tos
+	CLR	(R2)+		;2 ih.fl
+	MOV	R0,(R2)+	;4 ih.id
+	CLR	(R2)+		;6 ih.frg
+	MOVB	#TM.TTL/1000.,(R2)+ ;10 ih.ttl
+	MOVB	PROTCL(R5),(R2)+ ;11 ih.pro
+	CLR	(R2)+		;12 ih.chk
+	MOV	LSOCK(R5),(R2)+	;14 ih.src
+	MOV	LSOCK+2(R5),(R2)+
+	MOV	FSOCK(R5),(R2)+	;20 ih.dst
+	MOV	FSOCK+2(R5),(R2)+
+	MOVB	(R1)+,R0	;copy options
+	BEQ	2$
+1$:	MOVB	(R1)+,(R2)+
+	SOB	R0,1$
+2$:	MOV	(SP)+,R1
+3$:	MOV	R2,R0		;pad to big-endian boundary
+	SUB	R1,R0
+	SUB	#BUFLDR,R0
+	BIT	#3,R0
+	BEQ	4$
+	CLRB	(R2)+
+	BR	3$
+;
+4$:	MOV	LPORT(R5),(R2)+	;gratuitous ports
+	MOV	FPORT(R5),(R2)+
+	CMP	-(R2),-(R2)
+	SUB	R1,R2		;save data offset
+	MOV	R2,PH.OFS(R1)
+	ASR	R0		;compute header length
+	ASR	R0
+	BISB	R0,IH.VER(R1)
+	MOV	MAXSIZ(R5),R0	;compute data length
+	SUB	PH.OFS(R1),R0
+	ADD	#BUFLDR,R0
+	BPL	5$
+	CLR	R0
+5$:	MOV	R0,PH.LNG(R1)	;save data length
+	MOV	(SP)+,R2
+	CLR	R0		;return inoccuous status
+	RTS	PC
+;
+; Gate (gat) get net process pid
+; R1 = packet pointer, returns r0 = pid if cc(c) = 0,
+; R0 = connection code if cc(c) = 1
+;
+GATE:	MOV	R2,-(SP)	;save
+	MOV	R1,-(SP)
+	MOVB	IH.TOS(R1),R0
+	ADD	#IH.DST,R1	;match destination address
+	JSR	PC,ADRGAT
+	BCS	4$		;branch if cant
+	MOV	@SP,R2		;ok. is leader defined
+	ADD	#PH.LDR,R2
+	TST	HOSLNA(R1)
+	BNE	2$		;branch if yes
+	TST	HOSLNA+2(R1)
+	BNE	2$		;branch if yes
+	TST	HOSLNA+4(R1)
+	BNE	2$		;branch if yes
+	MOV	#377*400,(R2)+	;no. save target address and flag for later
+	TST	GATLDR(R0)	;is gateway defined
+	BEQ	1$		;branch if no
+	MOV	GATLDR(R0),(R2)+ ;yes. use gateway address
+	MOV	GATLDR+2(R0),(R2)+
+	BR	3$
+;
+1$:	MOV	@SP,R0		;use destination address
+	MOV	IH.DST(R0),(R2)+
+	MOV	IH.DST+2(R0),(R2)+
+	BR	3$
+;
+2$:	MOV	HOSLNA(R1),(R2)+ ;save leader for later
+	MOV	HOSLNA+2(R1),(R2)+
+	MOV	HOSLNA+4(R1),(R2)+
+3$:	CLR	R0		;get pid (cc(c) = 0)
+	BISB	HOSPID(R1),R0
+4$:	MOV	(SP)+,R1	;evas
+	MOV	(SP)+,R2
+	RTS	PC
+;
+; adrmap (gat) get table pointers for routing update
+; r1 = internet address (word) pointer, returns r0 = host pointer,
+; r1 = route pointer and c(cc) = 1 if not found
+;
+ADRMAP:	MOV	R1,-(SP)	;save
+	JSR	PC,ADRINS	;find first match
+	BCS	2$		;branch if cant
+1$:	BITB	#GT.ERR+GT.HOL,GATFLG(R0)
+	BEQ	3$		;branch if found
+2$:	BITB	#GT.END,GATFLG(R0)
+	BNE	3$		;branch if end
+	MOV	@SP,R1		;yes. try next match
+	JSR	PC,ADRCNT
+	BCS	2$		;branch if cant
+	BR	1$
+;
+3$:	BIT	(SP)+,R1	;discard trash (preserve c(cc))
+	RTS	PC
+;
+; adrgat (gat) get table pointers for routing function
+; r0 = tos, r1 = internet address (word) pointer, returns r0 = host pointer,
+; r1 = route pointer and c(cc) = 0 if up; r0 = connection code if cc(c) = 1
+;
+ADRGAT:	MOV	R1,-(SP)	;save
+	MOV	R0,-(SP)
+	JSR	PC,ADRINS	;find first match
+	BCS	6$		;branch if cant
+1$:	BITB	#GT.ERR,GATFLG(R0) ;found. is this unreachable
+	BNE	5$		;branch if yes
+	BITB	#GT.HOL,GATFLG(R0) ;found. is this black hole
+	BNE	4$		;branch if yes
+	CMP	HOSDLY(R1),#TM.TTL ;no. is host up
+	BLO	2$		;branch if yes
+	TST	HOSDLY(R1)	;no. is host in hold-down
+	BPL	3$		;branch if no
+2$:	BITB	#GT.TOS,GATFLG(R0) ;yes. is tos okay
+	BEQ	8$		;branch if yes
+	TSTB	@SP
+	BNE	8$		;branch if yes
+3$:	BITB	#GT.ALT,GATFLG(R0) ;no. is alt route enabled
+	BEQ	5$		;branch if no
+	MOV	2(SP),R1	;yes. try next match
+	JSR	PC,ADRCNT
+	BCS	6$		;branch if cant
+	BR	1$
+;
+4$:	MOV	#PK.PAR,@SP	;invalid parameter
+	BR	7$
+;
+5$:	MOV	#PK.NNR,@SP	;assume net unreachable
+	TST	GATMSK(R0)	;is this isolate
+	BNE	7$		;branch if no
+	TST	GATMSK+2(R0)
+	BNE	7$		;branch if no
+6$:	MOV	#PK.GNR,@SP	;yes. host unreachable
+7$:	MOV	(SP)+,R0	;evas
+	MOV	(SP)+,R1
+	SEC			;error return
+	RTS	PC
+;
+8$:	CMP	(SP)+,(SP)+	;stackaches
+	CLC			;normal return
+	RTS	PC
+;
+; Adrins (rut) match first logical address
+; Adrcnt (rut) match next logical address
+; R0 = gateway table pointer (adrins only), R1 = internet address (word)
+; pointer, returns r0 = gateway table pointer, R1 = host table pointer,
+; cc(c) = 1 if not found or invalid hid
+;
+ADRINS:	MOV	R2,-(SP)	;save
+	JSR	PC,NETMAP	;is this local net
+	BNE	1$		;branch if no
+	MOV	#$LOCAD,R0	;yes. use local host table
+	BR	RUT1
+;
+1$:	MOV	GATVPT,R0	;foreign net. use that table
+	BR	RUT1
+;
+ADRCNT:	MOV	R2,-(SP)	;save
+RUT2:	BITB	#GT.END,GATFLG(R0) ;is there another entry
+	BNE	RUT3		;branch if no
+	ADD	#GATLEN,R0	;yes. advance to next entry
+RUT1:	BITB	#GT.CAC,GATFLG(R0) ;is this active entry
+	BEQ	1$		;branch if yes
+	TSTB	GATTTL(R0)
+	BEQ	RUT2		;branch if no
+1$:	MOV	@R1,R2		;yes. mask address
+	BIC	GATMSK(R0),R2
+	CMP	GATNET(R0),R2	;does entry match
+	BNE	RUT2		;branch if no
+	MOV	2(R1),R2
+	BIC	GATMSK+2(R0),R2
+	CMP	GATNET+2(R0),R2
+	BNE	RUT2		;branch if no
+	CLR	R1		;is hid in range
+	BISB	GATHID(R0),R1
+	CMPB	R1,$HOSAD-2
+	BHIS	RUT3		;branch if no
+	MUL	#HOSLEN,R1	;yes. get host table pointer
+	ADD	PC,R1
+	ADD	#$HOSAD-.,R1
+	CLC			;normal return
+	BR	RUT5
+;
+RUT3:	SEC			;error return
+RUT5:	MOV	(SP)+,R2	;evas
+	RTS	PC
+;
+; Netmap (rut) test local net
+; R1 = internet address (word) pointer
+; Returns c(z) = 1 if local net
+;
+NETMAP:	MOV	@R1,-(SP)	;is address on local subnet
+	BIC	$NETID+4,@SP
+	MOV	$NETID,-(SP)
+	BIC	$NETID+4,@SP
+	CMP	(SP)+,(SP)+
+	BNE	1$		;branch if no
+	MOV	2(R1),-(SP)
+	BIC	$NETID+6,@SP
+	MOV	$NETID+2,-(SP)
+	BIC	$NETID+6,@SP
+	CMP	(SP)+,(SP)+
+1$:	RTS	PC
+;
+; Netchk (chk) test special address
+; R1 = internet address (word) pointer
+; Returns c(z) = 1 if local use or local broadcast
+;
+NETCHK:	MOV	$NETID,-(SP)	;is address local use
+	BIC	$NETID+4,@SP
+	CMP	@R1,@SP
+	BEQ	1$		;branch if maybe
+	BIS	$NETID+4,@SP	;no. is address local broadcast
+	CMP	@R1,(SP)+
+	BNE	3$		;branch if no
+	MOV	$NETID+2,-(SP)	;maybe. continue check
+	BIS	$NETID+6,@SP
+	BR	2$
+;
+1$:	MOV	$NETID+2,@SP	;maybe local use. continue check
+	BIC	$NETID+6,@SP
+2$:	CMP	2(R1),(SP)+	;set cc
+3$:	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$KERD,RO,D
+;
+; Error code translate table
+;
+ERRCOD:	.WORD	0			;operation complete
+	.WORD	ER.PAR			;connection open error
+	.WORD	ER.PAR			;parameter error
+	.WORD	ER.USP			;insufficient resources
+	.WORD	ER.DWN+0		;gateway down
+	.WORD	ER.DWN+1		;host down
+;
+	.END
+                                              

@@ -1,0 +1,788 @@
+.MACRO	$DFTBL			;define host/gateway table format
+;
+; Logical host table ($gatad) format
+; (this table is in the hos parameter area)
+;
+.	=	0
+GATNET:	.BLKW	2		;internet address
+GATHID:	.BLKB	1		;host id
+GATFLG:	.BLKB	1		;flags
+GT.EGP	=	001		;egp entry
+GT.ALT	=	002		;enable alternate route if down
+GT.ERR	=	004		;force error message
+GT.END	=	010		;last entry
+GT.HLO	=	020		;hello entry
+GT.CAC	=	040		;cache entry
+GT.HOL	=	100		;suppress error message
+GT.TOS	=	200		;special service
+GATMSK:	.BLKW	2		;address mask
+GATLDR:	.BLKW	2		;gateway address
+GATHOP:	.BLKB	1		;distance
+GATTTL:	.BLKB	1		;time-to-live counter
+	.EVEN
+GATLEN	=	.		;length of table entry
+;
+; Physical host table ($hosad) format
+; (this table is in the hos parameter area)
+;
+.	=	0
+HOSPID:	.BLKB	1		;local bridge process id
+HOSTTL:	.BLKB	1		;time-to-live counter
+HOSDLY:	.BLKW	1		;roundtrip delay
+HOSOFS:	.BLKW	1		;clock offset
+HOSTIM:	.BLKW	2		;last timestamp
+HOSLNA:	.BLKW	3		;local network leader
+HOSLEN	=	.		;length of table entry
+.ENDM	$DFTBL
+;
+.MACRO	$DFTIM			;define network timout values
+;
+; System polling intervals and timeouts
+; (all values are in milliseconds unless noted)
+;
+TM.MIN	=	100.		;min link delay
+TM.TTL	=	30000.		;max link delay
+TS.LNK	=	60.		;hold-down interval (sec)
+TM.INP	=	500.		;internet process polling interval
+TM.ITO	=	5000.		;tcp initial retransmission timeout
+TS.RFS	=	15.		;tcp initial refusal (rst) timeout (sec)
+TS.ACK	=	60.		;tcp ack timeout (sec)
+TS.ZLW	=	600.		;tcp zero-window timeout (sec)
+TS.IDL	=	3600.		;tcp idle-connection timeout (sec)
+.ENDM	$DFTIM
+.MACRO	$CNFIG			;define the system configuration
+;
+; The following define the processor configuartion.  set one of
+;    the folllowing 3 equates to 1, the rest to 0
+;
+P1140	=	0			;processor not an 11/40
+P1120	=	0			;processor not an 11/20
+P1103	=	1			;processor is an 11/03 (lsi-11)
+	.IF NE	P1140+P1120+P1103-1
+	.ERROR	ERROR IN PROCESSOR SPECIFICATION, DEFAULT TO LSI-11
+	P1140=0
+	P1120=0
+	P1103=1
+	.ENDC
+.ENDM	$CNFIG
+.MACRO	$PUSH	A1,A2,A3,A4,A5,A6,A7,A8
+	.IF B	A1
+	.MEXIT
+	.ENDC
+	MOV	A1,-(SP)
+	.IF B	A2
+	.MEXIT
+	.ENDC
+	MOV	A2,-(SP)
+	.IF B	A3
+	.MEXIT
+	.ENDC
+	MOV	A3,-(SP)
+	.IF B	A4
+	.MEXIT
+	.ENDC
+	MOV	A4,-(SP)
+	.IF B	A5
+	.MEXIT
+	.ENDC
+	MOV	A5,-(SP)
+	.IF B	A6
+	.MEXIT
+	.ENDC
+	MOV	A6,-(SP)
+	.IF B	A7
+	.MEXIT
+	.ENDC
+	MOV	A7,-(SP)
+	.IF NB	A8
+	.ERROR			;too many arguments to $push macro
+	.ENDC
+.ENDM	$PUSH
+.MACRO	$POP	A1,A2,A3,A4,A5,A6,A7,A8
+	.IF B	A1
+	.MEXIT
+	.ENDC
+	MOV	(SP)+,A1
+	.IF B	A2
+	.MEXIT
+	.ENDC
+	MOV	(SP)+,A2
+	.IF B	A3
+	.MEXIT
+	.ENDC
+	MOV	(SP)+,A3
+	.IF B	A4
+	.MEXIT
+	.ENDC
+	MOV	(SP)+,A4
+	.IF B	A5
+	.MEXIT
+	.ENDC
+	MOV	(SP)+,A5
+	.IF B	A6
+	.MEXIT
+	.ENDC
+	MOV	(SP)+,A6
+	.IF B	A7
+	.MEXIT
+	.ENDC
+	MOV	(SP)+,A7
+	.IF NB	A8
+	.ERROR			;too many arguments to $pop macro
+	.ENDC
+.ENDM	$POP
+.MACRO	$LOOP	REG,LABEL
+	.IF NE	P1103!P1140		;processor with extended instructions?
+	SOB	REG,LABEL
+	.MEXIT
+	.IFF				;if not,
+	DEC	REG
+	BNE	LABEL
+	.ENDC
+.ENDM	$LOOP
+.MACRO	$ERROR
+	.GLOBL	$ERROR
+	JSR	PC,$ERROR
+.ENDM
+.MACRO	$WAIT
+	.GLOBL	$WAIT
+	JSR	PC,$WAIT
+.ENDM	$WAIT
+.MACRO	$SGNLI	TOPID,CODE,FMPID,MSGID,DATA,AXT,AST ;signal process
+	.MCALL	.PUTDA
+	.IF	NB,AST
+	MOV	AST,-(SP)	;SD.AST
+	.IFF
+	CLR	-(SP)		;SD.AST
+	.ENDC
+	.IF	NB,AXT
+	MOV	AXT,-(SP)	;SD.CNT
+	.IFF
+	CLR	-(SP)		;SD.CNT
+	.ENDC
+	MOV	DATA,-(SP)	;SD.ADR
+	MOV	MSGID,-(SP)	;SD.BLK
+	MOVB	CODE,-(SP)	;SD.CHN
+	MOVB	FMPID,1(SP)	;SD.DEV
+	MOVB	TOPID,-(SP)	;SD.DST
+	MOVB	#PKTCTL,1(SP)	;SD.CTL
+	MOV	SP,R0
+	.PUTDA	R0
+	ADD	#2*6,SP
+.ENDM	$SGNLI
+.MACRO	$SGNLT	POLL		;set timer signal
+	MOV	POLL,RESTIM(R5)
+	BISB	#100,PSASTS(R5)	;*** temp ***
+.ENDM	$SGNLT
+.MACRO	$SGUSE	CODE,DATA	;send signal to user process
+	.IF	DIF,<CODE>,R0
+	MOV	CODE,R0
+	.ENDC
+	.IF	NB,<DATA>
+	.IF	DIF,<DATA>,R1
+	MOV	DATA,R1
+	.ENDC
+	.ENDC
+	JSR	PC,$SGUSE
+.ENDM	$SGUSE
+.MACRO	$WAITS	REG		;wait for signal
+	.MCALL	.GETDA
+	CLR	R0
+	BITB	#100,PSASTS(R5)
+	BEQ	97$
+	MOV	RESTIM(R5),R0
+	BLE	99$
+	CLR	RESTIM(R5)
+97$:	.GETDA	REG,R0
+	BMI	99$
+	ADD	R0,RESTIM(R5)
+	CMPB	SD.CTL(REG),#PKTCTL
+	BNE	98$
+	MOVB	SD.DEV(REG),SD.DST(REG)
+	BR	98$
+;
+99$:	MOV	#PKTCTL*400,SD.DST(REG)
+	MOV	#SG.TIM,SD.CHN(REG)
+	BICB	#100,PSASTS(R5)
+98$:
+.ENDM	$WAITS
+.MACRO	$SIO	IORBA
+	CHKGN	1,IORBA
+	.GLOBL	$SIO
+	JSR	PC,$SIO
+.ENDM	$SIO
+.MACRO	$ASH COUNT,REG
+	.IF NE P1145!PMDV		;if processor =pdp 11/45 or has mdv opt
+	  .IFT				;  then do;
+	    .IF GT COUNT		;    if count > 0
+	      .IFT			;      then do;
+	        .IF GT COUNT-^D2	;        if count > 2
+	          .IFT			;          then do;
+	ASH	#COUNT,REG    		;perform requested shift
+	          .IFTF			;            end;
+	          .IFF			;          else do;
+	            .REPT COUNT		;            thru count do;
+	ASL	REG			;shift one bit left
+	            .ENDR		;              end;
+	          .ENDC			;            end;
+	      .IFF			;      else do;
+	        .IF LT COUNT+^D2	;        if count < -2
+	          .IFT			;          then do;
+	ASH	#COUNT,REG    		;perform requested shift
+	          .IFTF			;            end;
+	          .IFF			;          else do;
+	            .REPT -COUNT 	;            thru -count do;
+	ASR	REG			;shift one bit right
+	            .ENDR		;              end;
+	          .ENDC			;            end;
+	      .ENDC			;        end;
+	    .IFTF			;    end;
+	  .IFF				;  else do;
+	    .IF GT COUNT		;    if count > 0
+	      .IFT			;      then do;
+	        .IF GE COUNT-^D8	;        if count >=8
+	          .IFT			;          then do;
+	            .IF EQ COUNT-^D8 	;            if count = 8
+	              .IFT		;              then do;
+	SWAB	REG			;swap high and low bytes
+	ASRB	REG			;set carry bit
+	BICB	REG,REG			;clear low byte w/o clearing carry bit
+	                $ASCNT = ^D0 	;                as_count = 0;
+	              .IFTF		;                end;
+	              .IFF		;              else do;
+	SWAB	REG			;swap high and low bytes
+	CLRB	REG			;clear low byte
+	                $ASCNT=COUNT-^D8;                as_count = count - 8;
+	              .ENDC		;                end;
+	          .IFTF			;            end;
+	          .IFF			;          else do;
+	            $ASCNT = COUNT 	;            as_count = count;
+	          .ENDC			;            end;
+	        .REPT $ASCNT		;        thru as_count do;
+	ASL	REG			;shift left one bit
+	        .ENDR			;          end;
+	      .IFTF			;        end;
+	      .IFF			;      else do;
+	        .IF LT COUNT+^D8	;        if count < -8
+	          .IFT			;          then do;
+	CLRB	REG			;clear low byte
+	SWAB	REG			;swap high and low byte
+	            $ASCNT = -COUNT-^D8	;            as_count = -count - 8;
+	          .IFTF			;            end;
+	          .IFF			;          else do;
+	            $ASCNT = -COUNT 	;            as_count = -count;
+	          .ENDC			;            end;
+	        .REPT $ASCNT		;        thru as_count do;
+	ASR	REG			;shift right one bit
+	        .ENDR			;          end;
+	      .ENDC			;        end;
+	    .ENDC			;    end;
+.ENDM	$ASH
+.MACRO	$ASHC	COUNT,REG
+	.IF NE	P1145!PMDV		;if process = pdp 11/45 or has mdv opt
+	  .IFT				;  then do;
+	ASHC	#COUNT,REG     		;perform requested shift
+	  .IFTF				;    end;
+	  .IFF				;  else do;
+	    .IF LT COUNT		;    if count < 0
+	      .IFT			;      then do;
+	        .REPT -COUNT		;        thru -count do;
+	ASR	REG 			;shift high register right one bit
+	ROR	REG+1 			;shift low register right one bit
+		.ENDR			;          end;
+	      .IFTF			;        end;
+	      .IFF			;      else do;
+	        .REPT COUNT		;        thru count do;
+	ASL	REG+1 			;shift low register left one bit
+	ROL	REG 			;shift high register left one bit
+	        .ENDR			;           end;
+	    .ENDC			;         end;
+	  .ENDC				;    end;
+.ENDM	$ASHC
+.MACRO	DFCSB			;define connection specification block
+CS.CCB:	.BLKW	1		;ccb length
+CS.PRO:	.BLKB	1		;internet protocol
+CS.FLG:	.BLKB	1		;connection flags
+OP.USP	=	200		;unspecified
+OP.LSN	=	100		;listen
+OP.PRT	=	040		;match destination port
+OP.UDP	=	020		;suppress source address/port match
+OP.TRC	=	010		;enable trace
+OP.IDL	=	004		;enable idle timeout
+CS.LPO:	.BLKW	1		;local port
+CS.ADR:	.BLKW	2		;internet address
+CS.FPO:	.BLKW	1		;port
+CS.SIZ:	.BLKW	1		;max packet size
+CS.TOS:	.BLKB	1		;ip type of service
+CS.CNT:	.BLKB	1		;ip option byte count
+CS.OPT:	.BLKW	20.		;ip option area (max)
+CS.LEN	=	.		;end of csb
+.ENDM	DFCSB
+.MACRO	$DFTCB			;define connection control block
+;
+; Connection control block (ccb)
+; Protocol-independent parameter area
+;
+.	=	0
+INPCID:	.BLKW	1		;internet process cid
+STATE:	.BLKW	1		;state flags
+ST.SS	=	1		;syn sent flag
+ST.SA	=	2		;syn acked flag
+ST.SR	=	4		;syn received flag
+ST.FS	=	10		;fin sent flag
+ST.FA	=	20		;fin acked flag
+ST.FR	=	40		;fin received flag
+ST.FNW	=	4000		;fin-wait mode
+ST.SPN	=	10000		;suspended mode
+ST.URG	=	20000		;urgent mode
+ST.DEL	=	40000		;delete connection
+ST.USP	=	100000		;connection unspecified
+FLAGS:	.BLKW	1		;tcp signal flags
+FL.FIN	=	1		;(tc.fin) send fin control function
+FL.SYN	=	2		;(tc.syn) send syn control function
+FL.RST	=	4		;(tc.rst) send rst error packet
+FL.EOL	=	10		;(tc.eol) send push function
+FL.ACK	=	20		;(tc.ack) force ack for packet received
+FL.URG	=	40		;(tc.urg) send urgent function
+FL.TXT	=	400		;need to send data
+FL.RTX	=	1000		;need to retransmit head of rtx queue
+FL.NUL	=	2000		;null (ack-only) packet
+FL.DUP	=	4000		;packet is a duplicate flag
+FL.CHK	=	10000		;need to check rsm queue
+;
+; Connection status block
+;
+OPNPAR	=	.		;beginning of csb parameter area
+CCBFMT:	.BLKW	1		;ccb length
+CCBAST:	.BLKW	1		;completion routine
+PROTCL:	.BLKB	1		;internet protocol
+CCBFLG:	.BLKB	1		;connection flags
+OP.USP	=	200		;unspecified
+OP.LSN	=	100		;listen
+OP.PRT	=	040		;match destination port
+OP.UDP	=	020		;suppress source address/port match
+OP.TRC	=	010		;enable trace
+OP.IDL	=	004		;enable idle timeout
+OP.NGL	=	001		;enable nagle algorithm
+LSOCK:	.BLKW	2		;local internet address
+LPORT:	.BLKW	1		;local port
+FSOCK:	.BLKW	2		;foreign internet address
+FPORT:	.BLKW	1		;foreign port
+MAXSIZ:	.BLKW	1		;max packet size
+OPNOPT	=	.		;beginning of csb option area
+TYPSRV:	.BLKB	1		;ip type of service
+OPTCNT:	.BLKB	1		;ip option byte count
+OPTION:	.BLKW	20.		;ip option area
+;
+; Operating system interface
+;
+RTXTMO:	.BLKW	1		;retransmission timeout
+USECID:	.BLKW	1		;user process cid
+INPPID:	.BLKB	1		;internet process pid
+USEPID:	.BLKB	1		;user process pid
+SNDCNT:	.BLKB	1		;send packets outstanding
+ACKDLY:	.BLKB	1		;ack delay (tcp)
+	.EVEN
+RTBLEN	=	.		;length of rtb
+;
+; Protocol-dependent area (udp)
+;
+UDPSEQ:	.BLKW	1		;sequence check
+UDPLEN	=	.		;length of udp ccb
+;
+; Protocol-dependent area (tcp)
+; Receive state variables
+;
+.	=	RTBLEN
+INISEQ:	.BLKW	2		;initial receive sequence
+RCVSEQ:	.BLKW	2		;receive sequence
+RCVWS:	.BLKW	1		;receive window size
+RCVPP:	.BLKW	1		;receive push offset
+RCVUP:	.BLKW	1		;receive urgent offset
+;
+; Send state variables
+;
+LWESEQ:	.BLKW	2		;left window edge sequence
+SNDSEQ:	.BLKW	2		;send sequence
+SNDWS:	.BLKW	1		;send window size
+SNDPP:	.BLKW	1		;send push offset
+SNDUP:	.BLKW	1		;send urgent offset
+;
+; Packetizing and retransmission controls
+;
+CCBRLF:	.BLKW	1		;ccb relocation factor
+TCPSIZ:	.BLKW	1		;TCP max-size option
+SNDUVA:	.BLKW	1		;user buffer address
+SNDBR:	.BLKW	1		;user buffer count
+MAXSEG:	.BLKW	1		;max segment length
+MAXTXT:	.BLKW	1		;max text octets this packet
+RTXTIK:	.BLKW	1		;ticks to next rtx wakeup
+ACKTIK:	.BLKW	1		;ticks to next ack wakeup
+RETRY:	.BLKW	1		;no-reply timeout (polling cycles)
+RTXCNT:	.BLKW	1		;count of bytes in retransmision queue
+QUECNT:	.BLKW	1		;count of bytes in send queue
+RTXCC:	.BLKW	1		;count of control bytes in rtx queue
+;
+; Parameter estimation controls
+;
+ESTEND:	.BLKW	1		;end of estimation buffer
+ESTLEN:	.BLKW	1		;size of estimation buffer
+ESTHD:	.BLKW	1		;estimation buffer head
+ESTTL:	.BLKW	1		;estimation buffer tail
+RTDRTX:	.BLKW	1		;last delay sample
+WDWCNT:	.BLKB	1		;external packets outstanding
+WDWTHR:	.BLKB	1		;max external packets
+;
+; Buffer pointers
+;
+RCVIOR:	.BLKW	1		;input packet
+SNDIOR:	.BLKW	1		;output packet
+RSMEND:	.BLKW	1		;end of rsm buffer
+RSMLEN:	.BLKW	1		;size of rsm buffer
+RSMHD:	.BLKW	1		;head of rsm queue
+RSMTL:	.BLKW	1		;tail of rsm queue
+RTXEND:	.BLKW	1		;end of rtx buffer
+RTXLEN:	.BLKW	1		;size of rtx buffer
+RTXHD:	.BLKW	1		;head of rtx queue
+RTXTL:	.BLKW	1		;tail of rtx queue
+RF.FIN	=	1		;byte is fin control function
+RF.SYN	=	2		;byte is syn control function
+RF.EOL	=	10		;byte is push control function
+RF.TXT	=	200		;byte contains text
+;
+; Tcp measurement area
+;
+NR.QNC:	.BLKW	1		;catenet source quench packets
+NR.DNR:	.BLKW	1		;catenet destination unreachable packets
+NR.PKT:	.BLKW	1		;number of packets received from net
+PR.BAD:	.BLKW	1		;number of packets rcvd with bad format
+				; too short, wrong version number
+				; or wrong header length
+PR.DMG:	.BLKW	1		;number of packets with bad checksum
+PR.SPC:	.BLKW	1		;number of special control or error
+PR.NOX:	.BLKW	1		;number of packets received on
+PR.REG:	.BLKW	1		;number of regular control or data
+				;  packets received
+PR.NUL:	.BLKW	1		;number of null (ack only) pkts
+NR.TXT:	.BLKW	1		;number of text packets processed
+PR.DUP:	.BLKW	1		;number of duplicate packets received
+PR.OUT:	.BLKW	1		;packets outside window
+NR.SYN:	.BLKW	1		;number of syn's processed
+NR.FIN:	.BLKW	1		;number of fin's processed
+NS.ERR:	.BLKW	1		;number of error packets sent
+NS.CTL:	.BLKW	1		;number of control packets sent
+NS.TXT:	.BLKW	1		;number of text packets sent
+NS.RTX:	.BLKW	1		;number of packet retransmissions
+NS.ACK:	.BLKW	1		;number of ack only packets sent
+NU.DAT:	.BLKW	1		;number of data avail signals to user
+TCBLEN	=	.		;beginning of buffer area
+.ENDM
+.MACRO	$DFSIG			;define interprocess signals
+;
+; Signals to net and internet processes (net signal format)
+;
+SG.INP	=	0		;packet (data = packet pointer)
+SG.OUT	=	1		;packet ack
+SG.CSQ	=	2		;source quench
+SG.CDU	=	3		;destination unreachable (data = reason)
+SG.TIM	=	4		;timer countdown
+SG.OPN	=	5		;open connection
+SG.CLS	=	6		;close connection
+SG.WRK	=	7		;set work flags (data = bits)
+SG.RST	=	10		;reset
+;
+; Signals to user process (user signal format)
+;
+SG.EST	=	0		;connection established
+;
+SG.ERR	=	1		;connection error (reason)
+ER.USP	=	0		;unspecified
+ER.PAR	=	1		;parameter error
+ER.TIM	=	2		;time exceeded (add code)
+ER.UNR	=	4		;destination unreachable (add code)
+ER.DWN	=	12		;destination down (add code)
+;
+SG.DD	=	2		;host not responding (reason)
+DD.USP	=	0		;unspecified
+DD.SYN	=	1		;initial connection timeout
+DD.ACK	=	2		;ack timeout
+DD.WDW	=	3		;send window timeout
+DD.IDL	=	4		;idle connection timeout
+;
+SG.CC	=	3		;close complete
+;
+SG.DAT	=	4		;data received
+;
+SG.RFS	=	5		;connection refused (reason)
+RF.USP	=	0		;unspecified
+RF.RSO	=	1		;connection-open state
+RF.RSD	=	2		;data-transfer state
+RF.RSC	=	3		;connection-close state
+;
+SG.SC	=	6		;send complete
+;
+SG.RC	=	7		;remote disconnect
+;
+SG.INT	=	10		;remote interrupt
+;
+; $ctrl command codes
+;
+CM.OPN	=	0		;($open) ip open
+CM.CLS	=	1		;($close) ip close
+CM.STA	=	2		;($stat) ip status request
+CM.GET	=	3		;($gtpkt) allocate and init ip packet
+CM.INI	=	4		;($inpkt) init ip packet
+CM.SND	=	5		;($snpkt) send ip packet
+CM.FRE	=	6		;($frpkt) free ip packet
+CM.OPT	=	7		;($snopt) set ip option
+CM.INT	=	10		;($int) send tcp urgent
+CM.UDP	=	11		;($udp) send udp packet
+CM.FLO	=	12		;($flpkt) allocate and init ip packet
+;
+; $ctrl/$send return codes
+;
+PK.OK	=	0		;operation complete
+PK.OPN	=	1		;connection open error
+PK.PAR	=	2		;invalid parameters
+PK.RES	=	3		;insufficient resources
+PK.NNR	=	4		;gateway down
+PK.GNR	=	5		;host down
+PK.NET	=	6		;net error
+PK.SYN	=	7		;invalid name syntax
+PK.NTO	=	10		;name server not responding
+PK.NTF	=	11		;name not found
+PK.NEX	=	12		;name does not exist
+.ENDM	$DFSIG
+.MACRO	$DFAH			;define arpanet 1822 leader
+;
+; Arpanet 1822 leader
+;
+.	=	0
+AH.FMT:	.BLKB	1		;format number
+FMT.IP	=	15.		;arpanet 96-bit leader format number
+AH.NET:	.BLKB	1		;destination net - unused
+AH.FLG:	.BLKB	1		;flags
+AH.TYP:	.BLKB	1		;message type
+AH.HND:	.BLKB	1		;handling type
+AH.HID:	.BLKB	1		;host number
+AH.IMP:	.BLKW	1		;imp number
+AH.LNK:	.BLKB	1		;link number
+LNK.IP	=	155.		;ip link number
+AH.SBL:	.BLKB	1		;sub-link and sub-type
+AH.ML:	.BLKW	1		;message length
+AH.LEN	=	.		;end of arpanet leader (6)
+.ENDM	$DFAH
+.MACRO	$DFEH			;define ethernet header
+;
+; Ethernet leader
+;
+.	=	0
+EH.FS:	.BLKW	1		;frame status (not transmitted)
+EH.FL:	.BLKW	1		;frame length
+EH.DAD:	.BLKW	3		;destination address
+EH.SAD:	.BLKW	3		;source address
+EH.TYP:	.BLKW	1		;type
+ETHARP	=	3010		;address resolution protocol (arp)
+ETHIP	=	0010		;internet protocol (ip)
+EH.LEN	=	.		;end of ethernet leader (9)
+.ENDM	$DFEH
+.MACRO	$DFHH			;define hyperchannel leader
+;
+; Hyperchannel leader
+;
+.	=	0
+HH.CON:	.BLKB	1		;additional control flags
+CON.AD	=	1		;associated data flag
+HH.TRK:	.BLKB	1		;trunks to try (part of control word)
+TRK.TR	=	377		;allow all trunks to be used for I/O
+HH.ACC:	.BLKW	1		;access code field
+HH.DAD:	.BLKW	1		;destination address field
+HH.SAD:	.BLKW	1		;source address field
+HH.FCN:	.BLKW	1		;function
+HH.LEN	=	.		;end of hyperchannel leader (5)
+.ENDM	$DFHH
+.MACRO	$DFIH			;define ip header
+;
+; Buffer header
+;
+.	=	0
+PH.OFS:	.BLKW	1		;data area offset
+PH.LNG:	.BLKW	1		;data area length
+PH.TIM:	.BLKW	2		;timestamp
+PH.SBL	=	.		;end of preserved area
+PH.LNK:	.BLKW	2		;reassembly link
+PH.LDR:	.BLKW	3		;local leader
+PH.PRC:	.BLKW	1		;precedence
+PH.WGT:	.BLKW	1		;weight
+PH.LEN	=	.		;end of buffer header (11)
+;
+; Internetwork protocol (ip) header
+;
+.	=	BUFLDR
+IH.VER:	.BLKB	1		;version and header length
+P.IP	=	4		;version number
+IH.TOS:	.BLKB	1		;type of service
+TQ.DLY	=	020		;delay
+TQ.THR	=	010		;throughput
+TQ.REL	=	004		;reliability
+IH.FL:	.BLKW	1		;fragment length (byte swapped)
+IH.ID:	.BLKW	1		;segment id (byte swapped)
+IH.FRG:	.BLKW	1		;fragmentation info (byte swapped)
+IH.DF	=	40000		;don't fragment flag
+IH.MF	=	20000		;more fragments flag
+IH.OFF	=	17777		;fragment offset
+IH.TTL:	.BLKB	1		;time to live
+IH.PRO:	.BLKB	1		;protocol number
+P.IMP	=	1		;internet control message protocol
+P.GGP	=	3		;gateway-gateway protocol
+P.GMP	=	4		;gateway monitoring protocol
+P.TCP	=	6		;transmission control protocol
+P.EGP	=	8.		;exterior gateway protocol
+P.XNP	=	15.		;xnet protocol
+P.UDP	=	17.		;user datagram protocol
+P.DCP	=	19.		;dcnet protocol
+P.LNP	=	63.		;dcnet hello protocol (private)
+P.SMP	=	69.		;simp monitoring protocol
+P.ARP	=	80.		;address resolution protocol
+P.LNK	=	87.		;terminal-link protocol
+IH.CHK:	.BLKW	1		;internet header checksum
+IH.SRC:	.BLKW	2		;source address
+IH.DST:	.BLKW	2		;destination address
+IH.LEN	=	.		;end of ip header (10)
+.ENDM	$DFIH
+.MACRO	$DFGH			;define icmp header
+;
+; Internet control message protocol (icmp) header
+;
+.	=	0
+GH.TYP:	.BLKB	1		;message type
+GC.RPY	=	0		;echo reply
+GC.DNR	=	3		;destination unreachable
+GC.SQN	=	4		;source quench
+GC.RDR	=	5		;redirect
+GC.ECH	=	10		;echo
+GC.TOT	=	13		;time exceeded
+GC.PAR	=	14		;parameter error
+GC.TSP	=	15		;timestamp
+GC.TSR	=	16		;timestamp reply
+GC.IFF	=	17		;information request
+GC.IFR	=	20		;information reply
+GC.AMF	=	21		;address mask request
+GC.AMR	=	22		;address mask reply
+GC.MAX	=	22		;maximum value
+GH.COD:	.BLKB	1		;message code
+DN.NET	=	0		;(gc.dnr) net unreachable
+DN.HOS	=	1		;(gc.dnr) host unreachable
+DN.PRO	=	2		;(gc.dnr) service unavailable
+DN.POR	=	3		;(gc.dnr) port unavailable
+DN.FRG	=	4		;(gc.dnr) fragmentation error
+DN.SRF	=	5		;(gc.dnr) source route failed
+DN.MAX	=	5		;(gc.dnr) maximum value
+TE.TIM	=	0		;(gc.tot) transit timeout
+TE.RSM	=	1		;(gc.tot) reassembly timeout
+TE.MAX	=	1		;(gc.tot) maximum value
+GH.CHK:	.BLKW	1		;checksum
+GH.ID:	.BLKW	1		;identifier
+GH.SEQ:	.BLKW	1		;sequence number
+GH.HDR	=	.		;beginning of original internet header
+GH.ORG:	.BLKW	2		;originate timestamp
+GH.REC:	.BLKW	2		;receive timestamp
+GH.XMT:	.BLKW	2		;transmit timestamp
+GH.LEN	=	.		;end of timestamp header
+.ENDM	$DFGH
+.MACRO	$DFTH			;define tcp header
+;
+; Transmission control protocol (tcp) header
+;
+TO.NOP	=	1		;tcp no-op option
+TO.SIZ	=	2		;tcp max-size option
+;
+.	=	0
+TH.SP:	.BLKW	1		;source port
+TH.DP:	.BLKW	1		;destination port
+TH.SEQ:	.BLKW	2		;sequence number
+TH.ACK:	.BLKW	2		;acknowledgement sequence number
+TH.HLN:	.BLKB	1		;version and header length
+TH.CTL:	.BLKB	1		;control flags
+TC.FIN	=	1		;close request
+TC.SYN	=	2		;open request
+TC.RST	=	4		;reset request
+TC.PSH	=	10		;push request
+TC.ACK	=	20		;acknowledgement present
+TC.URG	=	40		;urgent data present
+TH.WDW:	.BLKW	1		;window size
+TH.CHK:	.BLKW	1		;checksum
+TH.URG:	.BLKW	1		;urgent pointer offset
+TH.LEN	=	.		;end of tcp header (10)
+.ENDM	$DFTH
+.MACRO	$DFUH			;define udp header
+;
+; User datagram protocol (udp) header
+;
+.	=	0
+UH.SRC:	.BLKW	1		;source port
+UH.DST:	.BLKW	1		;destination port
+UH.LNG:	.BLKW	1		;data area length
+UH.CHK:	.BLKW	1		;checksum
+UH.LEN	=	.		;end of udp header (4)
+.ENDM	$DFUH
+.MACRO	$DFNH			;define ntp header
+;
+; Network time protocol (ntp) header
+; (follows udp header)
+;
+.	=	UH.LEN
+NT.STA:	.BLKB	1		;leap/version/mode
+LI.POS	=	1*100		;+1 second leap
+LI.NEG	=	2*200		;-1 second leap
+NX.VER	=	3		;ntp version number
+NX.CTL	=	6		;ntp control message mode
+NT.STR:	.BLKB	1		;stratum
+NT.POL:	.BLKB	1		;poll interval
+NT.PRE:	.BLKB	1		;precision
+NT.ERR:	.BLKW	2		;root delay
+NT.DRF:	.BLKW	2		;root dispersion
+NT.RID:	.BLKW	2		;reference clock id
+NT.REF:	.BLKW	4		;reference timestamp
+NT.ORG:	.BLKW	4		;originate timestamp
+NT.REC:	.BLKW	4		;receive timestamp
+NT.XMT:	.BLKW	4		;transmit timestamp
+NT.LEN	=	.		;length of ntp message (less authenticator)
+.ENDM	$DFNH
+.MACRO	$DFMH			;define ntp control message header
+;
+; Network time protocol control-message (mon) header
+; (follows udp header)
+;
+.	=	UH.LEN
+NM.MOD:	.BLKB	1		;leap/version/mode
+NX.VER	=	2		;ntp version number
+NX.CTL	=	6		;ntp control message mode
+NM.OPC:	.BLKB	1		;rem/opcode
+NY.UNS	=	0		;unspecified
+NY.RDS	=	1		;read system/peer status
+NY.RDV	=	2		;read system/peer variables
+NY.WRV	=	3		;write system/peer variables
+NY.RDR	=	4		;read radio variables
+NY.WRR	=	5		;write radio variables
+NY.STA	=	6		;set trap address
+NY.MOR	=	040		;more data follows
+NY.ERR	=	100		;error indicator
+NY.RSP	=	200		;response indicator
+NM.SEQ:	.BLKW	1		;sequence number
+NM.STA:	.BLKB	1		;status code
+NM.ERR:	.BLKB	1		;error code
+NZ.UNS	=	0		;unspecified
+NZ.ATH	=	1		;authentication failure
+NZ.FMT	=	2		;invalid message length or format
+NZ.OPC	=	3		;invalid opcode
+NZ.AID	=	4		;unknown association id
+NZ.VAR	=	5		;unknown variable name
+NZ.VAL	=	6		;invalid variable value
+NZ.PNG	=	7		;administratively prohibited
+NM.AID:	.BLKW	1		;association id
+NM.OFS:	.BLKW	1		;offset
+NM.CNT:	.BLKW	1		;count
+NM.LEN	=	.		;length of ntp control message header
+.ENDM	$DFMH
+                                                                                                                                                                                                                                                                                                                                                  

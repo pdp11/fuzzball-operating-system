@@ -1,0 +1,290 @@
+	.TITLE	TTY	Asynchronous terminal driver
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn asynchronous terminal driver
+;
+; This driver operates as part of the terminal input/output processes.
+;
+; In image mode bytes are copied to and from the device uninterpreted and
+; unmodified. Two ascii modes are povided: dte, which emulates a terminal
+; for a remote processor, and dce, which emulates a processor for a remote
+; terminal. In this driver both dte and dce modes operate in the same way.
+;
+; Option bits:
+; imgbit	0: ascii mode, 1: image mode
+; muxbit	0: dl11, 1: dz11
+; brkbit	0: toggle dtr (dz11 only), 1: toggle break
+
+;
+; External symbols
+;
+	.GLOBL	IORINI,IOXINI,.WAIT,.SKED,.STIM,$OFSET
+;
+; Entry symbols
+;
+	.GLOBL	TTRPAT		;input process control vector
+	.GLOBL	TTXPAT		;output process control vector
+	.GLOBL	MUXINP		;dz11 input entry
+	.GLOBL	TTRSIO		;dz11 receive entry
+	.GLOBL	TTXINT		;dz11 output entry
+	.GLOBL	TTXSIO		;dz11 transmit entry
+	.GLOBL	TTXASY		;dz11 asynch interrupt entry
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.PSA,.TTD,.TTP,.PAT ;definitions
+	.MCALL	.SETV,.ASYN	;supervisor calls
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.PSA			;define process data areas
+	.TTD			;define asynch i/o data areas
+	.TTP			;define tty data areas
+;
+; Module definitions
+;
+FRMERR	=	020000		;input frame error
+BUFSIZ	=	100		;input buffer size (power of 2)
+BRKTIM	=	200.		;break interval (milliseconds)
+;
+; Tty process save area extension (ttr)
+;
+.	=	TTREND
+	.EVEN
+TTRGET:	.BLKB	1		;get pointer
+TTRPUT:	.BLKB	1		;put pointer
+TTRCNT:	.BLKB	1		;count of bytes in buffer
+TTRINB:	.BLKB	BUFSIZ		;input buffer
+	.EVEN
+	.BLKW	REGEND/2+6	;process stack
+TTRENP	=	.		;end of tty input extension
+;
+; Tty process save area extension (ttx)
+;
+.	=	TTXEND
+	.BLKW	REGEND/2+6	;process stack
+TTXENP	=	.		;end of tty output extension
+;
+; Device registers (dc11/dl11/dlv11)
+;
+.	=	0
+TTRCSR:	.BLKW	1		;receiver control/status register
+TTRBUF:	.BLKW	1		;receiver buffer register
+TTXCSR:	.BLKW	1		;transmitter control/status register
+TTXBUF:	.BLKW	1		;transmitter buffer register
+	.PAGE
+;
+; Procedure segments
+;
+; Supervisor-state procedure
+; Dsects: r2 = dev, r3 = par, r4 = reg, r5 = psa
+;
+	.PSECT	$KERI,RO,I
+;
+; Initialization
+;
+TTRNIT:	MOV	PARSET(R3),TTRCSR(R2) ;initialize receive status
+	BR	TTX44
+;
+TTXNIT:	ADD	#4,R0		;offset to transmit interrupt vector
+TTX44:	MOV	#INTR,R1	;allocate interrupt vector
+	.SETV
+	RTS	PC
+;
+; Tty input
+;
+; In image mode 8-bit bytes are copied from the device uninterpreted and
+; unmodified. In ascii mode the parity bit is stripped and the 7-bit byte
+; interpreted as follows:
+; dc3	stop output
+; dc1	start output
+; etx	interrupt process
+; <Dc3> and <dc1> are not included in the input buffer. <Etx> is included in
+; the buffer. If the input buffer is over 3/4 full, <dc3> is sent by the
+; output side and the driver enters the flow-control condition. In this
+; condition if the input buffer is under 1/4 full, <dc1> is sent by the output
+; side and the driver leaves the flow-control condition. If the input buffer
+; overflows, <bel> is sent by the output side.
+;
+; Start input
+;
+TTRSIO:	JSR	PC,.WAIT	;switch to wait state
+	TSTB	TTRCNT(R5)	;is buffer empty
+	BNE	TTR80		;branch if no
+	RTS	PC		;yes. just wait
+;
+; Input interrupt
+;
+TTRINT:	MOV	TTRBUF(R2),R0	;get byte
+	BPL	MUXINP		;branch if okay
+	INC	PARINR(R3)	;count input error
+MUXINP:	BIT	#IMGBIT,PAROPT(R3) ;is this ascii mode
+	BNE	4$		;branch if no
+	BIT	#FRMERR,R0	;yes. is this frame error
+	BNE	1$		;branch if yes (avoid space meltdown)
+	BIC	#^C177,R0	;no. knock off parity bit
+	CMPB	R0,#DC3		;is byte <dc3> (xoff)
+	BNE	2$		;branch if no
+	BIS	#HLDBIT,PARAUX(R3) ;yes. hold output
+1$:	RTS	PC
+;
+2$:	CMPB	R0,#DC1		;is byte <dc1> (xon)
+	BNE	3$		;branch if no
+	BIC	#HLDBIT,PARAUX(R3) ;yes. start output
+	BISB	PARSET(R3),TTXCSR(R2)
+	RTS	PC
+;
+3$:	CMPB	R0,#ETX		;is this <etx> (ctrl-c)
+	BNE	4$		;branch if no
+	MOV	R0,-(SP)	;yes. send asynch interrupt
+	MOVB	PAROUT(R3),R1
+	BIC	#^C3,R1
+	ASH	#3,R1
+	ADD	R3,R1
+	MOVB	PARLDN+2(R1),R1
+	BIC	#^C377,R1
+	ADD	#$OFSET,R1
+	ADD	@R1,R1
+	MOVB	PARPID(R1),R1
+	.ASYN
+	MOV	(SP)+,R0
+4$:	CMPB	TTRCNT(R5),#BUFSIZ*3/4 ;test buffer level
+	BLO	7$		;branch if okay
+	CMPB	TTRCNT(R5),#BUFSIZ
+	BLO	6$		;branch if almost full
+	INC	PARNBU(R3)	;full. count buffer overflow
+	BIT	#IMGBIT,PAROPT(R3) ;is this image mode
+	BNE	5$		;branch if yes
+	MOVB	#BEL,PARAUX(R3)	;no. send bel
+	BISB	PARSET(R3),TTXCSR(R2)
+5$:	RTS	PC
+;
+6$:	BIT	#IMGBIT,PAROPT(R3) ;is this image mode
+	BNE	7$		;branch if yes
+	BIS	#BLKBIT,PARAUX(R3) ;no. enter flow-control state
+	MOVB	#DC3,PARAUX(R3)	;send dc3 (xoff)
+	BISB	PARSET(R3),TTXCSR(R2)
+7$:	INCB	TTRCNT(R5)	;store byte in buffer
+	MOVB	TTRPUT(R5),R1
+	ADD	R5,R1
+	MOVB	R0,TTRINB(R1)
+	INCB	TTRPUT(R5)
+	BICB	#^C<BUFSIZ-1>,TTRPUT(R5)
+	TSTB	PSASTS(R5)	;is process running
+	BMI	5$		;branch if yes
+TTR80:	MOVB	TTRGET(R5),R1	;no. fetch byte from buffer
+	ADD	R5,R1
+	MOVB	TTRINB(R1),@R4	;insert byte
+	INCB	TTRGET(R5)
+	BICB	#^C<BUFSIZ-1>,TTRGET(R5)
+	DECB	TTRCNT(R5)
+	MOVB	TTRCNT(R5),1(R4) ;insert bytes remaining
+	CMPB	TTRCNT(R5),#BUFSIZ*1/4 ;is buffer almost empty
+	BHIS	1$		;branch if no
+	BIT	#BLKBIT,PARAUX(R3) ;yes. is this flow-control state
+	BEQ	1$		;branch if no
+	BIC	#BLKBIT,PARAUX(R3) ;yes. set normal state
+	MOVB	#DC1,PARAUX(R3)	;send <dc1> (xon)
+	BISB	PARSET(R3),TTXCSR(R2)
+1$:	JMP	.SKED		;schedule process
+;
+; Tty output
+;
+; In image mode bytes are copied to the device uninterpreted and unmodified.
+; In ascii mode the parity bit is assumed to have been stripped by the sender.
+; In this mode an <eot> will generate a either a long-space (break) condition
+; or drop data-terminal-ready if enabled (eotbit set in the options word).
+; In ascii mode a programmable delay can be specified following a <cr>.
+;
+; Start output
+;
+TTXSIO:	JSR	PC,.WAIT	;enter wait state
+	BIS	#CHRBIT,PARAUX(R3)
+	BISB	PARSET(R3),TTXCSR(R2) ;start output
+	RTS	PC
+;
+; Output timeout (break)
+;
+TTXASY:	BISB	PARSET(R3),TTXCSR(R2) ;resume output
+	BIT	#MUXBIT,PAROPT(R3) ;is this dz11
+	BEQ	2$		;branch if no
+	BIT	#BRKBIT,PAROPT(R3) ;yes. is break specified
+	BEQ	1$		;branch if no
+	BICB	PARSET(R3),TTXBUF+1(R2) ;yes. drop break
+	RTS	PC
+;
+1$:	BISB	PARSET(R3),TTXCSR+1(R2) ;raise dtr
+	RTS	PC
+;
+2$:	BICB	#1,TTXCSR(R2)	;dl11. drop break
+	RTS	PC
+;
+; Output interrupt
+;
+TTXINT:	BIT	#BIPBIT,PARAUX(R3) ;is timer active
+	BEQ	1$		;branch if no
+	BIC	#BIPBIT,PARAUX(R3) ;yes. send <nul>
+	MOVB	#NUL,TTXBUF(R2)
+	RTS	PC
+;
+1$:	MOVB	PARAUX(R3),R0	;is flow-control pending
+	BEQ	2$		;branch if no
+	MOVB	R0,TTXBUF(R2)	;yes. send byte
+	CLRB	PARAUX(R3)
+	RTS	PC
+;
+2$:	BIT	#HLDBIT,PARAUX(R3) ;is output blocked
+	BNE	9$		;branch if yes
+	BIT	#CHRBIT,PARAUX(R3) ;no. is output pending
+	BEQ	7$		;branch if no
+	BIC	#CHRBIT,PARAUX(R3) ;yes. send char
+	MOVB	@R4,TTXBUF(R2)
+	BICB	PARSET(R3),TTXCSR(R2)
+	BIT	#IMGBIT,PAROPT(R3) ;is this image mode
+	BNE	8$		;branch if yes
+	CMPB	@R4,#CR		;no. is this <cr>
+	BNE	3$		;branch if no
+	MOV	PARPAD(R3),R0	;yes. start timer
+	BEQ	8$		;branch if not enabled
+	BR	6$
+;
+3$:	CMPB	@R4,#EOT	;is this <eot> (break)
+	BNE	8$		;branch if no
+	MOV	#BRKTIM,R0	;yes. start timer
+	BIT	#MUXBIT,PAROPT(R3) ;is this dz11
+	BEQ	5$		;branch if no
+	BIT	#BRKBIT,PAROPT(R3) ;yes. is break specified
+	BEQ	4$		;branch if no
+	BISB	PARSET(R3),TTXBUF+1(R2) ;yes. raise break
+	BR	6$
+;
+4$:	BICB	PARSET(R3),TTXCSR+1(R2) ;drop dtr
+	BR	6$
+;
+5$:	BIT	#BRKBIT,PAROPT(R3) ;dl11. is break specified
+	BEQ	8$		;branch if no
+	BISB	#1,TTXCSR(R2)	;yes. raise break
+6$:	BIS	#BIPBIT,PARAUX(R3) ;snooze on timeout
+	JMP	.STIM
+;
+7$:	BICB	PARSET(R3),TTXCSR(R2) ;stop transmitter
+8$:	TSTB	PSASTS(R5)	;is process running
+	BMI	10$		;branch if yes
+	JMP	.SKED		;no. resume process
+;
+9$:	BICB	PARSET(R3),TTXCSR(R2) ;stop transmitter
+10$:	RTS	PC
+	.PAGE
+;
+; Data segment
+;
+	.PSECT	$KERD,RO,D
+;
+; Process headers
+;
+TTRPAT:	.PAT	TTRENP,IORINI,PRI3,<0,0,TTRNIT,TTRSIO,TTRINT>
+TTXPAT:	.PAT	TTXENP,IOXINI,PRI3,<0,TTXASY,TTXNIT,TTXSIO,TTXINT>
+;
+	.END
+                    

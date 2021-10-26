@@ -1,0 +1,1510 @@
+	.TITLE	INP	Internet process
+	.SBTTL	System and module definitions
+	.NLIST	BEX,CND
+	.ENABL	LC
+;
+; Pdp11/dcn internet process
+;
+; This process is the target of all internet datagrams directed to
+; this host. it matches incoming datagrams to the various connections
+; and calls the protocol module (tcp or rtp) as indicated. it also
+; decodes gateway source-quench and destination-unreachable messages
+; and issues the appropriate signals to the protocol module. This
+; process polls the protocol module a number of times per second
+; (tm.inp) so that the protocol module can implement timeouts,
+; retransmissions, etc., and also counts down the time-to-live fields
+; in the host (routing) table.
+;
+; This process also supports the optional Spectracom 8170 (WWVB),
+; Truetime 468-DC (GOES), Heath GC-1000 (WWV) or Precision Standard Time
+; 1020 (WWV) radio clocks. These devices are attached via a serial
+; asynchronous line, which is used to send poll messages and receive
+; responses.
+;
+; The following symbols are used to identify the timecode character that
+; begins a subfield
+;
+; C	on-time character (start bit)
+; T	time of day
+; D	day of year or month/day
+; A	alarm (format specific)
+; Q	quality indicator (format specific)
+;
+; Spectracom 8170 and Netclock/2 WWV Synchonized Clock (format 0)
+;
+; "<cr><lf>i  ddd hh:mm:ss  TZ=zz<cr><lf>
+;  C       A  D   T
+;	poll: "T"; offsets: T = 7, D = 3, A = 0, Q = none
+;	hh:mm:ss = hours, minutes, seconds
+;	i = synchronization flag (<sp> = in synch, "?" = out synch)
+;	note: alarm condition is indicated by other than " " at A, which
+;		occurs during initial synchronization and when received
+;		signal is lost for about ten hours
+;
+;	example: "   216 15:36:43  TZ=0"
+;	          A  D   T
+;
+; Spectracom 8170 and Netclock/2 WWV Synchonized Clock (format 2)
+;
+; "<cr><lf>iqyy ddd hh:mm:ss.fff ld"
+;  C       AQD      T
+;	poll: "T"; offsets: T = 9, D = 2, A = 0, Q = 1
+;	i = synchronization flag (<sp> = in synch, "?" = out synch)
+;	q = quality indicator (<sp> = locked, "A"..."D" = unlocked)
+;	yy = year (as broadcast)
+;	ddd = day of year
+;	hh:mm:ss.fff = hours, minutes, seconds, milliseconds;
+;	note: alarm condition is indicated by other than " " at A, which
+;		occurs during initial synchronization and when received
+;		signal is lost for about ten hours; unlock condition is
+;		indicated by other than " " at Q
+;
+;
+;	example: "   216 15:36:43.640 D"
+;	          AQ D   T
+;
+; TrueTime 468-DC Satellite Synchronized Clock
+;
+; <cr><lf><^a>ddd:hh:mm:ssq<cr>
+;             D   T       QC
+;	poll: none; offsets: T = 4, D = 0, A = 12, Q = 12
+;	hh:mm:ss = hours, minutes, seconds
+;	q = quality/alarm indicator (<sp> = locked, "?" = alarm)
+;	note: alarm condition is indicated by "?" at A, which
+;		occurs during initial synchronization and when received
+;		signal is lost for an extended period; unlock condition
+;		is indicated by other than " " at Q
+;
+;	example: "216:15:36:43 "
+;	          D   T       Q 
+;
+; Heath GC-1000 Most Accurate Clock (WWV/H)
+;
+; "<cr>hh:mm:ss.f     dd/mm/yr<cr>"
+;  C   T        A     D
+; 	poll: none; offsets: T = 0, D = 15, A = 9, Q = none
+;	hh:mm:ss.f = hours, minutes, seconds
+;	f = deciseconds ("?" when out of spec)
+;	dd/mm/yr = day, month, year
+;	note: 0?:??:??.? is displayed before synch is first established
+;		and hh:mm:ss.? once synch is established and then lost
+;		again for about a day
+;
+;	example: "15:36:43.6     04/08/91"
+;	          T        A     D
+;
+; PST/Traconex 1020 Time Source (WWV/H)
+;
+; "ahh:mm:ss.fffs<cr><sp>yy/dd/mm/ddd<cr><sp>frdzycchhSSFTttttuuxx<cr>"
+;   T            C                D                   A   Q
+;	poll: "QTQDQM"; offsets: T = 1, D = 24, Q = 41, A = 37
+;	hh:mm:ss.fff = hours, minutes, seconds, milliseconds
+;	a = AM/PM indicator (<sp> for 24-hour mode)
+;	yy = year (from internal switches)
+;	dd/mm/ddd = day of month, month, day of year
+;	s = daylight-saving indicator (<sp> for 24-hour mode)
+;	f = frequency enable (O = all frequencies enabled)
+;	r = baud rate (3 = 1200, 6 = 9600)
+;	d = features indicator (@ = month/day display enabled)
+;	z = time zone (0 = UTC)
+;	y = year (5 = 91)
+;	cc = WWV propagation delay (52 = 22 ms)
+;	hh = WWVH propagation delay (81 = 33 ms)
+;	SS = status (80 or 82 = operating correctly)
+;	F = current receive frequency (4 = 15 MHz)
+;	T = transmitter (C = WWV, H = WWVH)
+;	tttt = time since last update (0000 = minutes)
+;	uu = flush character (03 = ^c)
+;	xx = 94 (unknown)
+;	note: alarm condition is indicated by other than "8" at A, which
+;		occurs during initial synchronization and when received
+;		signal is lost for an extended period; unlock condition
+;		is indicated by other than "0000" in the tttt subfield
+;		at Q
+;
+;	example: " 15:36:43.640  91/08/04/216 O3@055281824C00000394"
+;	           T                      D            A   Q
+;
+; Option bits
+; xlpbit	ip loopback
+; trkbit	disable clock tracking
+;
+; Conditional assembly switches
+;
+.IIF NDF,CS.CLK CS.CLK == 0	;0: no clock, 1: clock
+.IIF NDF,CS.HLO CS.HLO == 1	;0: no hello messages, 1: hello messages
+.IIF NDF,CS.IMP CS.IMP == 1	;0: no icmp messages, 1: icmp messages
+.IIF NDF,CS.RSM CS.RSM == 1	;0: no reassembly, 1: reassembly
+.IIF NDF,CS.SRT CS.SRT == 1	;0: no source route, 1: source route
+;
+; External symbols
+;
+	.GLOBL	$TCP,$RTP	;protocol module routines
+	.GLOBL	DATSUM,TCPSUM	;checksum functions
+	.GLOBL	GATE,ADRMAP,NETCHK ;routing functions
+	.GLOBL	$NETID,$CLKID,$LOCAD,$GATPT,$HOSAD,GATVPT ;routing tables
+	.GLOBL	$CKHID,$IPHID	;state variables
+	.GLOBL	$ONLIN,$ROUTE	;event synchronization flags
+	.GLOBL	$TRNET,$RTCHG	;trace variables
+	.GLOBL	HOSPAR		;host process par area
+;
+; Entry symbols
+;
+	.GLOBL	$SGUSE		;signal user process
+	.GLOBL	INPPAT		;process control vector
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.PSA,.IPD,.PAT,.TRDEF ;dcnlib definitions
+	.MCALL	.SETV,.FPKT,.GCLK,.WIND,.TRAP,.BOOT,.GPSA ;dcnlib macros
+	.MCALL	$DFTCB,$DFIH,$DFGH,$DFTH,$DFUH ;moslib definitions
+	.MCALL	$DFTIM,$DFSIG,$DFTBL
+	.MCALL	$SGNLI,$SGNLT,$WAITS ;moslib macros
+	.COM			;define common data
+	.CHR			;define ascii character codes (for clock)
+	.PSA			;define process storage areas
+	.IPD			;define internet process storage areas
+	.TRDEF			;define trap codes
+	$DFIH			;define internet header
+	$DFGH			;define icmp header
+	$DFTH			;define tcp header
+	$DFUH			;define udp header
+	$DFTCB			;define ccb (control block)
+	$DFTIM			;define timer values
+	$DFSIG			;define interprocess signals
+	$DFTBL			;define host/gateway table formats
+;
+; Module definitions
+;
+ECHPRT	=	7.*400		;internet echo port
+DBGCMD	=	001		;xnet debug command code
+TS.NBS	=	30.		;clock polling interval (sec)
+;
+; Option bits (paropt)
+;
+XLPBIT	=	020000		;loop all ip datagrams
+ERMBIT	=	000200		;suppress icmp error messages
+DLMBIT	=	000040		;enable icmp unreachable messages
+LEPMSK	=	000030		;leap indicator mask
+CLKMSK	=	000007		;clock mask
+;
+; Process save area extension (inp)
+;
+.	=	TCPBGN
+SPWDAT:	.BLKW	3		;universal server queue
+NBSTSP:	.BLKW	3		;local-clock offset
+NBSCNT:	.BLKB	1		;clock poll counter
+	.EVEN
+	.IF	NE,CS.RSM	;include for reassembly
+FR.FST	=	100000		;(ph.lnk+2) first fragment of datagram
+FRGPTR:	.BLKW	1		;beginning of fragment list
+FRGOFS:	.BLKW	1		;current fragment offset
+	.ENDC
+	.IF	NE,CS.CLK	;include for radio timecode receiver
+NBSPAR:	.BLKW	1		;descriptor block pointer
+NBSCLK:	.BLKW	2		;on-time offset
+NBSEST:	.BLKW	1		;dispersion
+NBSPOL:	.BLKW	1		;poll pointer
+NBSMSG:	.BLKW	1		;timecode pointer
+NBSCNB:	.BLKB	1		;timecode count
+NBSFLG:	.BLKB	1		;state
+NBSCSX:	.BLKB	1		;status
+	.EVEN
+	.ENDC
+	.BLKW	REGEND/2+40	;process stack
+TCPEND	=	.		;end of psa extension
+	.IF	NE,CS.CLK	;include for nbs clock
+;
+; Clock descriptor block
+;
+.	=	0
+NB.TIM:	.BLKW	1		;time offset
+NB.DAT:	.BLKW	1		;date offset
+NB.OFS:	.BLKW	1		;checkout routine address
+NB.EST:	.BLKW	1		;base dispersion
+NB.TYP:	.BLKW	1		;clock type
+NB.STA:	.BLKB	1		;initial state
+NB.CNB:	.BLKB	1		;timecode length
+NB.FMT:	.BLKB	1		;timecode format (0 = ddd, 1 = dd/mm)
+NB.POL	=	.		;beginning of poll string
+;
+; Assembly parameters for nbs clock routines
+;
+MAXLEN	=	50.		;max size timecode buffer
+INTENB	=	000100		;interrupt enable
+INI	=	2		;initialize emt
+SIO	=	3		;start clock poll emt
+RINT	=	4		;receive interrupt
+XINT	=	5		;transmit interrupt
+;
+; Dlv11/dl11 device register block
+;
+.	=	0
+INPCSR:	.BLKW	1		;input status register
+INPBUF:	.BLKW	1		;input buffer register
+OUTCSR:	.BLKW	1		;output status register
+OUTBUF:	.BLKW	1		;output buffer register
+	.PAGE
+	.SBTTL	Process clock update
+;
+; Procedure segment
+;
+; Supervisor-state procedure
+; Dsects: r2 = dev, r3 = par, r4 = reg, r5 = psa
+;
+	.PSECT	$KERI,RO,I
+;
+; This section contains the interrupt-processing routines for the nbs
+; clock.
+;
+; Initialize clock
+;
+CLKINI:	MOV	R0,-(SP)	;allocate interrupt vectors
+	MOV	#RINT+EXTBAS,R1
+	.SETV
+	MOV	(SP)+,R0
+	ADD	#4,R0
+	MOV	#XINT+EXTBAS,R1
+	.SETV
+	RTS	PC
+;
+; Poll clock
+;
+CLKSIO:	TST	HOSPAR+PAROPT	;has leap just occured
+	BPL	1$		;branch if no
+	BIC	#100000,HOSPAR+PAROPT ;yes. kill leap bits
+	BIC	#LEPMSK,PAROPT(R3)
+1$:	ADD	#1,PARNBP+2(R3)	;account for poll messages
+	ADC	PARNBP(R3)
+	INC	PARLST(R3)
+	MOVB	NBSCSX(R5),PARVLF(R3) ;save for clockwatchers
+	CMPB	NBSCSX(R5),#1	;has previous poll been processed
+	BNE	2$		;branch if yes
+	INC	PARNBR(R3)	;no. account for no reply
+2$:	MOVB	#1,NBSCSX(R5)	;(1) no reply
+	MOV	#PARNBM,NBSMSG(R5)
+	ADD	R3,NBSMSG(R5)
+	MOV	PAROPT(R3),R1	;set clock control block pointer
+	BIC	#^C<CLKMSK>,R1
+	ASL	R1
+	MOV	CLKTAB(R1),R1
+	MOV	R1,NBSPAR(R5)
+	MOVB	NB.CNB(R1),NBSCNB(R5) ;set reply string length
+	MOVB	NB.STA(R1),NBSFLG(R5) ;set initial state and poll string
+	BEQ	3$		;branch if clock disabled
+	ADD	#NB.POL,R1
+	MOV	R1,NBSPOL(R5) 
+	BIS	#INTENB,INPCSR(R2) ;enable interrupts
+	MOV	#INTENB,OUTCSR(R2)
+3$:	RTS	PC
+;
+; Transmit interrupt
+;
+CLKXMT:	MOV	NBSPOL(R5),R1	;fetch poll char
+	MOVB	(R1)+,R0
+	BEQ	1$		;branch if done
+	MOVB	R0,OUTBUF(R2)	;transmit char
+	MOV	R1,NBSPOL(R5)
+	RTS	PC
+;
+1$:	CLR	OUTCSR(R2)	;shut down transmitter
+	RTS	PC
+;
+; Receive interrupt
+;
+CLKREC:	MOVB	INPBUF(R2),R4	;get character
+	BIC	#^C177,R4
+	MOVB	NBSFLG(R5),R0	;branch to state segment
+	ASL	R0
+	MOV	CLKJMP(R0),PC
+;
+; truetime clock
+;
+NBS30:	CMPB	R4,#CR		;state 4. is this first char
+	BNE	NBS00		;branch if no
+	INCB	NBSFLG(R5)	;yes. bump state
+	INCB	NBSCSX(R5)	;(2) bad format
+NBS00:	RTS	PC
+;
+NBS31:	CMPB	R4,#CR		;state 5. is this on-time char
+	BNE	NBS34		;branch if no
+	.GCLK			;yes. use current time
+	MOV	R0,NBSCLK(R5)
+	MOV	R1,NBSCLK+2(R5)
+	DECB	NBSCNB(R5)	;account for this char
+	BR	NBS33
+;
+; spectracom/heath/pst clock
+;
+NBS01:	CMPB	R4,#CR		;state 1. is this on-time char
+	BNE	NBS00		;branch if no
+NBS20:	.GCLK			;yes. use current time
+	MOV	R0,NBSCLK(R5)
+	MOV	R1,NBSCLK+2(R5)
+	INCB	NBSFLG(R5)	;bump state
+	INCB	NBSCSX(R5)	;(2) bad format
+NBS34:	CMP	R4,#040		;strip control chars
+	BLO	1$
+	MOVB	R4,@NBSMSG(R5)	;stash char
+	INC	NBSMSG(R5)
+	DECB	NBSCNB(R5)
+	TSTB	NBSCNB(R5)
+	BEQ	NBS33		;branch if buffer full
+1$:	RTS	PC
+;
+NBS21:	CMPB	R4,#CR		;state 7/8. date/time strings
+	BNE	NBS34
+	MOV	#<' >,R4
+	INCB	NBSFLG(R5)
+	BR	NBS34
+;
+NBS22:	CMPB	R4,#CR		;state 2/9. end string
+	BNE	NBS34
+NBS33:	CLRB	@NBSMSG(R5)	;last char. plant backstop
+	CLRB	NBSFLG(R5)
+	MOV	NBSPAR(R5),R1	;compute dispersion
+	MOV	PARLST(R3),R0
+	ASH	#-1,R0
+	ADD	NB.EST(R1),R0
+	MOV	R0,NBSEST(R5)
+	TSTB	NBSCNB(R5)
+	BNE	1$		;branch if invalid length
+	INCB	NBSCSX(R5)	;(3) no poll
+	RTS	PC
+;
+1$:	INC	PARNBX(R3)	;indicate bad format
+	RTS	PC
+	.ENDC
+	.PAGE
+	.SBTTL	Host table scan and housekeeping chores
+;
+; Process-state procedure
+; Dsects: r3 = par, r5 = psa
+;
+	.PSECT	$SUPI,RO,I
+;
+; This section contains the code to scan and update the host
+; (routing) tables.
+;
+; Initialize host table scan
+;
+INIT:
+
+	.IF	NE,CS.CLK	;include for nbs clock
+	TST	R0		;is this clock process
+	BEQ	1$		;branch if no
+	EMT	INI+EXTBAS	;yes. initialize clock
+1$:
+	.ENDC
+	MOV	R3,R1		;erase connection table
+	ADD	#PARNBS,R1
+	MOVB	PARCNT(R3),R0
+	BEQ	3$
+2$:	CLR	(R1)+
+	CLR	(R1)+
+	DEC	R0
+	BNE	2$
+3$:	MOV	R1,CONLST(R5)	;save backstop
+	JSR	PC,SCAN		;initialize host table
+	MOV	#$NETID,R1	;find internet process hid
+	JSR	PC,ADRMAP	;(note routing tables now mapped)
+	MOVB	HOSPID(R1),$IPHID ;get pid
+	$SGNLT	#TM.INP		;start poll timeout
+;
+; Process net signals
+;
+START:	MOV	R5,R2		;wait for signal
+	ADD	#DASPAR,R2
+	$WAITS	R2
+	MOV	R3,R4
+	ADD	#PARNBS,R4
+	MOVB	SIGNAL(R5),R0	;branch on opcode
+	ASL	R0
+	JMP	@BRATAB(R0)	;branch to process segment
+;
+; Signal 4 - timer countdown
+; R4 = connection table base
+;
+SIGTIM:	JSR	PC,CCBMAP	;map ccb into window
+	BCS	1$		;branch if end of table
+	BEQ	SIGTIM		;branch if null entry
+	JSR	PC,GIZMO	;call protocol module
+	BR	SIGTIM
+;
+1$:	$SGNLT	#TM.INP		;restart poll timeout
+	SUB	#TM.INP,TABTIM(R5) ;is this one-second timeout
+	BGE	4$		;branch if no
+	ADD	#1000.,TABTIM(R5) ;yes. reset for next time
+	JSR	PC,SCAN		;scan host table
+	.IF	NE,CS.RSM	;include for reassembly
+	MOV	R5,R0		;get fragment list pointer
+	ADD	#FRGPTR-PH.LNK,R0
+2$:	MOV	R0,R1		;get next entry
+	CLR	R2
+3$:	MOV	PH.LNK(R1),R0
+	BEQ	4$		;branch if last
+	BIS	R2,PH.LNK+2(R0)	;or flags and save
+	MOV	PH.LNK+2(R0),R2
+	DECB	IH.TTL(R0)	;count down fragment ttl
+	BNE	2$		;branch if living
+	MOV	PH.LNK(R0),PH.LNK(R1) ;dead. give it back
+	INC	PARFTO(R3)	;reassembly error
+	.FPKT
+	BR	3$
+;
+	.ENDC
+4$:	TST	SPWDAT(R5)	;is packet waiting
+	BEQ	START		;branch if no
+	MOV	SPWDAT(R5),MSGDAT(R5) ;yes. retrieve queued packet
+	MOV	SPWDAT+2(R5),MSGIDN(R5)
+	MOVB	SPWDAT+4(R5),RPYPID(R5)
+	MOVB	SPWDAT+5(R5),SIGNAL(R5)
+	MOV	MSGDAT(R5),R1	;set pointers
+	MOV	PH.OFS(R1),R2
+	ADD	R1,R2
+	MOV	R3,R4		;get table pointer
+	ADD	#PARNBS,R4
+	JMP	SEARCH		;a tarzanish leap
+;
+; Signal 5 - open connection/link
+; r4 = connection table base
+;
+SIGOPN:	JSR	PC,CCBMAP	;map ccb into window
+	BCS	SIGINV		;branch if table full
+	BNE	SIGOPN		;branch if not free
+	MOV	#100000,R0	;free. get virtual address
+	BISB	RPYPID(R5),R0
+	MOV	MSGDAT(R5),R1	;set ccb pointer
+	MOV	R1,-(R4)	;initialize connection table entry
+	MOV	R0,-(R4)
+	.WIND
+	MOV	R1,R2		;get ccb address
+	MOV	R4,INPCID(R2)	;save connection id
+	TST	LSOCK(R2)	;is local socket specified
+	BNE	20$		;branch if yes
+	TST	LSOCK+2(R2)
+	BNE	20$		;branch if yes
+	MOV	$NETID,LSOCK(R2) ;no. use local address
+	MOV	$NETID+2,LSOCK+2(R2)
+20$:	TST	LPORT(R2)	;is local port specified
+	BNE	1$		;branch if yes
+	MOVB	USEPID(R2),LPORT(R2) ;no. use user process pid
+1$:	MOV	MAXSIZ(R2),R0	;compute max packet size
+	BEQ	2$		;branch if default
+	CMP	R0,PARMAX(R3)	;enforce upper limit
+	BLOS	3$
+2$:	MOV	PARMAX(R3),R0
+3$:	MOV	R0,MAXSIZ(R2)	
+	MOV	#TM.ITO,RTXTMO(R2) ;store initial retransmission timeout
+	CMP	(R4)+,(R4)+
+	BR	SIG10
+;
+; Signal 1 - output packet
+;
+SIGOUT:	ADD	#1,PARTOP+2(R3)	;log output packets
+	ADC	PARTOP(R3)
+	MOV	MSGIDN(R5),R4	;piddle pointers
+	JSR	PC,CCBMAP	;map ccb into window
+	BEQ	SIGINV		;branch if null entry (error!)
+	DECB	SNDCNT(R2)	;decrement congestion thresholds
+	BR	SIG10
+;
+; Signals 6-7 - call protocol module
+;
+SIGPM:	MOV	MSGIDN(R5),R4	;get ccb pointer
+	JSR	PC,CCBMAP	;map ccb into window
+	BEQ	SIGINV		;branch if null entry (error!)
+SIG10:	MOV	MSGDAT(R5),R1	;retrieve data
+	JSR	PC,GIZMO	;call protocol module
+SIGINV:	JMP	START
+	.PAGE
+	.SBTTL	Process input packet and extract control functions
+;
+; This section contains code to process input packets and route them
+; to the appropriate protocol module. it also contains code to process
+; and generate internet control message protocol (icmp) messages.
+;
+; Signal 0 - process input packet
+; r4 = connection table base
+;
+SIGINP:	MOV	$GATPT,R0	;map foreign host table to window
+	MOV	$GATPT+2,R1
+	.WIND
+	MOV	MSGDAT(R5),R1	;retrieve packet pointer
+	CLR	PH.LNK(R1)
+	.IF	NE,CS.HLO	;include for hello messages
+	.GLOBL	NTIHLO
+	CMPB	IH.PRO(R1),#P.LNP ;is this hello message
+	BNE	1$		;branch if no
+	MOV	R3,-(SP)	;yes. establish pointers
+	MOV	R1,R4
+	MOVB	RPYPID(R5),R1
+	.GPSA
+	MOV	PSAPAR(R1),R3
+	JSR	PC,NTIHLO	;call hello module
+	MOV	(SP)+,R3
+	JSR	PC,DISCRD	;discard packet
+	JMP	START
+;
+1$:
+	.ENDC
+	ADD	#1,PARTOT+2(R3)	;log input pkts
+	ADC	PARTOT(R3)
+	.IF	NE,CS.SRT	;include for source route
+	MOV	#IH.LEN,R2	;point to options area
+2$:	CMP	R2,PH.OFS(R1)	;are more options present
+	BHIS	NOPT		;branch if no
+	ADD	R1,R2		;yes. scan for route options
+	TSTB	@R2		;is this end
+	BEQ	NOPT		;branch if yes
+	CMPB	(R2)+,#1	;no. is this no-op
+	BEQ	3$		;branch if yes
+	CMPB	-(R2),#203	;no. is this loose source route
+	BEQ	4$		;branch if yes
+	CMPB	@R2,#211	;no. is this strict source route
+	BEQ	4$		;branch if yes
+	CLR	R0		;no. advance to next option
+	BISB	1(R2),R0
+	ADD	R0,R2
+3$:	SUB	R1,R2
+	BR	2$
+;
+4$:	MOVB	2(R2),R0	;is route complete
+	CMPB	R0,1(R2)
+	BHIS	NOPT		;branch if yes
+	ADD	R2,R0		;no. point to next address
+	DEC	R0
+	MOVB	@R0,IH.DST(R1)	;update addresses
+	MOVB	$NETID,(R0)+
+	MOVB	@R0,IH.DST+1(R1)
+	MOVB	$NETID+1,(R0)+
+	MOVB	@R0,IH.DST+2(R1)
+	MOVB	$NETID+2,(R0)+
+	MOVB	@R0,IH.DST+3(R1)
+	MOVB	$NETID+3,(R0)+
+	INC	R0
+	SUB	R2,R0		;update route pointer
+	MOVB	R0,2(R2)
+	JSR	PC,RETURN	;forward along route
+	JMP	START
+;
+NOPT:
+	.ENDC
+	MOV	PH.OFS(R1),R2	;get data pointer
+	ADD	R1,R2
+	.IF	NE,CS.IMP	;include for icmp messages
+	CMPB	IH.PRO(R1),#P.IMP ;is this icmp message
+	BNE	GATNOP		;branch if no
+	BIT	#IH.MF+IH.OFF,IH.FRG(R1) ;yes. verify format
+	BNE	1$		;branch if bad
+	CMP	PH.LNG(R1),#GH.HDR
+	BHIS	2$		;branch if ok
+1$:	INC	PARIPF(R3)	;bad format
+	BR	3$
+;
+2$:	JSR	PC,DATSUM	;verify checksum
+	BEQ	4$		;branch if ok
+	INC	PARIPX(R3)	;bad checksum
+3$:	JSR	PC,DISCRD
+	JMP	START
+;
+; Icmp message. decode type and process.
+;
+4$:	CLR	R0		;decode type field
+	BISB	GH.TYP(R2),R0
+	CMP	R0,#GC.MAX
+	BHI	GATNOP		;branch if out of range
+	ASL	R0
+	JMP	@GATTAB(R0)	;branch to process segment
+;
+GATNOP:	JMP	TCPPKT		;pass on to protocol module (maybe)
+;
+GATAMF:	MOV	#GC.AMR,@R2	;gh.typ, gh.cod. address mask request
+	CMP	PH.LNG(R1),#GH.HDR+4 ;is packet long enough
+	BLO	GAT31		;branch if no
+	MOV	$NETID+4,GH.HDR(R2) ;yes. insert local mask
+	COM	GH.HDR(R2)
+	MOV	$NETID+6,GH.HDR+2(R2)
+	COM	GH.HDR+2(R2)
+	MOV	$NETID,IH.DST(R1) ;use sensible address for reply
+	MOV	$NETID+2,IH.DST+2(R1)
+	BR	GAT30
+;
+GATECH:	MOV	#GC.RPY,@R2	;gh.typ, gh.cod. echo request
+	BR	GAT30
+;
+GATTSP:	MOV	#GC.TSR,@R2	;gh.typ, gh.cod. timestamp request
+	CMP	PH.LNG(R1),#GH.LEN ;is packet long enough
+	BLO	GAT31		;branch if no
+	MOV	R2,R0		;yes. copy timestamps
+	ADD	#GH.REC,R0
+	MOV	PH.TIM(R1),@R0	;gh.rec
+	SWAB	(R0)+
+	MOV	PH.TIM+2(R1),@R0
+	SWAB	(R0)+
+	MOV	PH.TIM(R1),@R0	;gh.xmt
+	SWAB	(R0)+
+	MOV	PH.TIM+2(R1),@R0
+	SWAB	(R0)+
+GAT30:	CLR	GH.CHK(R2)	;recompute checksum
+	JSR	PC,DATSUM
+	MOV	R0,GH.CHK(R2)
+	JSR	PC,ECHO		;back whence it came
+	JMP	START
+;
+GAT31:	INC	PARIPF(R3)	;bad format
+	JSR	PC,DISCRD	;discard the thing
+	JMP	START
+;
+GATSQN:	MOVB	#SG.CSQ,SIGNAL(R5) ;source quench
+	BR	GAT15
+;
+GATTOT:	MOVB	GH.COD(R2),R0	;time exceeded
+	CMP	R0,#TE.MAX	;is code valid
+	BHI	GAT12		;branch if no
+	ADD	#ER.TIM,R0	;yes. adjust value
+	BR	GAT14
+;
+GATPAR:	MOV	#ER.PAR,R0	;parameter error
+	BR	GAT14
+;
+GATDNR:	MOVB	GH.COD(R2),R0	;destination unreachable
+	CMP	R0,#DN.MAX	;is code valid
+	BLOS	GAT13		;branch if yes
+GAT12:	MOV	#ER.USP-ER.UNR,R0 ;no. unspecified error
+GAT13:	ADD	#ER.UNR,R0
+GAT14:	MOVB	#SG.CDU,SIGNAL(R5)
+GAT15:	MOV	R0,-(SP)	;save code for later
+	MOV	R1,R0
+	MOV	#GH.HDR-BUFLDR,R1 ;get offset to ip header
+	ADD	R2,R1		;adjust pointers to embedded ip header
+	CMPB	GH.TYP(R2),#GC.DNR ;is icmp unreachable trap suppressed
+	BNE	20$		;branch if no
+	BIT	#DLMBIT,PAROPT(R3)
+	BNE	1$		;branch if yes
+20$:	BIT	#ERMBIT,PAROPT(R3)
+	BNE	1$		;branch if icmp trap suppressed
+	.TRAP	#TR.ERR,GH.TYP(R2),IH.DST(R1),IH.DST+2(R1),IH.SRC(R0),IH.SRC+2(R0)
+1$:	MOVB	IH.VER(R1),R0	;is format correct
+	BIC	#^C<17*20>,R0
+	CMP	R0,#P.IP*20
+	BNE	3$		;branch if no
+	MOVB	IH.VER(R1),R0
+	ASL	R0
+	ASL	R0
+	BIC	#^C74,R0
+	CMP	R0,#IH.LEN-BUFLDR
+	BLO	3$		;branch if no
+	ADD	R1,R0
+	ADD	#BUFLDR,R0
+	.IF	NE,CS.SRT	;include for source route
+	MOV	R0,-(SP)
+	MOV	R1,R2		;point to options area
+	ADD	#IH.LEN,R2
+2$:	CMP	R2,@SP		;is scan complete
+	BHIS	5$		;branch if yes
+	TSTB	@R2
+	BEQ	5$		;branch if yes
+	CMPB	(R2)+,#1	;no. is this no-op
+	BEQ	2$		;branch if yes
+	CMPB	-(R2),#203	;no. is this loose source route
+	BEQ	4$		;branch if yes
+	CMPB	@R2,#211	;no. is this strict source route
+	BEQ	4$		;branch if yes
+	CLR	R0		;no. advance to next option
+	BISB	1(R2),R0
+	ADD	R0,R2
+	BR	2$
+;
+3$:	BR	9$		;invalid format
+;
+4$:	MOVB	1(R2),R0	;is route complete
+	CMPB	R0,2(R2)
+	BLOS	5$		;branch if yes
+	ADD	R0,R2		;no. restore final destination
+	MOVB	-(R2),IH.DST+3(R1)
+	MOVB	-(R2),IH.DST+2(R1)
+	MOVB	-(R2),IH.DST+1(R1)
+	MOVB	-(R2),IH.DST(R1)
+5$:	MOV	(SP)+,R0
+	.ENDC
+;
+; Icmp message received. try to match connection and send signal to
+; culprit. If match fails, simply discard the packet.
+;
+6$:	JSR	PC,CCBMAP	;map ccb into window
+	BCS	9$		;branch if not found
+	BEQ	6$		;branch if null entry
+	CMPB	IH.PRO(R1),PROTCL(R2) ;does protocol match
+	BNE	6$		;branch if no
+	CMPB	IH.PRO(R1),#P.UDP ;yes. is it udp
+	BEQ	7$		;branch if yes
+	CMP	IH.SRC(R1),LSOCK(R2) ;no. do addresses match
+	BNE	6$		;branch if no
+	CMP	IH.SRC+2(R1),LSOCK+2(R2)
+	BNE	6$		;branch if no
+	CMP	IH.DST(R1),FSOCK(R2)
+	BNE	6$		;branch if no
+	CMP	IH.DST+2(R1),FSOCK+2(R2)
+	BNE	6$		;branch if no
+	CMPB	IH.PRO(R1),#P.TCP ;yes. does protocol have ports
+	BNE	8$		;branch if no
+7$:	BIT	#IH.OFF,IH.FRG(R1) ;yes. do ports match
+	BNE	6$		;branch if no
+	CMP	@R0,LPORT(R2)
+	BNE	6$		;branch if no
+	BITB	#OP.UDP,CCBFLG(R2)
+	BNE	8$		;branch if yes
+	CMP	2(R0),FPORT(R2)
+	BNE	6$		;branch if no
+;
+; Match found. pass net signal to protocol module.
+;
+8$:	INC	PARSIG(R3)	;icmp message received
+	MOV	(SP)+,R1	;get code
+	JSR	PC,GIZMO
+	BR	10$
+;
+9$:	INC	PARECM(R3)	;unreachable
+	TST	(SP)+		;discard code
+10$:	JSR	PC,DISCRD	;discard packet
+	JMP	START
+	.ENDC
+	.PAGE
+	.SBTTL	Match packet to connection and forward
+;
+; This section routes ordinary input packets to the appropriate
+; protocol module. if the packet matches a connection it is forwarded
+; to either tcp or rtp, depending on the protocol field. if the
+; packet matches no connection an attempt is made to connect to
+; a universal server, if one is available. if not it is returned
+; as an icmp error message.
+;
+; Ordinary (non-icmp) packet. fiddle for xnet and echo.
+;
+TCPPKT:	BIT	#XLPBIT,PAROPT(R3) ;is this ip echo process
+	BEQ	2$		;branch if no
+	JSR	PC,ECHO		;yes. mirror up the wall
+	JMP	START
+;
+2$:	BIT	#IH.MF+IH.OFF,IH.FRG(R1) ;is this a fragment
+	BNE	3$		;branch if yes
+	JMP	TCPSRV
+;
+3$:
+	.IF	NE,CS.RSM	;include for reassembly
+	MOV	IH.FRG(R1),R0	;save flags and offset
+	MOV	R0,PH.LNK+2(R1)
+	BIC	#^CIH.MF,PH.LNK+2(R1)
+	ASH	#3,R0
+	MOV	R0,IH.FRG(R1)
+	MOV	R5,R0		;set list pointers
+	ADD	#FRGPTR-PH.LNK,R0
+	MOV	R0,CODE(R5)
+	CLR	FRGOFS(R5)
+4$:	MOV	R0,R2		
+	MOV	PH.LNK(R2),R0	;is the list empty
+	BNE	5$		;branch if no
+	MOV	R1,PH.LNK(R2)	;yes. link and mark as first fragment
+	BIS	#FR.FST,PH.LNK+2(R1)
+	BR	11$
+;
+5$:	MOV	R2,CODE(R5)	;remember beginning of the datagram
+	CMP	IH.ID(R1),IH.ID(R0) ;is this same datagram
+	BNE	4$		;branch if no
+	CMP	IH.SRC(R1),IH.SRC(R0)
+	BNE	4$		;branch if no
+	CMP	IH.SRC+2(R1),IH.SRC+2(R0)
+	BNE	4$		;branch if no
+	CMP	IH.DST(R1),IH.DST(R0)
+	BNE	4$		;branch if no
+	CMP	IH.DST+2(R1),IH.DST+2(R0)
+	BNE	4$		;branch if no
+	CMPB	IH.PRO(R1),IH.PRO(R0)
+	BNE	4$		;branch if no
+	CMP	IH.FRG(R1),IH.FRG(R0) ;yes. determine fragment position
+	BEQ	6$		;branch if duplicate
+	BHI	7$		;branch if after first fragment
+	BIC	#FR.FST,PH.LNK+2(R0) ;first fragment
+	BIS	#FR.FST,PH.LNK+2(R1)
+	BR	8$
+;
+6$:	JSR	PC,DISCRD	;duplicate. discard
+	JMP	START
+;
+; Search for correct position
+;
+7$:	ADD	PH.LNG(R0),FRGOFS(R5) ;update position
+	MOV	R0,R2		;link to next fragment
+	MOV	PH.LNK(R2),R0	;is it end of list
+	BEQ	8$		;branch if yes
+	BIT	#FR.FST,PH.LNK+2(R0)
+	BNE	8$		;branch if yes
+	CMP	IH.FRG(R1),IH.FRG(R0) ;no. determine fragment position
+	BEQ	6$		;branch if duplicate
+	BHI	7$		;branch if after list fragment
+;
+; Link new fragment in list (r1->new, r2->previous, r0->next)
+;
+8$:	ADD	PH.LNG(R1),FRGOFS(R5) ;update position
+	MOV	R1,PH.LNK(R2)	;link this fragment next
+	MOV	R0,PH.LNK(R1)
+9$:	MOV	PH.LNK(R1),R0	;is it end of list
+	BEQ	10$		;branch if yes
+	BIT	#FR.FST,PH.LNK+2(R0)
+	BNE	10$		;branch if yes
+	ADD	PH.LNG(R0),FRGOFS(R5) ;no. update position
+	MOV	R0,R1		;link to next fragment
+	BR	9$
+;
+10$:	BIT	#IH.MF,PH.LNK+2(R1) ;is fragment set complete
+	BNE	11$		;branch if no
+	MOV	PH.LNG(R1),-(SP)
+	ADD	IH.FRG(R1),@SP
+	CMP	FRGOFS(R5),(SP)+
+	BHIS	12$		;branch if yes
+11$:	JSR	PC,REPLY	;no. wait for better times
+	JMP	START
+;
+12$:	MOV	CODE(R5),R2	;unlink fragment set
+	CLR	PH.LNK(R1)
+	MOV	PH.LNK(R2),R1
+	MOV	R0,PH.LNK(R2)
+	MOV	R1,MSGDAT(R5)
+	BIS	#IH.MF,IH.FRG(R1) ;mark first fragment
+	MOV	PH.OFS(R1),R2
+	ADD	R1,R2
+	.IFF			;include for no reassembly
+	INC	PARFTO(R3)	;reassembly error
+	MOV	#DN.FRG*400+GC.DNR,CODE(R5) ;fragmentation error
+	JSR	PC,FRGERR
+	JMP	START
+	.ENDC
+;
+; Process reassembled datagram
+;
+TCPSRV:	CMPB	IH.PRO(R1),#P.XNP ;is this xnet knocking
+	BNE	1$		;branch if no
+	CMPB	6(R2),#DBGCMD	;yes. is it debug command
+	BNE	1$		;branch if no
+	.BOOT			;yes. turn off the lights
+;
+1$:	CMPB	IH.PRO(R1),#P.UDP ;is this user datagram protocol
+	BNE	2$		;branch if no
+	CMP	PH.LNG(R1),#UH.LEN ;yes. verify format and checksum
+	BLO	3$		;branch if bad format
+	TST	UH.CHK(R2)
+	BEQ	7$		;branch if no checksum
+	JSR	PC,TCPSUM
+	BNE	5$		;branch if bad checksum
+	BR	7$
+;
+2$:	CMPB	IH.PRO(R1),#P.TCP ;is this transmission control protocol
+	BNE	SEARCH		;branch if no
+	CMP	PH.LNG(R1),#TH.LEN ;yes. verify format
+	BHIS	4$		;branch if format ok
+3$:	INC	PARIPF(R3)	;bad format
+	BR	6$
+;
+4$:	TST	TH.CHK(R2)	;verify checksum
+	BEQ	7$		;branch if no checksum
+	JSR	PC,TCPSUM
+	BEQ	7$		;branch if checksum ok
+5$:	INC	PARIPX(R3)	;bad checksum
+6$:	JSR	PC,DISCRD
+	JMP	START
+;
+7$:	CMP	2(R2),#ECHPRT	;tcp/udp. is this echo port
+	BNE	SEARCH		;branch if no
+	JSR	PC,ECHO		;yes. echo ensemble
+	JMP	START
+;
+; Search connection tables for match
+;
+SEARCH:	CLR	SRVPTR(R5)	;initialize for protocol server
+	MOV	R2,R0
+	MOV	#DN.PRO*400+GC.DNR,CODE(R5)
+1$:	JSR	PC,CCBMAP	;map ccb into window
+	BCS	SERVER		;branch if not found
+	BEQ	1$		;branch if null entry
+	CMPB	IH.PRO(R1),PROTCL(R2) ;does protocol match
+	BNE	1$		;branch if no
+	BIT	#ST.USP,STATE(R2) ;yes. is server listening
+	BEQ	3$		;branch if no
+	BITB	#OP.PRT,CCBFLG(R2)
+	BEQ	2$		;branch if yes
+	CMP	2(R0),LPORT(R2)
+	BNE	1$		;branch if no
+2$:	MOV	R4,SRVPTR(R5)	;yes. remember the fact
+	BR	1$
+;
+3$:	CMPB	IH.PRO(R1),#P.UDP ;is this udp
+	BEQ	4$		;branch if yes
+	CMP	IH.DST(R1),LSOCK(R2) ;no. do addresses match
+	BNE	1$		;branch if no
+	CMP	IH.DST+2(R1),LSOCK+2(R2)
+	BNE	1$		;branch if no
+	CMP	IH.SRC(R1),FSOCK(R2)
+	BNE	1$		;branch if no
+	CMP	IH.SRC+2(R1),FSOCK+2(R2)
+	BNE	1$		;branch if no
+	CMPB	IH.PRO(R1),#P.TCP ;yes. is this tcp
+	BNE	5$		;branch if no
+4$:	MOV	#DN.POR*400+GC.DNR,CODE(R5) ;yes. do ports match
+	CMP	2(R0),LPORT(R2)
+	BNE	1$		;branch if no
+	BITB	#OP.UDP,CCBFLG(R2)
+	BNE	5$		;branch if yes
+	CMP	@R0,FPORT(R2)
+	BNE	1$		;branch if no
+5$:	JMP	FOUND
+;
+; Packet does not match any connection. try to connect to universal
+; server, if one available. otherwise, return icmp error message.
+;
+SERVER:	MOV	SRVPTR(R5),R4	;not found. is protocol server available
+	BNE	MATCH		;branch if yes
+	CMPB	IH.PRO(R1),#P.TCP ;no. is this tcp segment
+	BNE	2$		;branch if no
+	CMP	MSGDAT(R5),SPWDAT(R5) ;yes. is this queued segment
+	BNE	1$		;branch if no
+	DECB	IH.TTL(R1)	;yes. live and let die
+	BNE	5$
+	CLR	SPWDAT(R5)
+	BR	3$
+;
+1$:	TST	SPWDAT(R5)	;is segment already waiting
+	BNE	3$		;branch if yes (discard for stupid vaxen)
+	MOV	MSGDAT(R5),SPWDAT(R5) ;no. queue it for later
+	MOV	MSGIDN(R5),SPWDAT+2(R5)
+	MOVB	RPYPID(R5),SPWDAT+4(R5)
+	MOVB	SIGNAL(R5),SPWDAT+5(R5)
+	MOVB	#TM.ITO/TM.INP,IH.TTL(R1)
+	.TRAP	#TR.SPW,IH.SRC(R1),IH.SRC+2(R1),2(R0) ;ring doorbell
+	BR	5$
+;	
+2$:	JSR	PC,FRGERR	;send error message
+	BR	4$
+;
+3$:	JSR	PC,DISCRD	;discard packet
+4$:	INC	PARECM(R3)	;unreachable
+5$:	JMP	START
+;
+; Universal server found. map ccb into window and store addresses
+; and ports.
+;
+MATCH:	CMP	-(R4),-(R4)	;map ccb into window
+	JSR	PC,CCBMAP
+	MOV	IH.SRC(R1),FSOCK(R2) ;found. save calling address
+	MOV	IH.SRC+2(R1),FSOCK+2(R2)
+	MOV	IH.DST(R1),LSOCK(R2) ;save called address
+	MOV	IH.DST+2(R1),LSOCK+2(R2)
+	MOV	@R0,FPORT(R2)	;save first two data (port) words
+	MOV	2(R0),LPORT(R2)
+;
+; Connection found. call protocol module.
+;
+FOUND:	MOV	MSGDAT(R5),R1	;get packet pointer
+	MOV	R1,R0
+	CMP	R1,SPWDAT(R5)	;is it queued packet
+	BNE	1$		;branch if no
+	CLR	SPWDAT(R5)	;yes. erase it
+1$:	INCB	SNDCNT(R2)	;increment congestion threshold
+	MOV	PH.LNK(R0),R0
+	BNE	1$
+	JSR	PC,GIZMO	;call protocol module
+	JSR	PC,REPLY
+	JMP	START
+	.PAGE
+	.SBTTL	Subroutines
+;
+; Subroutine to echo datagram (all fragments)
+; r1 = packet pointer, r2 = data area pointer (table segment must be mapped)
+;
+ECHO:	CMPB	IH.PRO(R1),#P.TCP ;does protocol have ports
+	BEQ	1$		;branch if yes
+	CMPB	IH.PRO(R1),#P.UDP
+	BNE	2$		;branch if no
+1$:	BIT	#IH.OFF,IH.FRG(R1) ;yes. is this first fragment
+	BNE	2$		;branch if no
+	MOV	@R2,-(SP)	;yes. interchange source/destination ports
+	MOV	2(R2),@R2
+	MOV	(SP)+,2(R2)
+2$:	MOV	IH.SRC(R1),R0	;interchange source/destination addresses
+	MOV	IH.DST(R1),IH.SRC(R1)
+	MOV	R0,IH.DST(R1)
+	MOV	IH.SRC+2(R1),R0
+	MOV	IH.DST+2(R1),IH.SRC+2(R1)
+	MOV	R0,IH.DST+2(R1)
+	JSR	PC,RETURN	;forward along route
+	MOV	MSGDAT(R5),R1	;is there another fragment
+	BNE	2$		;branch if yes (cant have ports)
+	INC	PARECH(R3)	;returned
+	RTS	PC
+;
+; Subroutine to forward fragment
+; r1 = packet pointer (table segment must be mapped)
+;
+RETURN:	JSR	PC,GATE		;can we get this thing back
+	BCS	1$		;branch if no
+	MOV	PH.LNK(R1),MSGDAT(R5) ;save next fragment pointer
+	$SGNLI	R0,#SG.INP,RPYPID(R5),MSGIDN(R5),R1,IH.ID(R1)
+	RTS	PC
+;
+1$:	INC	PARECM(R3)	;unreachable
+	MOV	#DN.SRF*400+GC.DNR,CODE(R5) ;source route failed
+;
+; Subroutine to send ICMP message to source and discard remaining fragments
+;
+FRGERR:	MOV	$GATPT,R0	;map foreign host table to window
+	MOV	$GATPT+2,R1
+	.WIND
+	.IF	NE,CS.IMP	;include for icmp messages
+	MOV	MSGDAT(R5),R4	;restore packet pointer
+	MOV	R4,R1		;is this broadcast
+	ADD	#IH.DST,R1
+	JSR	PC,NETCHK
+	BEQ	DISCRD		;branch if yes
+	MOV	CODE(R5),R0	;no. send icmp message
+	.GLOBL	IMPSND
+	JSR	PC,IMPSND
+	BCS	DISCRD		;branch if unable
+	INC	PARIPR(R3)	;icmp messages sent
+	.ENDC
+;
+; Subroutine to discard remaining fragments
+;
+DISCRD:	MOV	MSGDAT(R5),R0	;is this last fragment
+	BEQ	REPLY		;branch if yes
+	MOV	PH.LNK(R0),MSGDAT(R5) ;no. discard it
+	.FPKT
+	BR	DISCRD
+;
+; Subroutine to reply to local input message
+;
+REPLY:	MOV	MSGIDN(R5),R1	;is reply expected
+	BEQ	1$		;branch if no
+	$SGNLI	RPYPID(R5),#SG.OUT,PARPID(R3),R1,#0 ;yes. reply
+1$:	RTS	PC
+;
+; Subroutine to call protocol module
+; r1 = argument, r2 = ccb pointer, r4 = connection id (updated)
+;
+GIZMO:	MOVB	SIGNAL(R5),R0	;get signal opcode
+	CMPB	PROTCL(R2),#P.TCP ;does this belong to tcp
+	BNE	30$		;branch if no
+	JSR	PC,$TCP
+	BR	31$
+;
+30$:	JSR	PC,$RTP		;assume rtp
+31$:	TST	R0		;is connection dry
+	BNE	1$		;branch if no
+	CLR	INPCID(R2)	;close and lock the door
+	CLR	-(R4)
+	CLR	-(R4)
+1$:	RTS	PC
+;
+; $sguse (sig) send signal to user process
+; R0 = code, r1 = data, r5 = ccb pointer
+;
+$SGUSE:	$SGNLI	USEPID(R5),R0,INPPID(R5),USECID(R5),R1,#0,CCBAST(R5)
+	RTS	PC
+;
+; Subroutine to map ccb into window
+; R4 = connection id, returns r2 = ccb pointer, r4 updated
+;
+CCBMAP:	MOV	R0,-(SP)	;save useful things
+	MOV	R1,-(SP)
+	CLR	R2		;preset return
+	CMP	R4,CONLST(R5)	;is this past end of table
+	BHIS	3$		;branch if yes
+	MOV	(R4)+,R0	;get virtual address and port
+	MOV	(R4)+,R1
+	BEQ	2$		;branch if null entry
+	.WIND			;map into virtual window
+	MOV	R4,R0		;is ccb valid
+	CMP	-(R0),-(R0)
+	CMP	R0,INPCID(R1)
+	BNE	2$		;branch if no
+	MOV	R1,R2		;yes. return ccb pointer
+2$:	CLC
+	BR	4$
+;
+3$:	SEC			;set out of bounds exit
+4$:	MOV	(SP)+,R1
+	MOV	(SP)+,R0
+	BIT	R2,R2		;set condition code
+	RTS	PC
+;
+; Subroutine to scan host table
+;
+SCAN:	MOV	R2,-(SP)	;save
+	MOV	$GATPT,R0	;map foreign host table to window
+	MOV	$GATPT+2,R1
+	.WIND
+	CLR	R2		;initialize host table pointers
+	MOV	#$HOSAD,R4
+1$:	CMPB	R2,$HOSAD-2	;is table scan done
+	BHIS	2$		;branch if yes
+	CMPB	R2,PARHID(R3)	;no. is this one us
+	BNE	3$		;branch if no
+	JSR	PC,UPDATE	;yes. update host table entry
+;
+; Count down host table entries
+;
+3$:	CMPB	PARPID(R3),$IPHID ;is host table scan enabled
+	BNE	10$		;branch if no
+	TSTB	HOSTTL(R4)	;yes. is host down
+	BEQ	10$		;branch if yes
+	DECB	HOSTTL(R4)	;no. is ttl exceeded
+	BNE	10$		;branch if no
+	CMP	HOSDLY(R4),#TM.TTL ;yes. is host up
+	BLO	11$		;branch if yes
+	MOV	#TM.TTL,HOSDLY(R4) ;no. set down
+	BR	12$
+;
+11$:	MOVB	#TS.LNK,HOSTTL(R4) ;set hold-down
+	BIS	#100000,HOSDLY(R4)
+12$:	BISB	$ONLIN,$ROUTE	;flag for update
+10$:	BIT	#TRKBIT,PAROPT(R3) ;is clock track disabled
+	BNE	13$		;branch if yes
+	MOV	R2,-(SP)	;no. search clock list
+	MOV	R3,-(SP)
+	MOV	#$CLKID,R2
+	MOVB	(R2)+,R0
+	BEQ	9$		;branch if empty
+7$:	MOV	R0,R3		;get old host table pointer
+	MUL	#HOSLEN,R3
+	ADD	PC,R3
+	ADD	#$HOSAD-.,R3
+	MOVB	(R2)+,R1	;is this end of list
+	BEQ	8$		;branch if yes
+	MUL	#HOSLEN,R1	;no. get new host table pointer
+	ADD	PC,R1
+	ADD	#$HOSAD-.,R1
+	CMP	HOSDLY(R3),HOSDLY(R1) ;is old delay smallest
+	BLOS	7$		;branch if yes
+	MOVB	-1(R2),R0	;no. use new delay
+	BR	7$
+;
+8$:	CMP	HOSDLY(R3),#TM.TTL ;is anything reachable
+	BHIS	9$		;branch if no
+	MOVB	R0,$CKHID	;yes. save clock hid
+9$:	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+13$:	INC	R2		;advance to next entry
+	ADD	#HOSLEN,R4
+	BR	1$
+;
+2$:	MOV	(SP)+,R2	;evas
+	RTS	PC		;done here
+;
+; Subroutine to update host table entry
+; R2 = hid, r3 = par pointer, r4 = host table pointer, r5 = psa pointer
+;
+UPDATE:	.IF	NE,CS.CLK	;include for nbs clock
+	DECB	NBSCNT(R5)	;is it time for poll
+	BGT	2$		;branch if no
+	MOVB	#TS.NBS,NBSCNT(R5) ;yes. do something interesting
+	TST	PARVEC(R3)	;is this clock process
+	BEQ	6$		;branch if no
+	EMT	SIO+EXTBAS	;start poll
+	RTS	PC
+;
+; Determine local host delay and offset
+;
+2$:	TST	PARVEC(R3)	;is this clock process
+	BEQ	5$		;branch if no
+	CMPB	NBSCSX(R5),#3	;yes. is timecode ready
+	BNE	5$		;branch if no
+	MOV	NBSPAR(R5),R1	;yes. point to descriptor block
+	INCB	NBSCSX(R5)	;(4) alarm
+	CCC			;dive into checkout routine
+	JSR	PC,@NB.OFS(R1)
+	BCS	4$		;branch if alarm
+	INCB	NBSCSX(R5)	;(5) bad date
+	MOVB	NB.FMT(R1),R0	;(format)
+	MOV	NB.DAT(R1),R1	;(date offset)
+	ADD	R3,R1
+	.GLOBL	NBSDAT
+	JSR	PC,NBSDAT
+	BCS	4$		;branch if error
+	MOV	R0,NBSTSP(R5)
+	MOV	PAROPT(R3),R0	;insert date modifiers
+	BIC	#^C<LEPMSK>,R0
+	ASH	#3,R0
+	BISB	R0,NBSTSP+1(R5)
+	INCB	NBSCSX(R5)	;(6) bad time
+	MOV	NBSPAR(R5),R1	;convert time-of-day to binary format
+	MOV	NB.TIM(R1),R1	;(time offset)
+	ADD	R3,R1
+	.GLOBL	NBSTIM
+	JSR	PC,NBSTIM
+	BCS	4$		;branch if error
+	SUB	NBSCLK+2(R5),R1	;no. compute offset
+	SBC	R0
+	SUB	NBSCLK(R5),R0
+	MOV	R0,NBSTSP+2(R5)
+	MOV	R1,NBSTSP+4(R5)
+	MOV	R1,HOSOFS(R4)	;update host table
+	MOV	NBSEST(R5),HOSDLY(R4)
+	CLRB	NBSCSX(R5)	;(0) ok
+	BIS	#CLKBIT,PAROPT(R3) ;flash clock valid
+	CMPB	R2,$CKHID	;is local clock locked on this proc
+	BNE	10$		;branch if no
+	MOV	NBSPAR(R5),R1	;yes. wind the clock
+	.TRAP	#TR.CLK,NB.TYP(R1),NBSEST(R5),NBSTSP(R5),NBSTSP+2(R5),NBSTSP+4(R5)
+	BR	10$
+;
+4$:	INC	PARNBD(R3)	;indicate bad data
+5$:	RTS	PC
+;
+	.IFF
+	DECB	NBSCNT(R5)	;is it time for poll
+	BGT	12$		;branch if no
+	MOVB	#TS.NBS,NBSCNT(R5) ;yes. do something interesting
+	.ENDC
+6$:	CLR	HOSOFS(R4)	;no. assume local offset zero
+	CLR	HOSDLY(R4)
+	CMPB	PARPID(R3),$IPHID ;is host table scan enabled
+	BNE	10$		;branch if no
+	MOV	#$LOCAD,R0	;yes. age cache entries
+	JSR	PC,SQUEEZ
+	MOV	GATVPT,R0
+	JSR	PC,SQUEEZ
+10$:	MOVB	PARPID(R3),HOSPID(R4) ;update host table entry
+	MOVB	#TS.NBS*4,HOSTTL(R4)
+	.GCLK
+	MOV	R0,HOSTIM(R4)
+	MOV	R1,HOSTIM+2(R4)
+12$:	RTS	PC
+;
+; Subroutine to age cache entries
+; r0 = table pointer, r1, r2 scratch
+;
+SQUEEZ:	MOV	R0,-(SP)	;save
+1$:	BITB	#GT.CAC,GATFLG(R0) ;is this an active cache entry
+	BEQ	7$		;branch if no
+	TSTB	GATTTL(R0)
+	BEQ	7$		;branch if no
+	CMPB	GATTTL(R0),#1	;yes. is it ripe
+	BHI	6$		;branch if no
+	CLR	R1		;yes. should hid be released
+	BISB	GATHID(R0),R1
+	CMPB	R1,$HOSAD-1
+	BLO	6$		;branch if no
+	BITB	#GT.EGP,GATFLG(R0)
+	BNE	6$		;branch if no
+	INC	$RTCHG		;yes. log route change
+	CMP	GATNET(R0),$TRNET ;is this traced net
+	BNE	2$		;branch if no
+	CMP	GATNET+2(R0),$TRNET+2
+	BNE	2$		;branch if no
+	INC	$RTCHG+2	;yes. log traced route change
+	MOV	R0,-(SP)
+	.TRAP	#TR.DWN,GATNET(R0),GATNET+2(R0)
+	MOV	(SP)+,R0
+2$:	MOV	@SP,R2		;search table for other instances
+3$:	CMPB	R1,GATHID(R2)	;is this same hid
+	BNE	4$		;branch if no
+	CLRB	GATTTL(R2)	;yes. zap entry
+4$:	BITB	#GT.END,GATFLG(R2) ;is this end of table
+	BNE	5$		;branch if yes
+	ADD	#GATLEN,R2	;no. advance to next entry
+	BR	3$
+;
+5$:	MUL	#HOSLEN,R1	;release hid
+	ADD	#$HOSAD,R1
+	CLRB	HOSPID(R1)
+	BR	7$
+;
+6$:	DECB	GATTTL(R0)	;shorten lifespan
+7$:	BITB	#GT.END,GATFLG(R0) ;is this end of table
+	BNE	8$		;branch if yes
+	ADD	#GATLEN,R0	;no. advance to next entry
+	BR	1$
+;
+8$:	TST	(SP)+		;evas
+	RTS	PC
+	.IF	NE,CS.CLK	;include for nbs clock
+;
+; Timecode checkout routines
+;
+; Spectracom 8170 and Netclock/2 WWV Synchonized Clock (format 0)
+;
+CHKSP0:	CMPB	PARNBM+0.(R3),#<' > ;is alarm set
+	BNE	CHKALM		;branch if yes
+	CLR	PARLST(R3)	;no. reset last set
+	CLC			;normal exit
+	RTS	PC
+;
+; Spectracom 8170 and Netclock/2 WWV Synchonized Clock (format 2)
+;
+CHKSP2:	CMPB	PARNBM+0.(R3),#<' > ;is alarm set
+	BNE	CHKALM		;branch if yes
+	CMPB	PARNBM+1.(R3),#<' > ;no. is receiver locked
+	BNE	CHKALM		;branch if no
+	CLR	PARLST(R3)	;yes. reset last set
+	CLC			;normal exit
+	RTS	PC
+;
+; TrueTime 468-DC Satellite Synchronized Clock
+;
+CHKTRU:	CMPB	PARNBM+12.(R3),#<'?> ;is alarm set
+	BEQ	CHKALM		;branch if yes
+	CMPB	PARNBM+12.(R3),#<' > ;no. is receiver locked
+	BNE	CHKALM		;branch if no
+	CLR	PARLST(R3)	;yes. reset last set
+	CLC			;normal exit
+	RTS	PC
+;
+; Heath GC-1000 Most Accurate Clock (WWV/H)
+;
+CHKHEA:	CMPB	PARNBM+9.(R3),#<'?> ;is alarm set
+	BEQ	CHKALM		;branch if yes
+	CLR	PARLST(R3)	;no. reset last set
+	CLC			;normal exit
+	RTS	PC
+;
+; PST/Traconex 1020 Time Source (WWV/H)
+;
+CHKPST:	CMPB	PARNBM+37.(R3),#<'8> ;is alarm set
+	BNE	CHKALM		;branch if yes
+	CMPB	PARNBM+41.(R3),#<'0> ;no. is receiver locked
+	BNE	CHKALM		;branch if no
+	CMPB	PARNBM+42.(R3),#<'0>
+	BNE	CHKALM		;branch if no
+	CMPB	PARNBM+43.(R3),#<'0>
+	BNE	CHKALM		;branch if no
+	CMPB	PARNBM+44.(R3),#<'0>
+	BNE	CHKALM		;branch if no
+	CLR	PARLST(R3)	;yes. reset last set
+	CLC			;normal exit
+	RTS	PC
+;
+CHKALM:	SEC			;alarm exit
+	RTS	PC
+	.ENDC
+;
+	.PAGE
+	.SBTTL	Data
+;
+; Data segment
+;
+	.PSECT	$KERD,RO,D
+;
+; Transfer vector for signal codes
+;
+BRATAB:	.WORD	SIGINP		;0 packet input (data = packet pointer)
+	.WORD	SIGOUT		;1 packet output
+	.WORD	SIGINV		;2 catenet source quench (invalid)
+	.WORD	SIGINV		;3 catenet dest unreach (invalid)
+	.WORD	SIGTIM		;4 timer countdown
+	.WORD	SIGOPN		;5 open connection/link
+	.WORD	SIGPM		;6 close connection/link
+	.WORD	SIGPM		;7 set work flags (data = bits)
+;
+; Transfer vector for ICMP messages
+;
+GATTAB:	.WORD	GATNOP		;0 echo reply
+	.WORD	GATNOP		;1 routing update
+	.WORD	GATNOP		;2 positive acknowledgment
+	.WORD	GATDNR		;3 destination unreachable
+	.WORD	GATSQN		;4 source quench
+	.WORD	GATNOP		;5 redirect
+	.WORD	GATNOP		;6 no-op
+	.WORD	GATNOP		;7 no-op
+	.WORD	GATECH		;8 echo request
+	.WORD	GATNOP		;9 net interface status
+	.WORD	GATNOP		;10 negative acknowledgment
+	.WORD	GATTOT		;11 time exceeded
+	.WORD	GATPAR		;12 parameter problem
+	.WORD	GATTSP		;13 timestamp request
+	.WORD	GATNOP		;14 timestamp reply
+	.WORD	GATNOP		;15 information request
+	.WORD	GATNOP		;16 information reply
+	.WORD	GATAMF		;17 address mask request
+	.WORD	GATNOP		;18 address mask reply
+	.IF	NE,CS.CLK	;include for nbs clock
+;
+; Clock dispatch table
+;
+CLKJMP:	.WORD	NBS00		;0 idle
+	.WORD	NBS01		;1 spectracom/heath first char
+	.WORD	NBS22		;2 spectracom/heath time/date string
+	.WORD	NBS00		;3 wait for process decode
+	.WORD	NBS30		;4 truetime first char
+	.WORD	NBS31		;5 truetime time/date string
+	.WORD	NBS20		;6 pst first char
+	.WORD	NBS21		;7 pst time string
+	.WORD	NBS21		;8 pst date string
+	.WORD	NBS22		;9 status string
+;
+; Clock type table
+;
+CLKTAB:	.WORD	NULCHR		;0 disabled
+	.WORD	SP0CHR		;1 spectracom format 0
+	.WORD	TRUCHR		;2 truetime
+	.WORD	HEACHR		;3 heath
+	.WORD	PSTCHR		;4 pst
+	.WORD	SP2CHR		;5 spectracom format 2
+	.WORD	NULCHR		;6 disabled
+	.WORD	NULCHR		;7 disabled
+;
+; Clock poll sequences
+;
+NULCHR:	.WORD	0,0,0		;timecode offsets
+	.WORD	0,0		;dispersion, clock id
+	.BYTE	0,0,0,0		;initial state, length, format, poll string
+	.EVEN
+;
+SP0CHR:	.WORD	PARNBM+7.,PARNBM+3. ;spectracom 0 offsets
+	.WORD	CHKSP0		;checkout routine
+	.WORD	10.		;dispersion
+	.WORD	1*400+CK.WWB	;clock id
+	.BYTE	1,22.,0		;initial state, length, ddd format
+	.ASCIZ	'T'		;poll string
+	.EVEN
+;
+SP2CHR:	.WORD	PARNBM+9.,PARNBM+2. ;spectracom 2 offsets
+	.WORD	CHKSP2		;checkout routine
+	.WORD	10.		;dispersion
+	.WORD	1*400+CK.WWB	;clock id
+	.BYTE	1,24.,2		;initial state, length, yy ddd format
+	.ASCIZ	'T'		;poll string
+	.EVEN
+;
+TRUCHR:	.WORD	PARNBM+4.,PARNBM+0. ;truetime offsets
+	.WORD	CHKTRU		;checkout routine
+	.WORD	10.		;dispersion
+	.WORD	1*400+CK.GOS	;clock id
+	.BYTE	4,14.,0		;initial state, length+1, ddd format
+	.ASCIZ	'C'		;poll string
+	.EVEN
+;
+HEACHR:	.WORD	PARNBM+0.,PARNBM+15. ;heath offsets
+	.WORD	CHKHEA		;checkout routine
+	.WORD	500.		;dispersion
+	.WORD	1*400+CK.WWV	;clock id
+	.BYTE	1,23.,1		;initial state, length, dd/mm format
+	.ASCIZ	<CR>		;poll string
+	.EVEN
+;
+PSTCHR:	.WORD	PARNBM+1.,PARNBM+24. ;pst offsets
+	.WORD	CHKPST		;checkout routine
+	.WORD	50.		;dispersion
+	.WORD	1*400+CK.WWV	;clock id
+	.BYTE	6,49.,0		;initial state, length, ddd format
+	.ASCIZ	'QTQDQM'	;poll string
+	.EVEN
+;
+; Process header
+;
+INPPAT:	.PAT	TCPEND,INIT,PRI2,<0,0,CLKINI,CLKSIO,CLKREC,CLKXMT>
+	.IFF			;include for no nbs clock
+INPPAT:	.PAT	TCPEND,INIT,PRI2,<0,0>
+	.ENDC
+;
+	.END
+                                                                                                                                                                              

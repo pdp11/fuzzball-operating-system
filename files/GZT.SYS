@@ -1,0 +1,23 @@
+	.TITLE	USR	RT-11 Directory processor
+	.SBTTL	System and module definitions
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn - rt-11 directory processor
+;
+; External symbols
+;
+	.GLOBL	STRTIO,STAT,DELAY,DATE,GTIM ;$usei
+;
+; Entry symbols
+;
+	.GLOBL	RENAME,ENTER,LOOKUP,DELETE,CLOSE,FPROT,SFDAT
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.ERR,.PSA,.CLP,.IOD,.SMF,.PRT,.TRDEF ;dcnlib definitions
+	.MCALL	.PSEM,.VSEM,.TRAP ;dcnlib macros
+	.COM			;common definitions
+	.ERR			;error code definitions
+	.PSA	

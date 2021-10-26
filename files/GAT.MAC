@@ -1,0 +1,621 @@
+	.TITLE	GAT	Network input/output processes
+	.SBTTL	System and module definitions
+	.NLIST	BEX,CND
+	.ENABL	LC
+;
+; Pdp11/dcn network input/output processes
+;
+; This module represents two network processes, one for input and the
+; other for output. the actual input/output interface to the particular
+; devices used is contained in other modules specific to each device.
+; The nti process receives packets from the net, validates them and
+; passes them on to the eventual destination, possibly sending them
+; right out again. the nto process receives packets from other processes
+; in this host, completes the internet header processing and sends
+; then to the net. packet routing is determined by a set of tables
+; in the supervisor data module.
+;
+; Option bits:
+; xlpbit	external-loopback (1)
+; bstbit	point-to-point (0), broadcast (1)
+; kilbit	disable link (1)
+;
+; Conditional assembly switches
+;
+.IIF NDF,CS.HLO CS.HLO == 1	;0: no hello messages, 1: hello messages
+.IIF NDF,CS.IMP CS.IMP == 1	;0: no icmp messages, 1: icmp messages
+.IIF NDF,CS.FRG CS.FRG == 1	;0: no fragmentation, 1: fragmentation
+.IIF NDF,MINTNC MINTNC == 256.	;min length of scavenged ip data field
+;
+; External symbols
+;
+	.GLOBL	GATE		;routing function
+	.GLOBL	CHKSUM,DATSUM	;checksum routines
+	.GLOBL	$NETID,$GATPT,GATVPT ;routing tables
+	.GLOBL	PMPPTR		;preemptable buffer thread head
+	.GLOBL	$IPHID		;internet pid
+	.GLOBL	$CKCNT,$CONGS	;state variables
+	.GLOBL	WOLFF		;sneaky pete
+;
+; Entry symbols
+;
+	.GLOBL	NETINP		;network input initial entry
+	.GLOBL	NETOUT		;network output initial entry
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.PSA,.GAT,.TRDEF ;dcnlib definitions
+	.MCALL	.WIND,.PPKT,.TPKT,.FPKT,.DLAY,.GCLK,.TRAP,.GQNC ;dcnlib macros
+	.MCALL	$DFIH,$DFGH,$DFTIM,$DFSIG ;moslib definitions
+	.MCALL	$SGNLI,$SGNLT,$WAITS ;moslib macros
+	.COM			;define common data
+	.PSA			;define process storage areas
+	.LIST	ME
+	.GAT			;define gateway/bridge storage areas
+	.TRDEF			;define trap codes
+	$DFIH			;define internet header
+	$DFGH			;define icmp header
+	.NLIST	ME
+	$DFTIM			;define timer values
+	$DFSIG			;define interprocess signals
+;
+; Module definitions
+;
+	.MACRO	$SIOX	COD	;call subnet function
+	MOV	PARSBN(R3),R0
+	JSR	PC,@COD*2(R0)
+	.ENDM	$SIOX
+	.PAGE
+	.SBTTL	Network input process
+;
+; Procedure segment
+;
+; Process-state procedure
+; Dsects: r3 = par, r5 = psa
+;
+	.PSECT	$SUPI,RO,I
+;
+; Nti process (or - issue visa for immigrant packets)
+; This process receives packets, validates them and passes them on
+; to the selected destination. received hello messages are processed
+; for date/time, delay and routing update information.
+;
+NETINP:	$SIOX	INR		;initialize
+	MOV	$GATPT,R0	;map foreign host table to window
+	MOV	$GATPT+2,R1
+	.WIND
+	MOV	R1,GATVPT	;(they all have to be the same)
+	$SGNLI	PARPID(R3),#SG.RST,PSAPID(R5),#0,#0 ;send reset to output side
+1$:	MOV	PARMAX(R3),R0	;get input buffer
+	.PPKT
+	BEQ	1$		;branch if unable (not enough memory)
+	MOV	R0,R4
+NTICHK:	MOV	PARMAX(R3),R2	;wait for device completion
+	DEC	-2(R4)		;*** mousetrap
+	$SIOX	INP
+	BCC	1$		;branch if ok
+	INC	-2(R4)		;*** mousetrap
+	INC	PARNRY(R3)	;link reset. input error
+	BR	NTICHK
+;
+1$:	INC	-2(R4)		;*** mousetrap
+	MOV	R0,R2		;save bytes transferred
+	.GCLK			;save arrival time
+	MOV	R0,NTRTIM(R5)
+	MOV	R1,NTRTIM+2(R5)
+	ADD	#1,PARINP+2(R3)	;accumulate count
+	ADC	PARINP(R3)
+	CMP	R2,#IH.LEN-BUFLDR ;is ip header long enough
+	BLO	5$		;branch if no (format error)
+	MOVB	IH.VER(R4),R1	;yes. is this version 4
+	MOV	R1,R0
+	BIC	#^C<17*20>,R0
+	CMP	R0,#P.IP*20
+	BNE	5$		;branch if no (format error)
+	ASL	R1		;yes. is ip header long enough
+	ASL	R1
+	BIC	#^C74,R1
+	CMP	R1,#IH.LEN-BUFLDR
+	BLO	5$		;branch if no (format error)
+	CMP	R2,R1		;yes. is packet long enough
+	BLO	5$		;branch if no (format error)
+	MOV	R1,PH.OFS(R4)	;yes. store data offset
+	MOV	R4,R1		;verify checksum
+	JSR	PC,CHKSUM
+	BEQ	4$		;branch if ok
+	INC	PARCKS(R3)	;bad checksum
+	BR	NTICHK
+;
+4$:	SWAB	IH.FL(R4)	;swap word fields
+	SWAB	IH.ID(R4)
+	SWAB	IH.FRG(R4)
+	MOV	IH.FL(R4),R0	;is ip length valid
+	CMP	R2,R0
+	BLO	5$		;branch if no
+	SUB	PH.OFS(R4),R0
+	BGE	6$		;branch if yes
+5$:	INC	PARFMT(R3)	;bad format
+	BR	NTICHK
+;
+6$:	MOV	R0,PH.LNG(R4)	;complete header fields
+	ADD	#BUFLDR,PH.OFS(R4)
+	$SIOX	SDR		;process leader
+	BCS	7$		;branch if redirect
+	MOV	NTRTIM(R5),PH.TIM(R4) ;save arrival timestamp
+	MOV	NTRTIM+2(R5),PH.TIM+2(R4)
+	BIT	#KILBIT,PAROPT(R3) ;is link disabled
+	BEQ	NTIOKP		;branch if no
+	INC	PARMIS(R3)	;dropped
+7$:	BR	NTICHK
+;
+; Determine destination route and forward
+;
+	.IF	EQ,CS.IMP	;include for no icmp messages
+NTIOKP:	MOV	R4,R1		;decode internet route
+	JSR	PC,GATE
+	MOV	R0,R2
+	BCC	NTI20		;branch if okay
+	INC	PARMIS(R3)	;dropped
+	JMP	NTICHK
+;
+	.IFF			;include for icmp messages
+NTIOKP:	CMPB	IH.PRO(R4),#P.LNP ;is this broadcast
+	BEQ	1$		;branch if yes
+	BIT	#BSTBIT,PAROPT(R3)
+	BEQ	2$		;branch if no
+	CMP	IH.DST(R4),PARADR(R3)
+	BNE	2$		;branch if no
+	CMP	IH.DST+2(R4),PARADR+2(R3)
+	BNE	2$		;branch if no
+1$:	MOVB	$IPHID,R0	;yes. use internet pid
+	BEQ	5$		;branch if initialization not yet complete
+	BR	6$
+;
+2$:	MOV	R4,R1		;determine route
+	JSR	PC,GATE
+	BCC	6$		;branch if ok
+	CMP	R0,#PK.NNR	;is problem net unreachable
+	BNE	3$		;branch if no
+	MOV	#DN.NET*400+GC.DNR,R0 ;yes. send icmp net unreachable
+	BR	4$
+;
+3$:	CMP	R0,#PK.GNR	;is problem host unreachable
+	BNE	5$		;branch if no (black hole)
+	MOV	#DN.HOS*400+GC.DNR,R0 ;yes. send icmp host unreachable
+4$:	JSR	PC,IMPSND
+	BCS	5$		;branch if cant
+	INC	PARRET(R3)	;count icmp messages
+5$:	INC	PARMIS(R3)	;dropped
+	JMP	NTICHK
+;
+6$:	MOV	R0,-(SP)	;save pid
+	CMPB	R0,PARPID(R3)	;is destination via this process
+	BNE	8$		;branch if no
+	INC	PARRTN(R3)	;returned
+	MOV	#256.,R0	;allocate redirect buffer (icmp =< 256)
+	.PPKT
+	BEQ	8$		;branch if unable
+	MOV	R0,R1		;encode icmp redirect message
+	MOV	#GC.RDR,R0
+	JSR	PC,IMPDNR
+	BCS	7$		;branch if unable
+	$SIOX	RDR
+	BCS	7$		;branch if unable
+	JSR	PC,IMPSNX	;send icmp redirect message
+	BCS	7$		;branch if unable
+	INC	PARRET(R3)	;count icmp messages
+	BR	8$
+
+7$:	MOV	R1,R0		;unable. give it back
+	.FPKT
+8$:	MOV	(SP)+,R2	;restore pid
+	.ENDC
+NTI20:	MOV	PARMAX(R3),R0	;get next input buffer
+	.PPKT
+	BNE	1$		;branch if ok
+	INC	PARNBF(R3)	;tally no-buffer
+	BR	3$
+;
+1$:	MOV	R0,-(SP)	;save next-buffer pointer
+	MOV	PH.OFS(R4),R1	;scavenge remainder of packet
+	ADD	PH.LNG(R4),R1
+	SUB	#BUFLDR,R1
+	CMP	R1,#MINTNC
+	BHIS	2$
+	MOV	#MINTNC,R1
+2$:	MOV	R4,R0		;scoop out the trash
+	.TPKT
+	MOV	R2,R0		;send packet
+	MOV	R4,R1
+	JSR	PC,SNDPKT
+	MOV	(SP)+,R4
+3$:	JMP	NTICHK		;from the top
+	.PAGE
+	.SBTTL	Network output process
+;
+; Nto process (or - depress world economy with junk packets)
+; This process receives signals from other processes in this host
+; And transmits the specified packets. it also constructs the arpanet
+; Leader, if specified, and computes the internet checksum.
+;
+NETOUT:	$SIOX	INX		;initialize things
+	MOV	R5,PMPLNK+2(R5)	;point to message queue
+	ADD	#PSAMSG,PMPLNK+2(R5)
+	MOV	R5,R0		;link on preemptable buffer thread
+	ADD	#PMPLNK,R0
+	MOV	PMPPTR,@R0
+	MOV	R0,PMPPTR
+	MOV	$GATPT,R0	;map foreign host table to window
+	MOV	$GATPT+2,R1
+	.WIND
+	BR	NTOLSN
+;
+NTORST:	$SIOX	RST		;reset link
+NTO8:	MOV	PARTRY(R3),R0	;set timeout
+	ASH	#POLCON,R0
+	$SGNLT	R0
+NTOLSN:	MOV	R5,R2		;wait for signal
+	ADD	#DASPAR,R2
+	$WAITS	R2
+	CMPB	TYPE(R5),#PKTCTL ;is this out of band
+	BNE	NTORST		;branch if yes
+	MOVB	SIGNAL(R5),R0	;no. is this data packet
+	CMPB	R0,#SG.INP
+	BEQ	NTO5		;branch if yes
+	CMPB	R0,#SG.TIM	;no. is this timeout
+	BNE	NTORST		;branch if no
+	MOV	ACCTIM(R5),R0	;yes. calculate mean queue delay
+	SUB	PARRHO(R3),R0
+	ASR	R0		;(weight .5)
+	ADD	R0,PARRHO(R3)
+	CLR	ACCTIM(R5)
+	MOV	$CONGS,R0	;does it exceed congestion threshold
+	BEQ	1$		;branch if no
+	CMP	PARRHO(R3),R0
+	BLO	1$		;branch if no
+	CLR	PARRHO(R3)	;yes. fire off a quench
+	INC	PARQNC(R3)	;quench
+	CLR	PMPLNK+4(R5)	;disable premptions
+	MOV	R5,R0		;find quenchable packet
+	ADD	#PMPLNK,R0
+	.GQNC
+	BEQ	1$		;branch if cant
+	MOV	R1,R4		;send source quench
+	MOV	#GC.SQN,R0
+	JSR	PC,IMPSND
+	BCS	1$		;branch if cant
+	INC	PARRET(R3)	;count icmp messages
+1$:
+	.IF	EQ,CS.HLO	;include for no hello messages
+	BR	NTO8		;ignore
+	.IFF			;include for hello messages
+	.GLOBL	NTOHLO		;yes. call hello module
+	JSR	PC,NTOHLO
+	BCS	NTO8		;branch if no packet
+	MOV	PARTRY(R3),R0	;set timeout
+	ASH	#POLCON,R0
+	$SGNLT	R0
+	BIT	#HLOBIT,PAROPT(R3) ;is this internal hello
+	BNE	NTO5		;branch if no
+	BIT	#GATBIT,PAROPT(R3)
+	BEQ	NTO5		;branch if no
+	MOVB	$IPHID,R0	;yes. update from the wild side
+	BEQ	NTO5		;branch if initialization not yet complete	
+	MOV	R4,R1		;send packet
+	JSR	PC,SNDPKT
+	BR	NTOLSN
+;
+	.ENDC
+NTO5:	MOV	MSGDAT(R5),R4	;output packet. set pointer
+	BNE	1$		;branch if not preempted
+	INC	PARPMP(R3)	;preempted
+	CLR	PMPLNK+4(R5)	;reset packet counter
+	BIT	#DLMBIT,PAROPT(R3)
+	BNE	5$		;branch if advisory trap suppressed
+	MOVB	RPYPID(R5),R0	;trappity bappity
+	.TRAP	#TR.PMP,R0,MSGIDM(R5),MSGIDM+2(R5)
+	BR	5$
+;
+1$:	BIT	#KILBIT,PAROPT(R3) ;is link disabled
+	BNE	4$		;branch if yes
+	TSTB	$CKCNT		;no. compute queue delay
+	BNE	2$		;branch if unusable
+	.GCLK
+	SUB	PH.TIM+2(R4),R1
+	SBC	R0
+	SUB	PH.TIM(R4),R0
+	BNE	2$		;branch if unusable
+	ASHC	#-POLCON,R0	;update statistics
+	ADD	R1,ACCTIM(R5)
+	ASHC	#POLCON-10.,R0	;(/1024.) convert to seconds
+	BR	3$
+;
+2$:	CLR	R1		;unusable delay. clamp at zero
+3$:	INC	R1		;always one more
+	CLR	R0		;is it getting too old
+	BISB	IH.TTL(R4),R0
+	SUB	R1,R0
+	BGE	6$		;branch if no
+	.IF	NE,CS.IMP	;include for icmp messages
+	MOV	#GC.TOT,R0	;yes. send icmp time exceeded
+	JSR	PC,IMPSND
+	BCS	4$		;branch if cant
+	INC	PARRET(R3)	;count icmp messages
+	.ENDC
+4$:	INC	PARTTL(R3)	;dropped (time exceeded or disabled)
+5$:	JMP	NTO3
+;
+6$:	MOVB	R0,IH.TTL(R4)	;update ttl
+	BIT	#XLPBIT,PAROPT(R3) ;is this to be looped back
+	BEQ	NTO2		;branch if no
+	MOV	IH.SRC(R4),R0	;yes. interchange source/destination
+	MOV	IH.DST(R4),IH.SRC(R4)
+	MOV	R0,IH.DST(R4)
+	MOV	IH.SRC+2(R4),R0
+	MOV	IH.DST+2(R4),IH.SRC+2(R4)
+	MOV	R0,IH.DST+2(R4)
+NTO2:	INC	PMPLNK+4(R5)	;update stats
+	BCC	1$
+	DEC	PMPLNK+4(R5)
+1$:	MOV	PH.OFS(R4),R2	;compute total length
+	ADD	PH.LNG(R4),R2
+	SUB	#BUFLDR,R2
+	.IF	EQ,CS.FRG	;include for no fragmentation
+	MOV	R2,IH.FL(R4)	;set fragment length
+	SWAB	IH.FL(R4)	;swap word fields
+	SWAB	IH.ID(R4)
+	SWAB	IH.FRG(R4)
+	CLR	IH.CHK(R4)	;compute checksum
+	MOV	R4,R1
+	JSR	PC,CHKSUM
+	MOV	R0,IH.CHK(R4)
+	$SIOX	OUT		;wait for device completion
+	BCC	2$		;branch if no error
+	INC	PARERR(R3)	;output error
+	SWAB	IH.ID(R4)
+	BR	NTO3
+;
+2$:	ADD	#1,PAROUT+2(R3)	;accumulate count
+	ADC	PAROUT(R3)
+	SWAB	IH.ID(R4)
+	.IFF			;include for fragmentation
+;
+; Split into fragments as necesary and send to network
+;
+	MOV	PH.OFS(R4),NTXBGN(R5) ;compute buffer pointers
+	ADD	R4,NTXBGN(R5)
+	ADD	#BUFLDR,R2
+	ADD	R4,R2
+	MOV	R2,NTXEND(R5)
+	MOV	IH.FRG(R4),FRGINF(R5) ;save fragmentation info
+	MOV	NTXEND(R5),R2
+3$:	SUB	R4,R2		;compute fragment length
+	SUB	#BUFLDR,R2
+	CMP	R2,PARMAX(R3)	;is it too long
+	BLOS	6$		;branch if no
+	.IF	NE,CS.IMP	;include for icmp messages
+	BIT	#IH.DF,IH.FRG(R4) ;yes. can it be busted
+	BEQ	5$		;branch if yes
+	INC	PARFRG(R3)	;no. fragment error
+	MOV	#DN.FRG*400+GC.DNR,R0 ;send icmp fragmentation error
+	JSR	PC,IMPSND
+	BCS	4$		;branch if cant
+	INC	PARRET(R3)	;count icmp messages
+4$:	JMP	NTO3
+;
+5$:
+	.ENDC
+	BIS	#IH.MF,IH.FRG(R4) ;say there's more to come
+	MOV	PARMAX(R3),R2	;compute data length
+	ADD	R4,R2
+	ADD	#BUFLDR,R2
+	SUB	NTXBGN(R5),R2
+	BIC	#7,R2		;round to next lower 8-octet bound
+	MOV	R2,R0		;update fragmentation info
+	ASH	#-3,R0
+	ADD	R0,FRGINF(R5)
+	ADD	NTXBGN(R5),R2
+	BR	3$
+;
+6$:	MOV	R2,IH.FL(R4)	;set fragment length
+	SWAB	IH.FL(R4)	;swap word fields
+	SWAB	IH.ID(R4)
+	SWAB	IH.FRG(R4)
+	CLR	IH.CHK(R4)	;compute checksum
+	MOV	R4,R1
+	JSR	PC,CHKSUM
+	MOV	R0,IH.CHK(R4)
+	$SIOX	OUT		;wait for device completion
+	BCC	7$		;branch if no error
+	INC	PARERR(R3)	;output error
+	SWAB	IH.ID(R4)
+	BR	NTO3
+;
+7$:	ADD	#1,PAROUT+2(R3)	;accumulate count
+	ADC	PAROUT(R3)
+	SWAB	IH.ID(R4)
+	ADD	#BUFLDR,R2	;is transfer complete
+	ADD	R4,R2
+	CMP	R2,NTXEND(R5)
+	BHIS	NTO3		;branch if yes
+	MOV	FRGINF(R5),IH.FRG(R4) ;no. restore word fields
+	MOV	R2,-(SP)	;copy options
+	MOV	R4,R2		;set option-area pointers
+	ADD	#IH.LEN,R2
+	MOV	R2,R0
+8$:	CMP	R2,NTXBGN(R5)	;is this end of option list
+	BHIS	11$		;branch if yes
+	MOV	R0,-(SP)	;no. save option pointer
+	MOVB	(R2)+,R1	;copy option type
+	MOVB	R1,(R0)+
+	BITB	R1,#176		;is it ip-end or ip-nop
+	BEQ	10$		;branch if yes
+	MOVB	(R2)+,R1	;no. copy option length
+	MOVB	R1,(R0)+
+	SUB	#2,R1		;compute remaining bytes
+	BLE	10$		;branch if invalid
+	CMP	R1,#60.
+	BHI	10$		;branch if invalid
+9$:	MOVB	(R2)+,(R0)+	;copy option data
+	SOB	R1,9$
+10$:	MOV	(SP)+,R1	;is option to be copied
+	TSTB	@R1
+	BMI	8$		;branch if yes
+	MOV	R1,R0		;no. restore pointer
+	BR	8$
+;
+11$:	MOV	R0,R2		;pad to big-endian boundary
+	SUB	R4,R2	
+	SUB	#BUFLDR,R2
+	BIT	#3,R2
+	BEQ	12$
+	CLRB	(R0)+
+	BR	11$
+;
+12$:	MOV	R0,NTXBGN(R5)	;update buffer pointers
+	BICB	#17,IH.VER(R4)	;update ip header offset
+	ASR	R2
+	ASR	R2
+	BISB	R2,IH.VER(R4)
+	MOV	(SP)+,R2	;restore pointers
+13$:	MOVB	(R2)+,(R0)+	;copy data area
+	CMP	R2,NTXEND(R5)
+	BLO	13$
+	MOV	R0,NTXEND(R5)	;*** update buffer pointers
+	SUB	NTXBGN(R5),R0
+	MOV	R0,PH.LNG(R4)
+	MOV	NTXBGN(R5),R0
+	SUB	R4,R0
+	MOV	R0,PH.OFS(R4)
+	MOV	R4,R1		;decode internet route
+	JSR	PC,GATE
+	BCS	NTO3		;branch if unable
+	JSR	PC,WOLFF	;sneaky pete
+	$SGNLI	R0,#SG.INP,RPYPID(R5),MSGIDN(R5),R1,IH.ID(R1)
+	JMP	NTOLSN
+;
+	.ENDC
+NTO3:	MOV	MSGDAT(R5),R0	;get packet address
+	BEQ	1$		;branch if not there
+	CMP	MSGIDM(R5),IH.ID(R0)
+	BEQ	3$		;branch if none
+	.TRAP	#TR.LDR,R5,R0,-2(R0),MSGIDM(R5),IH.ID(R0)
+	BR	2$
+;
+3$:	.FPKT			;surrender it
+1$:	TST	MSGIDN(R5)	;is ack expected
+	BEQ	2$		;branch if no
+	$SGNLI	RPYPID(R5),#SG.OUT,PARPID(R3),MSGIDN(R5),#0 ;send ack
+2$:	JMP	NTOLSN
+	.PAGE
+	.SBTTL	Subroutines
+	.IF	NE,CS.IMP	;include for icmp messages
+;
+; Subroutine to send packet
+; r0 = pid, r1 = packet pointer
+;
+SNDPKT:	JSR	PC,WOLFF	;sneaky pete
+	$SGNLI	R0,#SG.INP,PSAPID(R5),#0,R1,IH.ID(R1)
+	RTS	PC
+
+; Subroutine to construct and send icmp error message
+; r0 = code, r4 = data packet pointer, returns cc(c) = 1 if error
+;
+	.GLOBL	IMPSND
+IMPSND:	MOV	R2,-(SP)	;save
+	MOV	R0,R2		;save code
+	MOV	#256.,R0	;allocate icmp buffer (icmp =< 256)
+	.PPKT
+	BEQ	2$		;branch if unable
+	MOV	R0,R1		;encode icmp error message
+	MOV	R2,R0
+	JSR	PC,IMPDNR
+	BCS	1$		;branch if unable
+	JSR	PC,IMPSNX	;send message
+	BCC	3$		;branch if okay
+1$:	MOV	R1,R0		;give back buffer
+	.FPKT
+2$:	SEC			;return error
+3$:	MOV	(SP)+,R2	;evas
+	RTS	PC
+;
+; Subroutine to encode icmp error message
+; r0 = code, r1 = icmp packet pointer, r4 = data packet pointer,
+; returns R2 = icmp header pointer, c(cc) = 1 if error
+;
+IMPDNR:	MOV	PH.OFS(R4),R2
+	ADD	R4,R2		;set header pointer
+	BIT	#IH.OFF,IH.FRG(R4) ;is this first fragment
+	BNE	1$		;branch if no
+	CMPB	IH.PRO(R4),#P.IMP ;yes. is this icmp message
+	BNE	2$		;branch if no
+	CMPB	GH.TYP(R2),#GC.ECH ;yes. is this request
+	BEQ	2$		;branch if yes
+	CMPB	GH.TYP(R2),#GC.TSP
+	BEQ	2$		;branch if yes
+	CMPB	GH.TYP(R2),#GC.IFF
+	BEQ	2$		;branch if yes
+	CMPB	GH.TYP(R2),#GC.AMF
+	BEQ	2$		;branch if yes
+1$:	SEC			;no. suppress icmp message
+	RTS	PC
+;
+2$:	MOV	R4,-(SP)	;save
+	MOV	R0,-(SP)
+	MOV	#IH.LEN,PH.OFS(R1) ;initialize icmp header
+	ADD	#8.,R2		;(keep 64 bits of client header)
+	MOV	R4,R0
+	ADD	#BUFLDR,R0	;compute number of bytes to move
+	SUB	R2,R0
+	NEG	R0
+	MOV	R0,PH.LNG(R1)	;correct length for later
+	ADD	#GH.HDR,PH.LNG(R1)
+	MOV	R1,R4		;set pointers
+	ADD	#IH.LEN+GH.HDR,R4
+	ADD	R0,R4
+3$:	MOVB	-(R2),-(R4)	;copy ip header to icmp data area
+	SOB	R0,3$
+	SWAB	IH.FL-BUFLDR(R4) ;swap word fields
+	SWAB	IH.ID-BUFLDR(R4)
+	SWAB	IH.FRG-BUFLDR(R4)
+	CLR	-(R4)		;gh.seq
+	CLR	-(R4)		;gh.id
+	CLR	-(R4)		;gh.chk
+	MOV	(SP)+,-(R4)	;gh.cod, gh.typ
+	MOV	R4,R2		;save header pointer
+	MOV	IH.SRC+2-BUFLDR+GH.HDR(R2),-(R4) ;ih.dst. complete ip header
+	MOV	IH.SRC-BUFLDR+GH.HDR(R2),-(R4)
+	MOV	$NETID+2,-(R4)	;ih.src
+	MOV	$NETID,-(R4)
+	CLR	-(R4)		;ih.chk
+	MOV	#<P.IMP*400>+<TM.TTL/1000.>,-(R4) ;ih.ttl, ih.pro
+	MOV	#IH.DF,-(R4)	;ih.frg
+	CLR	-(R4)		;ih.id
+	CLR	-(R4)		;ih.fl
+	MOV	#P.IP*20+5,-(R4) ;ih.ver, ih.tos
+	MOV	(SP)+,R4
+	CLC
+	RTS	PC
+;
+; Subroutine to complete and send message
+; r1 = packet pointer, r2 = icmp header pointer, returns cc(c) = 1 if error
+;
+IMPSNX:	JSR	PC,DATSUM	;insert checksum
+	MOV	R0,GH.CHK(R2)
+	JSR	PC,GATE
+	BCS	1$		;branch if unable
+	JSR	PC,SNDPKT
+	CMPB	GH.TYP(R2),#GC.DNR ;is icmp unreachable trap suppressed
+	BNE	20$		;branch if no
+	BIT	#DLMBIT,PAROPT(R3)
+	BNE	2$		;branch if yes
+20$:	BIT	#ERMBIT,PAROPT(R3)
+	BNE	2$		;branch if icmp trap suppressed
+	.TRAP	#TR.IMP,GH.TYP(R2),IH.SRC-BUFLDR+GH.HDR(R2),IH.SRC+2-BUFLDR+GH.HDR(R2),IH.DST-BUFLDR+GH.HDR(R2),IH.DST+2-BUFLDR+GH.HDR(R2)
+2$:	CLC
+1$:	RTS	PC
+	.ENDC
+;
+	.END
+                                                                                                                                                                                                                                         

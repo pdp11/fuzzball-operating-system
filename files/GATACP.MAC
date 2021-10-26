@@ -1,0 +1,347 @@
+	.TITLE	GATACP	Network acp 5250 driver
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn network acp 5250 driver
+;
+; This module is an extension of the network processes. it transmits and
+; Receives packets using the acc acp 5250 DDN Standard X.25 network link
+; interface.
+;
+; External symbols
+;
+	.GLOBL	.WAIT,.STIM,.SKED,.ASYN ;supervisor services
+	.GLOBL	NETINP,NETOUT	;process initialization
+;
+; Entry symbols
+;
+	.GLOBL	AXIPAT		;input process control vector
+	.GLOBL	AXOPAT		;output process control vector
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.PSA,.GAT,.X25,.PAT ;dcnlib definitions
+	.MCALL	.SETV,.CTIM	;dcnlib macros
+	.COM			;define common data
+	.PSA			;define process stoage areas
+	.GAT			;define gateway/bridge storage areas
+	.X25			;define x25 storage areas
+;
+; Module definitions
+;
+; Flag bits (cb.flg, x25flg)
+;
+CF.ASY	=	040		;enable asynch interrupt (output proc)
+CF.RDY	=	100		;read ready
+CF.INI	=	200		;initialized
+;
+; Process save area extension (axr)
+;
+.	=	GATENR
+	.BLKW	REGEND/2+NTISTK	;process stack
+AXREND	=	.		;end of dmr extension
+;
+; Process save area extension (axx)
+;
+.	=	GATENX
+	.BLKW	REGEND/2+NTOSTK	;process stack
+AXXEND	=	.		;end of dmx extension
+;
+; acp 5250 device register block (dev)
+;
+.	=	0
+Q.CSR:	.BLKW	1		;control/status register
+QC.RST	=	000001		;reset
+QC.DEN	=	000002		;enable dma
+QC.AEN	=	000004		;q-bus interrupt a enable
+QC.BEN	=	000010		;q-bus interrupt b enable
+QC.AAR	=	000020		;acp interrupt a request
+; Host request initiation mailbox
+R.DPN:	.BLKW	1		;request data path number
+R.FLG:	.BLKW	1		;request flags
+MB.RDY	=	100000		;ready
+MB.DON	=	040000		;done
+MB.WRT	=	020000		;write
+R.ADR:	.BLKW	1		;request address
+R.CNT:	.BLKW	1		;request count
+R.FUN:	.BLKW	1		;request function
+FN.RED	=	01		;read
+FN.WRT	=	02		;write
+FN.ABR	=	04		;abort
+FN.LWR	=	10		;listen write
+FN.STR	=	020		;stream mode
+FN.EOS	=	040		;end of stream
+; Host completion mailbox
+C.DPN:	.BLKW	1		;completion data path number
+C.FLG:	.BLKW	1		;completion flags
+C.CNT:	.BLKW	1		;completion count
+C.STA:	.BLKW	1		;completion status
+; Transfer request mailbox (not used)
+X.DPN:	.BLKW	1		;transfer data path number
+X.FLG:	.BLKW	1		;transfer flags
+X.ADR:	.BLKW	1		;transfer address
+X.CNT:	.BLKW	1		;transfer count
+; Synchronization parameters
+S.VID:	.BLKW	1		;version number/application id
+S.VEC:	.BLKW	1		;interrupt vector/diagnostic code
+ACPEND	=	.		;end of register block
+	.PAGE
+;
+; Procedure segment
+;
+; Supervisor-state procedure
+; Dsects: r2 = dev, r3 = par, r4 = reg, r5 = psa
+;
+; Note: calling process sets r0 = byte count, r1 = starting address.
+; At completion of transfer r0 = byte count.
+;
+	.PSECT	$KERI,RO,I
+;
+; Initialize
+;
+AXRINI:	MOV	#INT+EXTBAS,R1	;allocate vector a
+	.SETV
+	MOV	R3,R1		;set queue pointers
+	ADD	#QUEUE,R1
+	MOV	R1,QUEPUT(R3)
+	MOV	R1,QUEGET(R3)
+	MOV	R1,QUEBGN(R3)
+	ADD	#QUESIZ*Q.LEN,R1
+	MOV	R1,QUEEND(R3)
+	MOV	R2,R0		;clear register block
+	MOV	#ACPEND/2,R1
+1$:	CLR	(R0)+
+	SOB	R1,1$
+	MOV	@R4,R0		;initialize interrupt vector
+	ASH	#-2,R0
+	MOVB	R0,S.VEC(R2)
+	CLRB	X25FLG(R3)	;reset driver status
+	CLRB	X25PID(R3)
+	CLR	R0		;the big ear
+	JSR	PC,LISTEN
+AXXRST:	RTS	PC
+;
+AXXINI:	ADD	#4,R0		;allocate vector b
+	MOV	#INT+EXTBAS,R1
+	.SETV
+	MOV	#QC.RST,Q.CSR(R2) ;reset microprocessor
+	MOV	#QC.BEN,Q.CSR(R2) ;enable interrupt b
+	JMP	.WAIT		;wait for microprocessor ready
+;
+; Interrupt b
+;
+AXXINT:	MOV	#QC.AEN+QC.DEN,Q.CSR(R2) ;enable interrupt a and dma
+	JMP	.SKED		;acp reset complete
+;
+; Input/output request
+;
+AXXSIO:	MOVB	X2.OPN(R1),R0	;decode command
+	ADD	R0,PC
+	BR	.		;0 crump
+	BR	RQREAD		;2 read
+	BR	RQWRIT		;4 write/end
+	BR	RQSGNL		;6 write/signal
+;
+; Read operation
+;
+RQREAD:	BISB	#CF.RDY,X25FLG(R3) ;mark read ready
+	CLR	R0		;get channel pointer
+	MOV	R3,R1
+	ADD	#X25BLK,R1
+1$:	BITB	#CF.RDY,CB.FLG(R1) ;is channel ready
+	BEQ	2$		;branch if no
+	JSR	PC,READ		;yes. start read operation
+	BR	3$
+;
+2$:	ADD	#CB.LEN,R1	;advance to next channel
+	INC	R0
+	CMPB	R0,DPNMAX(R3)
+	BLO	1$		;branch if more
+3$:	JMP	.WAIT		;wait for completion
+;
+; Write/signal operation (output proc)
+;
+RQSGNL:	BISB	#CF.ASY,X25FLG(R3) ;flag thus
+;
+; Write/end operation
+;
+RQWRIT:	MOV	(R1)+,R0	;bash parameters
+	MOV	R1,-(SP)
+	MOV	QUEPUT(R3),R1	;write channel
+	MOVB	R0,(R1)+	;(dpn)
+	MOVB	PSAPID(R5),(R1)+ ;(pid)
+	MOV	(SP)+,(R1)+	;(q.adr)
+	MOV	@R4,R0
+	SUB	#X25LEN,R0
+	MOV	R0,(R1)+	;(q.cnt)
+	MOV	#MB.RDY+MB.WRT+FN.WRT,(R1)+ ;(q.fun,q.flg)
+	JSR	PC,ENQUE
+	JSR	PC,.WAIT	;start output timeout
+	MOV	PARTRY(R3),R0
+	ASH	#4,R0		;(16x base)
+	SUB	R0,RESTIM(R5)
+	JMP	.STIM
+;
+; Receive interrupt a
+;
+AXRINT:	BIT	#MB.RDY,C.FLG(R2) ;is completion mailbox ready
+	BEQ	3$		;branch if no
+	MOVB	C.DPN(R2),R0	;yes. get channel pointer
+	MOVB	R0,R1
+	MUL	#CB.LEN,R1
+	ADD	R3,R1
+	ADD	#X25BLK,R1
+	BIT	#MB.WRT,C.FLG(R2) ;is this write complete
+	BEQ	2$		;branch if no
+	MOV	#MB.DON,C.FLG(R2) ;yes. set mailbox idle
+	BIS	#QC.AAR,Q.CSR(R2)
+	MOVB	X25PID(R3),R1
+	CLRB	X25PID(R3)
+	JSR	PC,DEQUE	;service request mailbox
+	CMPB	R1,PSAPID(R5)	;is this input proc
+	BEQ	1$		;branch if yes
+	MOV	#ASY,R0		;no. signal output proc
+	JMP	.ASYN
+;
+1$:	TSTB	PSASTS(R5)	;input proc. is process running
+	BMI	3$		;branch if yes
+	.CTIM			;no. clear timeout
+	JMP	.SKED
+;
+2$:	BITB	#CF.RDY,CB.FLG(R1) ;is this listen complete
+	BNE	5$		;branch if no
+	MOV	#MB.DON,C.FLG(R2) ;yes. set mailbox idle
+	BIS	#QC.AAR,Q.CSR(R2)
+	BISB	#CF.RDY,CB.FLG(R1) ;flag ready
+	BITB	#CF.RDY,X25FLG(R3) ;is read ready
+	BEQ	3$		;branch if no
+	JSR	PC,READ		;yes. start read
+	RTS	PC
+;
+3$:	BIT	#MB.DON,R.FLG(R2) ;is service request mailbox ready
+	BEQ	4$		;branch if no
+	CLR	R.FLG(R2)	;yes. do something about it
+	JSR	PC,DEQUE
+4$:	RTS	PC
+;
+5$:	BICB	#CF.RDY,CB.FLG(R1) ;read complete. kill flags
+	BICB	#CF.RDY,X25FLG(R3)
+	MOVB	R0,@REGR1(R4)	;save completion parameters
+	MOV	C.CNT(R2),@R4
+	ADD	#X25LEN,@R4
+	MOV	#MB.DON,C.FLG(R2) ;set mailbox idle
+	BIS	#QC.AAR,Q.CSR(R2)
+	JSR	PC,LISTEN	;listen channel
+	JMP	.SKED		;wake up input proc
+;
+; Asynchronous interrupt (output proc)
+;
+AXXASY:	TSTB	PSASTS(R5)	;knock on doors
+	BMI	1$		;branch if process running
+	TSTB	R0
+	BEQ	3$		;branch if timer interrupt
+	BITB	#CF.ASY,X25FLG(R3)
+	BEQ	2$		;branch if write/end
+	BICB	#CF.ASY,X25FLG(R3) ;write/signal. wait for signal
+1$:	RTS	PC
+;
+2$:	.CTIM			;clear output timeout
+	ADD	R0,RESTIM(R5)
+	BR	4$
+;
+3$:	BICB	#CF.ASY,X25FLG(R3) ;timeout. mind the bits
+	BIS	#1,REGPS(R4)	;indicate output error
+	CMPB	PARPID(R3),X25PID(R3) ;is output pending
+	BNE	4$		;branch if no
+	MOVB	#FN.WRT,R.FUN(R2) ;yes. splash abort
+	MOVB	#<MB.RDY+MB.WRT>/400,R.FLG+1(R2)
+	BIS	#QC.AAR,Q.CSR(R2) ;interrupt acp
+	RTS	PC
+;
+4$:	JMP	.SKED		;up the scheduler
+;
+; Subroutine to enqueue request
+; R1 = queue pointer (follows entry)
+;
+ENQUE:	CMP	R1,QUEEND(R3)	;update queue pointer
+	BLO	2$
+	MOV	QUEBGN(R3),R1
+2$:	MOV	R1,QUEPUT(R3)
+;
+; Subroutine to dequeue request
+;
+DEQUE:	MOV	R1,-(SP)	;save
+	BIT	#QC.AEN,Q.CSR(R2) ;is acp ready
+	BEQ	3$		;branch if no
+	BIT	#MB.RDY,R.FLG(R2)
+	BNE	3$		;branch if no
+	MOV	QUEGET(R3),R0	;yes. is queue empty
+	CMP	R0,QUEPUT(R3)
+	BEQ	3$		;branch if yes
+	TSTB	X25PID(R3)	;no. is previous operation complete
+	BNE	3$		;branch if no
+	MOVB	(R0)+,R1	;yes. get channel pointer
+	MOVB	R1,R.DPN(R2)
+	MUL	#CB.LEN,R1
+	ADD	R3,R1
+	ADD	#X25BLK,R1
+	MOVB	(R0)+,X25PID(R3) ;complete request
+	MOV	(R0)+,R.ADR(R2)
+	MOV	(R0)+,R.CNT(R2)
+	MOVB	(R0)+,R.FUN(R2)
+	MOVB	(R0)+,R.FLG+1(R2)
+	BIS	#QC.AAR,Q.CSR(R2) ;interrupt acp
+	BITB	#CF.INI,X25FLG(R3) ;is initialization in progress
+	BNE	1$		;branch if no
+	MOVB	#CF.INI,CB.FLG(R1) ;yes. initialize channel
+	INCB	@QUEGET(R3)	;advance to next one
+	CMPB	@QUEGET(R3),DPNMAX(R3)
+	BLO	3$		;branch if more to come
+	BISB	#CF.INI,X25FLG(R3)
+	MOVB	@QUEGET(R3),LCNMAX(R3)
+	ASLB	LCNMAX(R3)
+1$:	CMP	R0,QUEEND(R3)	;update get pointer
+	BLO	2$
+	MOV	QUEBGN(R3),R0
+2$:	MOV	R0,QUEGET(R3)
+3$:	MOV	(SP)+,R1	;evas
+	RTS	PC
+;
+; Subroutine to read channel
+; r0 = dpn
+;
+READ:	MOV	QUEPUT(R3),R1	;read channel
+	MOVB	R0,(R1)+	;(dpn)
+	CLRB	(R1)+		;(pid)
+	MOV	REGR1(R4),@R1	;(q.adr)
+	ADD	#X25LEN,(R1)+
+	MOV	@R4,@R1		;(q.cnt)
+	SUB	#X25LEN,(R1)+
+	MOV	#MB.RDY+FN.RED,(R1)+ ;(q.fun,q.flg)
+	JSR	PC,ENQUE
+	RTS	PC
+;
+; Subroutine to listen channel
+; r0 = dpn
+;
+LISTEN:	MOV	QUEPUT(R3),R1	;listen on selected channel
+	MOVB	R0,(R1)+	;(dpn)
+	CLRB	(R1)+		;(pid)
+	CLR	(R1)+		;(q.adr)
+	CLR	(R1)+		;(q.cnt)
+	MOV	#MB.RDY+FN.LWR,(R1)+ ;(q.fun,q.flg)
+	JSR	PC,ENQUE
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$KERD,RO,D
+;
+; Process headers
+;
+AXIPAT:	.PAT	AXREND,NETINP,PRI3,<0,0,AXRINI,AXXSIO,AXRINT>
+AXOPAT:	.PAT	AXXEND,NETOUT,PRI3,<0,AXXASY,AXXINI,AXXSIO,AXXINT,AXXRST>
+;
+	.END
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                 

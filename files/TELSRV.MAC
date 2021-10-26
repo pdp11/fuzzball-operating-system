@@ -1,0 +1,511 @@
+	.TITLE	TELSRV	DCN/RT-11 Telnet service
+	.SBTTL	System and module definitions
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn basic operating system - dcn/rt-11 telnet service
+;
+; This program opens a telnet connection for listening. the tcb for the
+; connection is allocated in high memory just below the resident monitor
+; area. when a connection is completed with a foreign host, this module
+; dispatches control based on the port specified. for some simple services
+; such as echo and sink, the service is performed internally. for others
+; control is chained to a designated external module. in the case of
+; telnet service, the command interpreter performs the usual chores.
+;
+; Variable  Bit	     Meaning		Set		Cleared
+; -------------------------------------------------------------
+; PAROPT    SERVE$   dedicated server	config		config
+; IOHFLG    OPEBIT   connection open	net signal	sg.cc	
+; IOHFLG    CLSBIT   connection held	login		logout
+; IOHSRV    word     ccb address	telsrv (open)	sg.cc	
+; IOHSIG    byte     signal opcode	net signal	telsrv
+; IOHDAT    word     error info		net signal	---
+;
+; Note: IOHSIG and IOHDAT are valid only when net traps (.snca) are not
+; enabled.
+;
+; This program is called (via chain) by the resident monitor during .exit
+; processing under the following conditions:
+;
+; IOHSRV = 0 and IOHSIG <> 0		tcp close signal
+; IOHSRV = 0 and IOHSIG = 0		connection is idle and dedicated
+;   and SERVE$ <> 0			  server is specified
+; IOHSRV <> 0 and IOHSIG <> 0		tcp open or error signal
+; IOHSRV <> 0 and IOHSIG = 0		logout request
+;
+; Conditional assembly switches
+;
+.IIF NDF,CS.LOG CS.LOG == 1	;login option (1=yes, 0=no)
+.IIF NDF,CS.TIM CS.TIM == 0	;tcp/time (1=yes, 0=no)
+;
+; External symbols
+;
+	.GLOBL	GTHOST,ADDR,LOGOUT
+	.GLOBL	NETMSG,RTNMSG
+;
+; Entry symbols
+;
+	.GLOBL	TELSRV		;entry from rmon
+	.GLOBL	RDBYT		;get byte
+	.GLOBL	PRBYT		;put byte
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.ERR,.PSA,.CLP,.FLG,.IOD,.CHN ;dcnlib definitions
+	.MCALL	.GCLK,.GDAT	;dcnlib macros
+	.MCALL	.EXIT,.CHAIN,.TTYIN,.LOOKU ;rt-11 macros
+	.MCALL	.TTYOU,.MSG,.TWAIT,.SPND,.QSET
+	.MCALL	$OPEN,$CLOSE,$STAT ;moslib definitions
+	.MCALL	DFCON,CALL,FORMAT ;netlib definitions
+	.COM			;common definitions
+	.ERR			;system error codes
+	.PSA			;supervisor psa and par definitions
+	.CLP			;rt-11 monitor area definitions
+	.FLG			;flag bit definitions
+	.IOD			;emulator monitor area extension
+	DFCON			;define connection status block
+	.CHN			;define argument area
+.	=	500+ENDCHN+200	;make room for stack
+;
+; Module definitions
+;
+CCBSIZ	=	4096.		;ccb size
+QUESIZ	=	20.		;max elements on completion queue
+	.PAGE
+	.SBTTL	TCP CONNECTION INTERFACE
+;
+; Procedure segment
+;
+	.PSECT	$BOSI,RO,I
+;
+; This routine is activated by the user process when a tcp signal is received
+; And in certain other cases. it inspects the signal, prints an appropriate
+; Comment and, in the case of the open signal, dispatches control to one
+; Of a set of server modules.
+;
+; Intercommunication between this module, the user process and the various
+; Servers is facilitated by a common region which is part of the chain area,
+; Which begins at location 500 in the background process and relative
+; Location zero in a foreground process.
+;
+TELSRV:	MOV	R0,R4		;rescue chain area pointer
+	CALL	LOGOUT,#0	;free any volumes lying around
+	MOV	@#SYSPTR,R5	;rebuild addressability
+	MOV	IOHPAR(R5),R3
+	.MSG	<#^RLOG>	;switch to logging terminal
+	.QSET	#QUEUE,#QUESIZ	;allocate space for completion queue
+TEL10:	MOV	IOHSRV(R5),R2	;get server variables
+	MOVB	IOHSIG(R5),R0
+	BNE	2$		;branch if significant
+	TST	R2
+	BNE	CON7		;branch if active
+	MOV	IOHTOP(R5),R2	;compute ccb address
+	MOV	#OPNBLK,R1
+	SUB	@R1,R2
+	MOV	R2,IOHSRV(R5)
+	MOV	R2,IOHTOP(R5)
+	MOV	R2,IOHCLI(R5)
+	MOV	R2,IOHBRK(R5)
+	CLR	@R2		;just a little extra check
+	$OPEN
+	TST	R0		;was open request accepted
+	BEQ	40$		;branch if yes
+	JSR	PC,PRIDNT	;no. display error message
+	JSR	PC,RTNMSG
+	CLR	IOHSRV(R5)	;erase all traces
+	MOV	R5,IOHTOP(R5)
+	MOV	R5,IOHCLI(R5)
+	MOV	R5,IOHBRK(R5)
+	BR	CON5X
+;
+40$:	BIT	#SERVE$,PAROPT(R3) ;is server locked
+	BNE	41$		;branch if yes
+	.TWAIT	#ARGBLK,#OPNTIM	;no. start connection timeout
+	BR	CON7		;timeout. close connection
+;
+41$:	JSR	PC,PRIDNT	;display listening message
+	JSR	PC,RTNMSG
+	BR	CON5A
+;
+2$:	CLRB	IOHSIG(R5)	;process signal
+	BIC	#TDMBIT,IOHFLG(R5) ;re-enable input
+	SUB	#ER.SIG,R0	;compute branch offset
+	MOV	R0,TEMP
+	MOV	IOHDAT(R5),R1	;get signal data
+	ASL	R0
+	ADD	R0,PC
+	BR	CON6		;0 open (host)
+	BR	CON1		;1 connection error (reason)
+	BR	CON1		;2 host not responding (reason)
+	BR	CON5		;3 closed
+	BR	CON1		;4 data available
+	BR	CON1		;5 connection reset (reason)
+	BR	CON1		;6 send complete
+	BR	CON1		;7 remote disconnect
+	BR	CON1		;10 remote interrupt
+	BR	CON1		;11 nsp (decnet)
+;
+CON5:	MOV	TEMP,R0		;closed. display message
+	JSR	PC,PRIDNT
+	JSR	PC,NETMSG
+CON5X:	BIT	#SERVE$,PAROPT(R3) ;is server locked
+	BNE	TEL10		;branch if yes
+	BIC	#100000,PAROPT(R3) ;no. release process
+CON5A:	.MSG	<#^RTT >	;switch to virtual terminal
+	.EXIT
+;
+CON1:	MOV	TEMP,R0		;error. display message
+	JSR	PC,PRIDNT
+	JSR	PC,NETMSG
+CON7:	BR	EXIT
+;
+CON6:	MOV	R4,R1		;open. save connection info in chain area
+	ADD	#CONBLK,R1
+	$STAT
+	MOV	R2,-(SP)
+	MOV	R4,R0		;extract local host info
+	ADD	#LCLNAM,R0
+	MOV	R0,R1
+	CMP	(R1)+,(R1)+
+	MOV	R1,R2
+	TSTB	(R2)+
+	CALL	GTHOST,R2,R0,R1
+	MOV	R4,R0		;get remote host info
+	ADD	#RMTNAM,R0
+	MOV	R0,R1
+	MOV	R4,R2
+	ADD	#CONBLK+CONRMT-CONPAR,R2
+	MOV	(R2)+,(R1)+
+	MOV	(R2)+,(R1)+
+	MOV	R1,R2
+	TSTB	(R2)+
+	CALL	ADDR,R2,R0,R1
+	MOV	(SP)+,R2
+	FORMAT	#COM11,R4	;open ...
+	.MSG	<#^RTT >	;switch to virtual terminal
+	MOV	CONBLK+CONLCL+4-CONPAR(R4),R0 ;get service port
+	SWAB	R0
+	MOV	#PORT,R1
+1$:	TST	@R1		;is this end of table
+	BNE	2$
+	FORMAT	#COM14,R4	;unrecognized request
+	BR	EXIT
+;
+2$:	CMP	R0,(R1)+
+	BEQ	3$
+	TST	(R1)+
+	BR	1$
+;
+3$:	JSR	PC,@0(R1)	;earn some revenue
+EXIT:	.MSG	<#^RTT >	;empty remaining chars in buffer
+	MOV	IOHSRV(R5),R2
+	$CLOSE
+	.SPND			;wait for connection to close
+;
+; Subroutine to put byte (for format, etc.)
+;
+PRBYT:	.TTYOU			;ho hum
+RDBYT:	RTS	PC
+;
+; Subroutine to display program ident
+;
+PRIDNT:	MOV	R0,-(SP)	;appear transparent
+	MOV	#COM00,R0	;display program ident
+	JSR	PC,FORMAT
+	MOV	(SP)+,R0
+	RTS	PC
+	.PAGE
+	.SBTTL	INTERNET SERVER LINKAGES
+;
+; Port 7 - echo (ech) tcp loopback
+; Note: port-7 echo should be intercepted by internet proc
+;
+ECHO:	.TTYIN			;mirror mirror on the wall
+	.TTYOU
+	BR	ECHO
+;
+; Port 9 - sink (sin) tcp discard ("black hole")
+;
+SINK:	.TTYIN			;carl sagan is at the bottom of this
+	BR	SINK
+;
+; Port 11 - systat (sys) who-is-on
+;
+SYSTAT:	FORMAT	#COM27,R4	;not yet postel, not yet
+	RTS	PC
+;
+; Port 13 - daytime (day) date/time in ascii
+;
+DAYTIM:	MOV	#DAYNAM,R0	;cli: "daytime"
+	JMP	CHAIN
+;
+; Port 15 - netstat (sys) who-is-up
+;
+NTSTAT:	MOV	#NETNAM,R0	;cli: "set host host"
+	JMP	CHAIN
+;
+; Port 17 - qod (sys) quote-of-the-day
+;
+QOD:	FORMAT	#COM27,R4	;not yet postel, not yet
+	RTS	PC
+;
+; Port 19 - test (tty) character generator ("fire hose")
+;
+TEST:	MOV	#TESNAM,R0	;cli: "test 1000"
+	JMP	CHAIN
+;
+; Port 21 - ftp (ftp) file transfer
+;
+FTP:	MOV	#FTPNAM,R0	;chain to ftp server
+	JMP	CHAIN
+;
+; Port 23/223 - telnet (tel) telnet
+;
+TELNET:	MOV	#COM17,R0	;send herald
+	MOV	R4,R1
+	JSR	PC,FORMAT
+	.IF	NE,CS.LOG	;include for login option
+	MOV	#TELNAM,R0	;chain to login server
+	JMP	CHAIN
+	.IFF
+	BIS	#CLSBIT,IOHFLG(R5) ;do not terminate just yet
+	JMP	EXIT
+	.ENDC
+;
+; Port 25 - smtp (mal) simple mail transfer
+;
+SMTP:	BIS	#TELBIT,IOHFLG(R5) ;disable telnet negotiations
+	MOV	#SMPNAM,R0	;chain to smtp server
+	JMP	CHAIN
+;
+; Port 37 - time (tim) time
+;
+TIME:
+	.IF	EQ,CS.TIM	;conditional assembly for time server
+	FORMAT	#COM37,R4	;tcp/time service discontinued
+	RTS	PC
+	.IFF
+	BIS	#TELBIT,IOHFLG(R5) ;disable telnet negotiations
+	JSR	PC,JULIAN	;get rfc-868 clock
+	BCS	2$		;branch if unsynchronized
+	MOV	R1,-(SP)	;scramble for big-endians
+	SWAB	R1
+	MOV	R1,-(SP)
+	MOV	R0,-(SP)
+	SWAB	R0
+	MOV	R0,-(SP)
+	MOV	#4,R1		;return four octets
+1$:	MOV	(SP)+,R0	;get next octet
+	.TTYOU
+	SOB	R1,1$
+2$:	RTS	PC
+;
+; Julian (jul) read julian clock
+; Returns r0-r1 = julian (rfc-868) clock (seconds past 1 January 1900)
+;
+JULIAN:	MOV	R2,-(SP)	;save
+	MOV	R3,-(SP)
+	.GDAT			;get date (days past 1 January 1972)
+	CMP	R0,#140000	;is clock synchronized
+	BHIS	3$		;branch if no
+	BIC	#140000,R0	;yes. convert to day-seconds
+	MUL	#21600.,R0	;(60*60*24/4)
+	ASHC	#2,R0		;(4)
+	MOV	R0,-(SP)
+	MOV	R1,-(SP)
+	.GCLK			;get time (milliseconds past 0000)
+	ADD	#500.,R1	;(round off to nearest second)
+	ADC	R0
+	CLR	R2		;convert to seconds
+	MOV	#33.,R3
+1$:	ROL	R2
+	ADD	#-1000.,R2
+	BCS	2$
+	SUB	#-1000.,R2
+2$:	ROL	R1
+	ROL	R0
+	DEC	R3
+	BNE	1$
+	ADD	(SP)+,R1	;add day-seconds
+	ADC	R0
+	ADD	(SP)+,R0
+	ADD	#58752.,R1	;(2,272,060,800) 0000 1 january 1972
+	ADC	R0
+	ADD	#34668.,R0
+	CLC			;normal return
+	BR	4$
+;
+3$:	SEC			;error return
+4$:	MOV	(SP)+,R3	;evas
+	MOV	(SP)+,R2
+	RTS	PC
+	.ENDC
+;
+; Port 42 - name (nam) name
+;
+NAME:	FORMAT	#COM27,R4	;not yet postel, not yet
+	RTS	PC
+;
+; Port 45 - mpm (mpm) message processing module
+;
+MPM:	BIS	#TELBIT,IOHFLG(R5) ;disable telnet negotiations
+	MOV	#MPMNAM,R0	;chain to mpm server
+	JMP	CHAIN
+;
+; Port 47 - niftp (nfp) network independent file transfer
+;
+NIFTP:	MOV	#NFPNAM,R0	;chain to niftp user
+	JMP	CHAIN
+;
+; Port 79 - finger (fng) who-is-there
+;
+FINGER:	MOV	#FNGNAM,R0	;chain to finger server
+	JMP	CHAIN
+;
+; Port 87 - talk (tlk) operator intercom
+; Note: this is a dcn-proprietary protocol
+;
+TALK:	BIS	#TELBIT,IOHFLG(R5) ;disable telnet negotiations
+	MOV	#TLKNAM,R0	;chain to talk server
+	JMP	CHAIN
+;
+; Port 107 - user telnet
+;
+TN:	MOV	#NVTNAM,R0	;chain to telnet user
+	JMP	CHAIN
+;
+; Port 127 - vcg (vcg display from tektronix data)
+;
+VCG:	BIS	#TELBIT,IOHFLG(R5) ;disable telnet negotiations
+	MOV	#VCGNAM,R0	;chain to vcg server
+	JMP	CHAIN
+;
+; Port 515 - spool (spq) output spooler (unix)
+;
+SPQ:	BIS	#TELBIT,IOHFLG(R5) ;disable telnet negotiations
+	MOV	#SPQNAM,R0	;chain to spooler server
+	JMP	CHAIN
+;
+; Chain to server program
+;
+CHAIN:	MOV	(R0)+,(R4)+	;copy file name
+	MOV	(R0)+,(R4)+
+	MOV	(R0)+,(R4)+
+	MOV	(R0)+,(R4)+
+	MOV	R4,R1		;copy argument string
+	TST	(R1)+
+1$:	MOVB	(R0)+,(R1)+
+	BNE	1$
+	SUB	R4,R1		;compute length
+	MOV	R1,@R4
+	BIS	#100000,@R4	;nonstandard flag
+	.CHAIN
+	.PAGE
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+; Port name table
+;
+PORT:	.WORD	7.,ECHO		;echo
+	.WORD	9.,SINK		;discard
+	.WORD	11.,SYSTAT	;who-is-on
+	.WORD	13.,DAYTIM	;date/time
+	.WORD	15.,NTSTAT	;who-is-up
+	.WORD	17.,QOD		;quote-of-the-day
+	.WORD	19.,TEST	;character generator
+	.WORD	21.,FTP		;file transfer
+	.WORD	23.,TELNET	;telnet
+	.WORD	223.,TELNET	;telnet
+	.WORD	25.,SMTP	;simple mail transfer
+	.WORD	37.,TIME	;time
+	.WORD	42.,NAME	;name
+	.WORD	45.,MPM		;message processing module
+	.WORD	47.,NIFTP	;network independent file transfer
+	.WORD	79.,FINGER	;who-is-there
+	.WORD	87.,TALK	;operator intercom (dcn)
+	.WORD	107.,TN		;user telnet
+	.WORD	127.,VCG	;vcg display (dcn)
+	.WORD	515.,SPQ	;output spooler (unix)
+	.WORD	0		;end of table and friendly zeros
+;
+TLKTIM:	.WORD	0,60.		;talk timeout (one second)
+OPNTIM:	.WORD	0,60.*60.	;connection timeout (one minute)
+;
+; Cli command strings
+;
+DAYNAM:	.RAD50	'SY CLI   SAV'	;cli
+	.ASCIZ	'DAYTIME'	;daytime
+	.EVEN
+NETNAM:	.RAD50	'SY CLI   SAV'	;cli
+	.ASCIZ	'SET HOST HOST'	;netstat
+	.EVEN
+TESNAM:	.RAD50	'SY CLI   SAV'	;cli
+	.ASCIZ	'TEST 1000'	;test
+	.EVEN
+FNGNAM:	.RAD50	'SY FINGERSAV'	;finger server
+	.BYTE	0
+	.EVEN
+FTPNAM:	.RAD50	'SY FTPSRVSAV'	;ftp server
+	.BYTE	0
+	.EVEN
+TELNAM:	.RAD50	'SY LOGIN SAV'	;login server
+	.BYTE	0
+	.EVEN
+MPMNAM:	.RAD50	'SY MMM   SAV'	;mpm server
+	.ASCIZ	'MPMSRV'
+	.EVEN
+NFPNAM:	.RAD50	'SY NIFTP SAV'	;niftp user
+	.BYTE	0
+	.EVEN
+SMPNAM:	.RAD50	'SY SMPSRVSAV'	;smtp server
+	.BYTE	0
+	.EVEN
+TLKNAM:	.RAD50	'SY TN    SAV'	;talk server
+	.ASCIZ	'TALK'
+	.EVEN
+NVTNAM:	.RAD50	'SY TN    SAV'	;telnet user
+	.BYTE	0
+	.EVEN
+VCGNAM:	.RAD50	'SY VCGSRVSAV'	;vcg server
+	.BYTE	0
+	.EVEN
+SPQNAM:	.RAD50	'SY SPQSRVSAV'	;output spooler
+	.BYTE	0
+	.EVEN
+;
+; Text strings
+;
+COM17:	.ASCIZ	'^A'<LCLNAM+5>' TELNET Service (12-Mar-84 Version) ^LD ^LT'
+COM14:	.ASCII	'^A'<LCLNAM+5>' Unrecognized request ^XI'
+	.ASCIZ	<CONBLK+CONLCL+4-CONPAR>
+COM27:	.ASCIZ	'^A'<LCLNAM+5>' Not yet Postel, not yet'
+	.IF	EQ,CS.TIM	;include when no tcp/time
+COM37:	.ASCII	'^A'<LCLNAM+5>' TCP/TIME service discontinued.'
+	.ASCIZ	' Use UDP/TIME or UDP/NTP instead.'
+	.ENDC
+COM00:	.ASCIZ	'?TELSRV-^+'
+COM11:	.ASCIZ	'?TELSRV-I-Open ^A'<RMTNAM+5>' ^XI'<CONBLK+CONLCL+4-CONPAR>
+	.EVEN
+;
+	.PSECT	$DATA,RW,I
+;
+OPNBLK:	.WORD	CCBSIZ		;ccb size
+	.WORD	0		;completion routine (not used)
+	.BYTE	6,305		;protocol, flags
+	.WORD	0,0,0		;local socket
+	.WORD	0,0,0		;remote socket
+	.WORD	0,20		;max datagram size/options (d-bit tos)
+;
+; Variables
+;
+TEMP:	.BLKW	1		;temporary
+ARGBLK:	.BLKW	5		;rt-11 argument block
+QUEUE:	.BLKW	QUESIZ.*7.	;space for completion queue
+	.EVEN
+;
+	.END	TELSRV
+                                           

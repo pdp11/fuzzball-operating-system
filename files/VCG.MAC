@@ -1,0 +1,514 @@
+	.TITLE	VCG	Peritek bitmap interface
+	.NLIST	BEX
+	.ENABL	LC
+;
+; VCG Peritek bitmap interface
+;
+; The program saves and restores emages from the Peritek VCG 640 x 512 x 3
+; display. It operates with three types of data: arbitrary bitmap, Sun bitmap,
+; facsimile and text/Tektronix. Except for arbirtrary bitmap, which is
+; explicitly selected by an option, the type is determined by inspection of
+; the file contents. Output can also be sent to a file in Sun bitmap format
+; or in PostScript format suitable for an Apple LaserWriter.
+;
+; Options
+; /b	bitmap mode
+; /x	PostScript (output only)
+; /d:1 	b/w in standard Sun format (one bit per pel) (default)
+; /d:3	color in special Peritek format (three bits per pel)
+; /w:n	width (pels) /b only. (default 640)
+; /h:n	height (pels) /b only. (default 512)
+; /i	invert image (bitmap and facsimile)
+; /l	landscape mode (bitmap and facsimile)
+; /p	portrait mode (bitmap and facsimile)
+;
+; External symbols
+;
+	.GLOBL	VCGINI,VCGWRT	;image data interface
+;
+; Entry symbols
+;
+	.GLOBL	TKRPLY		;flashy graphics
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.CSIGE,.EXIT,.PRINT,.TTYOU,.TTYIN ;rt-11 definitions
+	.MCALL	.WAIT,.WRITW,.READW,.CLOSE
+	.MCALL	.COM,.CHR	;dcnlib definitions
+	.MCALL	CALL		;netlib definitions
+	.COM			;define common data
+	.CHR			;define ascii character codes
+;
+; Assembly parameters
+;
+MAXSIZ	=	8.		;max buffer size (blocks)
+MAXLIN	=	80.		;max line size
+PXMAX	=	640.		;max x pels
+PYMAX	=	512.		;max y pels
+VCGREG	=	174760		;vcg register base (4 words)
+VCGWDW	=	175000		;vcg window base (128 words)
+;
+; Sun image file header
+; (32-bit byte-swapped doublewords)
+;
+.	=	0
+RS.MAG:	.BLKW	2		;(ras_magic) magic number
+RS.WID:	.BLKW	2		;(ras_width) width (pels) of image
+RS.HGH:	.BLKW	2		;(ras_height) height (pels) of image
+RS.DPT:	.BLKW	2		;(ras_depth) depth (1,8,24 bits) of pel
+RS.IMG:	.BLKW	2		;(ras_length) length (bytes) of image
+RS.TYP:	.BLKW	2		;(ras_type) type of file
+RS.COL:	.BLKW	2		;(ras_maptype) type of colormap
+RS.MAP:	.BLKW	2		;(ras_maplength) length (bytes) of color map
+RS.LEN	=	.		;length of header
+;
+; VCG control registers
+;
+.	=	0
+VCGADR:	.BLKW	1		;crtc address register
+VCGDAT:	.BLKW	1		;crtc data register
+VCGCTL:	.BLKW	1		;display address and control register
+VC.ADR	=	177400		;line address bits 7-0
+VC.AD8	=	000200		;line address bit 8
+VC.VGO	=	000040		;enable crtc
+VC.WDW	=	000020		;enable window memory addressing
+VC.MEM	=	000002		;write ones in memory
+VC.DMA	=	000001		;enable dma memory addressing
+VCGBUF:	.BLKW	1		;display buffer register
+;
+; Procedure segment
+;
+	.PSECT	$BOSI,RO,I
+;
+; Entry point
+;
+START:	BIS	#40000,@#44	;disable folding
+NXTFIL:	MOV	@#42,SP		;safety first
+	CLR	MODE		;preset defaults (color)
+	CLR	LPMODE
+	CLR	XMODE
+	MOV	#PXMAX,XMAX
+	MOV	#PYMAX,YMAX
+	MOV	#1,DEPTH
+	.CSIGE	@#50,#DEFEXT,#0	;get file spec
+	BCS	NXTFIL
+	TST	(SP)+		;pop off count
+1$:	CMP	SP,@#42		;more switches specified
+	BHIS	INPUT		;branch if no
+	MOV	(SP)+,R1	;get option switch
+	CMPB	R1,#140
+	BLO	2$
+	SUB	#040,R1
+2$:	TST	R1
+	BPL	5$		;branch if no value
+	MOV	(SP)+,R0	;value. retrieve it
+	CMPB	R1,#'W		;is this w:value
+	BNE	3$		;branch if no
+	MOV	R0,XMAX		;yes. stash width
+	BR	1$
+;
+3$:	CMPB	R1,#'H		;is this h:value
+	BNE	4$		;branch if no
+	MOV	R0,YMAX		;yes. stash height
+	BR	1$
+;
+4$:	CMPB	R1,#'D		;is this d:value
+	BNE	5$		;branch if no
+	MOV	R0,DEPTH	;yes. stash depth (1 or 3)
+	BR	1$
+;
+5$:	CMPB	R1,#'I		;is this invert
+	BNE	6$		;branch if no
+	COM	XMODE		;yes. invert switch
+	BR	1$
+;
+6$:	CMPB	R1,#'L		;is this l
+	BNE	7$		;branch if no
+	MOV	#1,LPMODE	;yes. set landscape mode
+	BR	1$
+;
+7$:	CMPB	R1,#'P		;is this p
+	BNE	8$		;branch if no
+	MOV	#2,LPMODE	;yes. set portrait mode
+	BR	1$
+;
+8$:	MOV	R1,MODE		;stash data type
+	BR	1$
+;
+; Process request
+;
+INPUT:	.WAIT	#3		;is input file defined
+	BCS	1$		;branch if no
+	.READW	#ARGBLK,#3,#BUFFER,#MAXSIZ*256.,#0 ;yes. read first block
+	BCC	2$		;branch if ok
+	.PRINT	#COM20		;file read error
+1$:	JMP	OUTPUT
+;
+2$:	MOV	R0,NWORDS	;set pointers
+	MOV	#MAXSIZ,BLOCK
+	MOV	#BUFFER,BUFPTR
+	CMPB	MODE,#'B	;is this bitmap mode
+	BNE	3$		;branch if no
+	CALL	VCGINI,#1,XMAX,YMAX,LPMODE ;yes. light bitmap
+	BR	6$
+;
+3$:	CMP	BUFFER,MAGIC	;is this sun image file
+	BNE	4$		;branch if no
+	CMP	BUFFER+2,MAGIC+2
+	BEQ	INP10		;branch if yes
+4$:	CMP	BUFFER,FAXMGC	;no. is this facsimile file
+	BNE	5$		;branch if no
+	CALL	VCGINI,#2,#1726.,#2200.,LPMODE ;yes. light fax
+	BR	6$
+;
+5$:	CALL	VCGINI,#0,#0,#0,LPMODE ;light text/tektronix
+6$:	JSR	PC,BINP		;get next data word
+	BCS	OUTPUT		;branch if unable
+	CALL	VCGWRT,R0	;cough it up
+	BR	6$
+;
+INP10:	MOV	BUFFER+RS.WID+2,XMAX ;sun format. extract header info
+	SWAB	XMAX
+	MOV	BUFFER+RS.HGH+2,YMAX
+	SWAB	YMAX
+	MOV	XMAX,R0		;compute bits per line
+	ADD	#17,R0
+	BIC	#17,R0
+	MUL	YMAX,R0		;compute total bits
+	ASHC	#-4.,R0		;convert to words
+	MOV	R0,LENGTH
+	MOV	R1,LENGTH+2
+	MOV	BUFFER+RS.MAP+2,R0 ;adjust for color map
+	SWAB	R0
+	ADD	#RS.LEN,R0
+	ADD	R0,BUFPTR
+	ASR	R0
+	SUB	R0,NWORDS
+	CMP	BUFFER+RS.DPT+2,#1*400 ;is this b/w
+	BEQ	1$		;branch if yes
+	CALL	VCGINI,#0,#0,#0,#0 ;color. restore image
+	JSR	PC,RSTOR
+	BR	OUTPUT
+;
+1$:	CALL	VCGINI,#1,XMAX,YMAX,LPMODE ;light bitmap
+2$:	SUB	#1,LENGTH+2	;is copy complete
+	SBC	LENGTH
+	BCS	OUTPUT		;branch if yes
+	JSR	PC,BINP		;no. get next data word
+	BCS	OUTPUT		;branch if unable
+	CALL	VCGWRT,R0	;cough it up
+	BR	2$
+;
+OUTPUT:	.WAIT	#0		;is output file defined
+	BCS	1$		;branch if no
+	JSR	PC,SAVE		;yes. save image
+1$:	JMP	NXTFIL
+;
+; Restore image
+;
+; This subroutine restores the display memory from file #3
+;
+RSTOR:	MOV	#BUFFER+RS.LEN,R3 ;copy color map values
+	CLR	R1
+1$:	CMP	R3,BUFPTR	;is copy done
+	BHIS	2$		;branch if yes
+	BIC	#177400,@#VCGREG+VCGCTL ;no. bop another one
+	BIS	R1,@#VCGREG+VCGCTL
+	MOV	(R3)+,R0
+	SWAB	R0
+	MOV	R0,@#VCGREG+VCGBUF
+	ADD	#400,R1
+	BR	1$
+;
+2$:	CLR	YPOS		;initialize pointers
+	MOV	#1,SERDES
+	BIS	#VC.WDW,@#VCGREG+VCGCTL
+3$:	MOV	YPOS,R0		;set y position
+	ASH	#8.,R0
+	RORB	R0
+	BIC	#177600,@#VCGREG+VCGCTL
+	BIS	R0,@#VCGREG+VCGCTL
+	MOV	#VCGWDW,R1	;copy from file
+	MOV	#128.,R2
+4$:	JSR	PC,BINP
+	BCS	5$		;branch if eof
+	MOV	R0,(R1)+
+	SOB	R2,4$
+	INC	YPOS
+	CMP	YPOS,YMAX
+	BLO	3$
+5$:	RTS	PC
+;
+; Subroutine to read buffer
+; Returns r0 = byte, c(cc) = 1 if eof, to main loop if error
+;
+BINP:	TST	NWORDS		;is buffer empty
+	BNE	1$		;branch if no
+	.READW	#ARGBLK,#3,#BUFFER,#MAXSIZ*256.,BLOCK ;yes. read next buffer
+	BCS	2$		;branch if error
+	MOV	R0,NWORDS	;ok. update pointers
+	ADD	#MAXSIZ,BLOCK
+	MOV	#BUFFER,BUFPTR
+1$:	MOV	@BUFPTR,R0	;read byte
+	ADD	#2,BUFPTR
+	DEC	NWORDS
+	CLC			;normal exit
+	RTS	PC
+;
+2$:	TSTB	@#52		;bad read. is it eof
+	BNE	3$		;branch if no
+	SEC			;exception exit
+	RTS	PC
+;
+3$:	.PRINT	#COM20		;file read error
+	JMP	NXTFIL
+;
+; Save image
+;
+; This subroutine saves the display memory in file #0
+; /d:1 	b/w in standard Sun format (one bit per pel)
+; /d:3	color in special Peritek format (three bits per pel)
+;
+SAVE:	MOV	#BUFFER,R3	;initialize header
+	CMPB	MODE,#'X	;is this hexshine
+	BNE	2$		;branch if no
+	CLR	LINCNT		;yes. initialize for postscript output
+	MOV	#PREAMB,R1	;copy preamble
+1$:	MOVB	(R1)+,(R3)+
+	BNE	1$
+	BR	5$		;continue body
+;
+2$:	MOV	MAGIC,(R3)+	;(rs.mag) initialize for sunshine output
+	MOV	MAGIC+2,(R3)+
+	CLR	(R3)+		;(rs.width)
+	MOV	XMAX,@R3
+	SWAB	(R3)+
+	CLR	(R3)+		;(rs.height)
+	MOV	YMAX,@R3
+	SWAB	(R3)+
+	CLR	(R3)+		;(rs.depth)
+	MOV	DEPTH,@R3
+	SWAB	(R3)+
+	MOV	XMAX,R0		;(rs.length) (bytes)
+	MUL	DEPTH,R0
+	MOV	R1,R0
+	ADD	#17,R0
+	BIC	#17,R0
+	MUL	YMAX,R0
+	ASHC	#-3.,R0
+	MOV	R0,@R3
+	SWAB	(R3)+
+	MOV	R1,@R3
+	SWAB	(R3)+
+	CMP	DEPTH,#1	;is this b/w file
+	BEQ	4$		;branch if yes
+	CLR	(R3)+		;(rs.typ) no. specify color (special)
+	MOV	#377*400,(R3)+
+	CLR	(R3)+		;(rs.col)
+	CLR	(R3)+
+	CLR	(R3)+		;(rs.map)
+	MOV	#32.*400,(R3)+
+	CLR	R1		;copy color map values
+	MOV	#16.,R2
+3$:	BIC	#177400,@#VCGREG+VCGCTL
+	BIS	R1,@#VCGREG+VCGCTL
+	MOV	@#VCGREG+VCGBUF,@R3
+	SWAB	(R3)+
+	ADD	#400,R1
+	SOB	R2,3$
+	BR	5$
+;
+4$:	CLR	(R3)+		;(rs.typ) specify b/w (standard)
+	MOV	#1*400,(R3)+
+	CLR	(R3)+		;(rs.col)
+	CLR	(R3)+
+	CLR	(R3)+		;(rs.map)
+	CLR	(R3)+
+5$:	MOV	R3,BUFPTR	;initialize pointers
+	CLR	BLOCK
+	CLR	YPOS
+	MOV	#1,SERDES
+	BIS	#VC.WDW,@#VCGREG+VCGCTL
+6$:	MOV	YPOS,R0		;set y position
+	ASH	#8.,R0
+	RORB	R0
+	BIC	#177600,@#VCGREG+VCGCTL
+	BIS	R0,@#VCGREG+VCGCTL
+	MOV	#VCGWDW,R1	;copy next line
+	MOV	#128.,R2
+7$:	MOV	(R1)+,R0	;get next word
+	JSR	PC,BOUT
+	SOB	R2,7$
+	INC	YPOS		;increment y position
+	CMP	YPOS,YMAX	;is copy complete
+	BLO	6$		;branch if no
+	CMPB	MODE,#'X	;yes. is this hexshine
+	BNE	9$		;branch if no
+	MOV	#POSAMB,R1	;yes. copy postamble
+8$:	MOVB	(R1)+,R0
+	BEQ	9$		;branch when done
+	JSR	PC,ZOUT
+	BR	8$
+;
+9$:	MOV	BUFPTR,R1	;is buffer empty
+	SUB	#BUFFER,R1
+	BEQ	11$		;branch if yes
+	BIT	#777,R1		;no. is this block boundary
+	BEQ	10$		;branch if yes
+	CLR	R0		;no. zero-fill remainder
+	JSR	PC,ZOUT
+	BR	9$
+;
+10$:	ASR	R1		;write last buffer
+	.WRITW	#ARGBLK,#0,#BUFFER,R1,BLOCK
+	BCC	11$		;branch if ok
+	.PRINT	#COM21		;file write error
+	JMP	NXTFIL
+;
+11$:	.CLOSE	#0		;close output file
+	RTS	PC
+;
+; Subroutine to assemble b/w data word
+; R0 = word
+;
+BOUT:	CMP	DEPTH,#1	;is this b/w
+	BNE	XOUT		;branch if no
+	MOV	R1,-(SP)	;yes. save
+	MOV	R2,-(SP)
+	MOV	R0,R1		;initialize
+	COM	R1
+	MOV	#5,R2
+1$:	SEC			;shift next bit
+	BIT	#7,R1
+	BEQ	2$
+	CLC	
+2$:	ROL	SERDES		;is word complete
+	BCC	4$		;branch if no
+	MOV	SERDES,R0	;yes. copy to buffer
+	SWAB	R0
+	TST	XMODE
+	BPL	3$
+	COM	R0
+3$:	JSR	PC,XOUT
+	MOV	#1,SERDES
+4$:	ASH	#-3,R1
+	SOB	R2,1$
+5$:	MOV	(SP)+,R2	;evas
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to copy data word to buffer (direct or hex-encoded)
+; R0 = word, returns to main loop if error
+;	
+XOUT:	CMPB	MODE,#'X	;is this hex
+	BEQ	1$		;branch if yes
+	MOV	R0,-(SP)	;no. output first byte
+	JSR	PC,ZOUT
+	MOV	(SP)+,R0	;output second byte
+	SWAB	R0
+	JSR	PC,ZOUT
+	RTS	PC
+;
+1$:	COM	R0		;hex (apples are inverted)
+	MOV	R0,-(SP)	;save data word
+	ASH	#-4.,R0		;hex 1
+	JSR	PC,WOUT
+	MOV	@SP,R0		;hex 2
+	JSR	PC,WOUT
+	MOV	@SP,R0		;hex 3
+	ASH	#-12.,R0
+	JSR	PC,WOUT
+	MOV	@SP,R0		;hex 4
+	ASH	#-8.,R0
+	JSR	PC,WOUT
+	MOV	(SP)+,R0	;evas
+	RTS	PC
+;
+WOUT:	BIC	#^C17,R0	;convert to hex
+	MOVB	HEXTAB(R0),R0
+	JSR	PC,ZOUT		;output hexit
+	INC	LINCNT		;is this end of line
+	CMP	LINCNT,#MAXLIN
+	BLO	1$		;branch if no
+	MOV	#CR,R0		;yes. output cr/lf
+	JSR	PC,ZOUT
+	MOV	#LF,R0
+	JSR	PC,ZOUT
+	CLR	LINCNT
+1$:	RTS	PC
+;
+; Subroutine to copy data byte to buffer
+; R0 = byte, returns to main loop if error
+;	
+ZOUT:	MOVB	R0,@BUFPTR	;stash byte
+	INC	BUFPTR
+	CMP	BUFPTR,#BUFEND	;is buffer full
+	BLO	1$		;branch if no
+	.WRITW	#ARGBLK,#0,#BUFFER,#MAXSIZ*256.,BLOCK ;yes. write block
+	BCS	2$		;branch if error
+	ADD	#MAXSIZ,BLOCK	;initialize pointers
+	MOV	#BUFFER,BUFPTR
+1$:	RTS	PC
+;
+2$:	.PRINT	#COM21		;file write error
+	JMP	NXTFIL
+;
+; Subroutine to send reply octet
+; R0 = octet
+;
+TKRPLY:	.TTYOU			;siberian railroad
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+MAGIC:	.WORD	123131,112552	;sun image file magic identifier (?!)
+FAXMGC:	.WORD	034114		;facsimile file identifer
+HEXTAB:	.ASCII	'0123456789ABCDEF' ;hex convert table
+DEFEXT:	.RAD50	'BITBITBITBIT'	;default extensions
+COM20:	.ASCIZ	'?VCG-F-File read error'
+COM21:	.ASCIZ	'?VCG-F-File write error'
+;
+; PostScript procedures
+;
+PREAMB:	.ASCII	'save			% save state'<CR><LF>
+	.ASCII	'initgraphics		% initialize page'<CR><LF>
+	.ASCII	'erasepage'<CR><LF>
+	.ASCII	'/picstr 40 string def	% string to hold image data'<CR><LF>
+	.ASCII	'47 720 translate	% relocate origin'<CR><LF>
+	.ASCII	'-90 rotate		% switch to portrait mode'<CR><LF>
+	.ASCII	'648 518 scale		% map image to fill page'<CR><LF>
+	.ASCII	'640 512 1		% width height bits/sample'<CR><LF>
+	.ASCII	'[640 0 0 -512 0 512]	% map unit square to source'<CR><LF>
+	.ASCII	'{currentfile picstr	% read image data'<CR><LF>
+	.ASCII	'readhexstring pop}'<CR><LF>
+	.ASCIZ	'image'<CR><LF>
+;
+POSAMB:	.ASCII	'showpage		% etch page'<CR><LF>
+	.ASCII	'restore			% restore state'<CR><LF>
+	.ASCIZ	<EOT>
+	.EVEN
+;
+; Variables
+;
+ARGBLK:	.BLKW	5		;rt-11 argument block
+MODE:	.BLKW	1		;mode (s/r)
+LPMODE:	.BLKW	1		;image mode
+XMODE:	.BLKW	1		;invert switch
+YPOS:	.BLKW	1		;current y position (0-511)
+XMAX:	.BLKW	1		;max x pels (1-640)
+YMAX:	.BLKW	1		;max y pels (1-512)
+DEPTH:	.BLKW	1		;depth of pel
+LENGTH:	.BLKW	2		;image length (pels)
+SERDES:	.BLKW	1		;assembly register
+BLOCK:	.BLKW	1		;file block
+LINCNT:	.BLKW	1		;bytes output
+NWORDS:	.BLKW	1		;words remaining
+BUFPTR:	.BLKW	1		;buffer pointer
+BUFFER:	.BLKW	MAXSIZ*256.	;buffer
+BUFEND	=	.		;end of buffer
+;
+	.END	START
+   

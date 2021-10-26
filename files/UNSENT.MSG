@@ -1,0 +1,2353 @@
+03-Jun-89 04:07:52,178;000000000000  
+M000 to:<mills@dcn16.udel.edu>
+Return-path: <mills@dcn6.udel.edu>
+Date: 03-Jun-89 04:07:48-UT
+From: mills@dcn6.udel.edu
+Subject: test
+To:   mills@dcn16.udel.edu
+
+-------
+14-Dec-90 02:18:45,639;000000000001  
+S250 to:<murthy%betaal@shakti.ernet.in>
+DLVD to:<mills@huey.udel.edu>
+Return-path: <mills@huey.udel.edu>
+Date: 14-Dec-90 02:16:48-UT
+From: mills@huey.udel.edu
+Subject: Duplicate confirmation
+To:   murthy%betaal@shakti.ernet.in
+cc:   mills@huey.udel.edu
+
+Murthy,
+
+Our mail system just turned flake, so I am sending this message
+via devious means to make sure you receive my confirmation of
+your message that you would meet me at the airport. As I said
+in my other message, I have your software on Sun-compatible
+tape, but you had better find room for over 61 megabytes.
+
+See you in a couple of nights.
+
+Prof. M
+-------
+END                                 
+ppose
+you want to find the name that goes with IP address 128.6.4.7:
+
+% nslookup
+Default Server:  wayback.cs.cornell.edu
+Address:  0.0.0.0
+
+> set q=PTR
+> 7.4.6.128.in-addr.arpa.
+Server:  wayback.cs.cornell.edu
+Address:  0.0.0.0
+
+7.4.6.128.in-addr.arpa host name = RUTGERS.EDU
+> ^D
+%
+
+The important thing to note is the reversed order of the address octets.
+(That, and the "in-addr.arpa." part.)  What is "thost"?
+
+-Larry Parmelee
+parmelee@cs.cornell.edu
+21-Sep-88 15:38:04,4287;000000000002  
+DLVD to:<mills>
+Return-path: <lrr@Princeton.EDU>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 21-Sep-88 15:37:45-UT
+Received: from PRINCETON.EDU by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA15409; Wed, 21 Sep 88 07:43:25 PDT
+Received: by Princeton.EDU (5.58+++/1.80)
+	id AA23719; Wed, 21 Sep 88 09:46:17 EDT
+From: lrr@Princeton.EDU (Larry Rogers)
+Message-Id: <8809211346.AA23719@Princeton.EDU>
+To: parmelee@wayback.cs.cornell.edu (Larry Parmelee)
+Cc: bind@ucbarpa.Berkeley.EDU
+Subject: Re: internet addr to internet name 
+In-Reply-To: Your message of Wed, 21 Sep 88 06:59:55 EDT.
+             <8809211059.AA07989@wayback.cs.cornell.edu> 
+Date: Wed, 21 Sep 88 09:46:15 EDT
+
+I got tired of typing all of the in-addr.arpa giberish.  So, here are
+the changes to nslookup (bind version 4.8) to do this in the ``natural
+way,'' as shown below.
+
+% nslookup
+Default Server:  cart.princeton.EDU
+Address:  128.112.14.17
+
+> set q=PTR
+> 128.112.0.1
+Server:  cart.princeton.EDU
+Address:  128.112.14.17
+
+1.0.112.128.in-addr.arpa        host name = Princeton.EDU
+> ^D
+%
+Enjoy!
+
+
+489a490,524
+> #ifdef PRINCETON
+> {
+> #include      <ctype.h>
+>       if (queryType == T_PTR) {
+>               register char *p;
+>               int ip[4];
+>               char *dotp[3];
+> 
+>               if (index(host, '.')) {
+>                       for (p = host; *p; p++) {
+>                               if (isupper(*p)) {
+>                                       *p = tolower(*p);
+>                               }
+>                       }
+>                       if ((p = index(host, 'i')) &&
+>                               (strcmp(p-1, ".in-addr.arpa" ) == 0 ||
+>                                strcmp(p-1, ".in-addr.arpa.") == 0)) {
+>                               /*
+>                                * string ends with .in-addr.arpa - go for it!
+>                                */
+>                               ;
+>                       } else if (sscanf(host, "%d.%d.%d.%d",
+>                                       &ip[0], &ip[1], &ip[2], &ip[3]) != 4) {
+>                               /*
+>                                * not a valid IP address - use it as is.
+>                                */
+>                                ;
+>                       } else {
+>                               sprintf(host, "%d.%d.%d.%d.in-addr.arpa.",
+>                                               ip[3], ip[2], ip[1], ip[0]);
+>                       }
+>               }
+>       }
+> }
+> #endif PRINCETON
+600a636,670
+> #ifdef PRINCETON
+> {
+> #include      <ctype.h>
+>       if (queryType == T_PTR) {
+>               register char *p;
+>               int ip[4];
+>               char *dotp[3];
+> 
+>               if (index(host, '.')) {
+>                       for (p = host; *p; p++) {
+>                               if (isupper(*p)) {
+>                                       *p = tolower(*p);
+>                               }
+>                       }
+>                       if ((p = index(host, 'i')) &&
+>                               (strcmp(p-1, ".in-addr.arpa" ) == 0 ||
+>                                strcmp(p-1, ".in-addr.arpa.") == 0)) {
+>                               /*
+>                                * string ends with .in-addr.arpa - go for it!
+>                                */
+>                               ;
+>                       } else if (sscanf(host, "%d.%d.%d.%d",
+>                                       &ip[0], &ip[1], &ip[2], &ip[3]) != 4) {
+>                               /*
+>                                * not a valid IP address - use it as is.
+>                                */
+>                                ;
+>                       } else {
+>                               sprintf(host, "%d.%d.%d.%d.in-addr.arpa.",
+>                                               ip[3], ip[2], ip[1], ip[0]);
+>                       }
+>               }
+>       }
+> }
+> #endif PRINCETON
+
+
+
+
+Larry Rogers (Postmaster@Princeton.EDU)
+Princeton University
+Computing and Information Technology
+Computing Center
+87 Prospect Street, Room 201
+Princeton, NJ 08544
+
+UUCP:		princeton!lrr
+ARPANET/CSNET:	lrr@Princeton.EDU
+BITNET:		lrr@pucc.bitnet
+PHONE:		609 452 6483
+21-Sep-88 16:06:34,1279;000000000002  
+DLVD to:<mills>
+Return-path: <parmelee@wayback.cs.cornell.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 21-Sep-88 16:06:28-UT
+Received: from CU-ARPA.CS.CORNELL.EDU by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA15592; Wed, 21 Sep 88 08:09:23 PDT
+Received: from WAYBACK.CS.CORNELL.EDU by cu-arpa.cs.cornell.edu (5.59/4.30)
+	id AA11745; Wed, 21 Sep 88 11:07:09 EDT
+Date: Wed, 21 Sep 88 11:07:04 EDT
+From: parmelee@wayback.cs.cornell.edu (Larry Parmelee)
+Message-Id: <8809211507.AA08537@wayback.cs.cornell.edu>
+Received: by wayback.cs.cornell.edu (5.59/1.04)
+	id AA08537; Wed, 21 Sep 88 11:07:04 EDT
+To: lrr@Princeton.EDU
+Subject: in-addr.arpa and BUG in named
+Cc: bind@ucbarpa.Berkeley.EDU
+
+Use "strcasecmp"!!!  Down with unneccessary case-sensitivity!!!!!!
+
+Note that it is valid to look up ("set q=PTR") 
+"84.128.in-addr.arpa.", though it currently seems to not
+work.  The above query should return PTR record(s), indicating
+the hosts that act as gateways to network 128.84.0.0.
+(See RFC1033, Page 10 "GATEWAY PTR's").
+
+I suspect the above is a bug in named-  I have an appropriate
+PTR record stored at "84.128.in-addr.arpa.", but it doesn't
+appear in the named memory dump, nor in the zone transfer.
+
+-Larry Parmelee
+parmelee@cs.cornell.edu
+
+21-Sep-88 16:38:46,1500;000000000002  
+DLVD to:<mills>
+Return-path: <krf@wucs1.wustl.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 21-Sep-88 16:38:40-UT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA15752; Wed, 21 Sep 88 08:30:06 PDT
+Return-Path: <krf>
+Received: by wucs1.wustl.edu (5.59/1.31);
+Date: Tue, 20 Sep 88 18:32:55 CDT
+From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809202332.AA09872@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: Sendmail 5.59 on a Sun 4/280 with Sun OS 4.0
+
+
+Is anybody out there running Sendmail 5.59 on a Sun 4 with SunOS 4.0?
+If so, would you be willing to answer some questions?  If so, please send
+me some email with an address (a phone number would be great; I will spend
+the dimes).
+
+I am using the normal (as distributed) uucp software, and have installed
+the 5.59 sendmail.  I am having problems with incoming uucp mail, related
+somehow to uux, rmail, and sendmail.  I get "MAIL FAIL" messages in
+/usr/spool/uucp/LOGFILE, and 'queuename: Cannot create "qf~Zxxxxx" in
+"/usr/spool/mqueue": No such file or directory' errors in /usr/adm/messages.
+
+I am taking the source home for "queue.c" of sendmail, the routine guilty
+of the 'messages' errors.  That may or may not lead to anything.  If
+someone has seen this before, I would appreciate you dropping me a line.
+
+Thanks,
+
+Kevin Fenster -- Engineering Computer Lab, Washington University, St. Louis
+krf@wucs1.wustl.edu
+uunet!wucs1!krf		(if uucp mail would work)
+
+21-Sep-88 17:48:36,955;000000000002   
+DLVD to:<mills>
+Return-path: <dsc@seismo.CSS.GOV>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 21-Sep-88 17:48:27-UT
+Received: from seismo.CSS.GOV by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA17211; Wed, 21 Sep 88 10:00:56 PDT
+Received: from izimbra.CSS.GOV by seismo.CSS.GOV (5.59/1.14) 
+	id AA09712; Wed, 21 Sep 88 13:01:18 EDT
+Received: by izimbra.CSS.GOV (3.2/SMI-3.2)
+	id AA10833; Wed, 21 Sep 88 13:01:15 EDT
+From: dsc@seismo.CSS.GOV (David S. Comay)
+Message-Id: <8809211701.AA10833@izimbra.CSS.GOV>
+To: krf@wucs1.wustl.edu (Kevin Fenster)
+Cc: bind@ucbarpa.Berkeley.EDU
+Subject: Re: Sendmail 5.59 on a Sun 4/280 with Sun OS 4.0 
+In-Reply-To: Your message of Tue, 20 Sep 88 18:32:55 -0500.
+             <8809202332.AA09872@wucs1.wustl.edu> 
+Date: Wed, 21 Sep 88 13:01:11 -0400
+
+i think this error occurs when /usr/spool/mqueue is not writable by
+either `daemon' or `uucp'.  check the mode and/or owner of the
+directory.
+
+dsc
+21-Sep-88 20:24:32,1500;000000000002  
+DLVD to:<mills>
+Return-path: <krf@wucs1.wustl.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 21-Sep-88 20:24:27-UT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA19667; Wed, 21 Sep 88 12:30:07 PDT
+Return-Path: <krf>
+Received: by wucs1.wustl.edu (5.59/1.31);
+Date: Tue, 20 Sep 88 18:32:55 CDT
+From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809202332.AA09872@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: Sendmail 5.59 on a Sun 4/280 with Sun OS 4.0
+
+
+Is anybody out there running Sendmail 5.59 on a Sun 4 with SunOS 4.0?
+If so, would you be willing to answer some questions?  If so, please send
+me some email with an address (a phone number would be great; I will spend
+the dimes).
+
+I am using the normal (as distributed) uucp software, and have installed
+the 5.59 sendmail.  I am having problems with incoming uucp mail, related
+somehow to uux, rmail, and sendmail.  I get "MAIL FAIL" messages in
+/usr/spool/uucp/LOGFILE, and 'queuename: Cannot create "qf~Zxxxxx" in
+"/usr/spool/mqueue": No such file or directory' errors in /usr/adm/messages.
+
+I am taking the source home for "queue.c" of sendmail, the routine guilty
+of the 'messages' errors.  That may or may not lead to anything.  If
+someone has seen this before, I would appreciate you dropping me a line.
+
+Thanks,
+
+Kevin Fenster -- Engineering Computer Lab, Washington University, St. Louis
+krf@wucs1.wustl.edu
+uunet!wucs1!krf		(if uucp mail would work)
+
+22-Sep-88 00:00:00,1376;000000000002  
+DLVD to:<mills>
+Return-path: <slevy@uc.msc.umn.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 21-Sep-88 23:59:53-UT
+Received: from UC.MSC.UMN.EDU by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA23693; Wed, 21 Sep 88 16:19:42 PDT
+Received: by uc.msc.umn.edu (5.59/1.14)
+	id AA16091; Wed, 21 Sep 88 18:17:19 CDT
+Date: Wed, 21 Sep 88 18:17:19 CDT
+From: "Stuart Levy" <slevy@uc.msc.umn.edu>
+Message-Id: <8809212317.AA16091@uc.msc.umn.edu>
+To: bind@ucbarpa.Berkeley.EDU, hakanson@mist.cs.orst.edu
+Subject: Re:  slight bug in bind48+xfer (on uc.msc.umn.edu)
+
+> There was a slight mistake in the adding of the XFER code to
+> the named/db_load.c included in the stuff at umn.edu, which
+> caused it to not compile when XFER is not defined.
+
+Oh yes, I heard about that recently from someone here, too.  My fault, as I
+had added the extra read_something reference so it would accept null includes.
+
+I fixed it in a slightly different way: just remove the #ifdef XFER's from
+around the references to read_something, since detecting empty zone files
+seems like a desirable feature regardless of whether you use asynchronous
+zone transfers.
+
+The correction is already in uc.msc.umn.edu's ~ftp/pub/bind48+xfer.tar.Z
+(along with mods to port the resolver to a Cray-2 in case anybody cares).
+
+	Stuart Levy, Minnesota Supercomputer Center
+	slevy@uc.msc.umn.edu
+22-Sep-88 00:15:52,1500;000000000002  
+DLVD to:<mills>
+Return-path: <krf@wucs1.wustl.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 22-Sep-88 00:15:47-UT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA23956; Wed, 21 Sep 88 16:44:57 PDT
+Return-Path: <krf>
+Received: by wucs1.wustl.edu (5.59/1.31);
+Date: Tue, 20 Sep 88 18:32:55 CDT
+From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809202332.AA09872@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: Sendmail 5.59 on a Sun 4/280 with Sun OS 4.0
+
+
+Is anybody out there running Sendmail 5.59 on a Sun 4 with SunOS 4.0?
+If so, would you be willing to answer some questions?  If so, please send
+me some email with an address (a phone number would be great; I will spend
+the dimes).
+
+I am using the normal (as distributed) uucp software, and have installed
+the 5.59 sendmail.  I am having problems with incoming uucp mail, related
+somehow to uux, rmail, and sendmail.  I get "MAIL FAIL" messages in
+/usr/spool/uucp/LOGFILE, and 'queuename: Cannot create "qf~Zxxxxx" in
+"/usr/spool/mqueue": No such file or directory' errors in /usr/adm/messages.
+
+I am taking the source home for "queue.c" of sendmail, the routine guilty
+of the 'messages' errors.  That may or may not lead to anything.  If
+someone has seen this before, I would appreciate you dropping me a line.
+
+Thanks,
+
+Kevin Fenster -- Engineering Computer Lab, Washington University, St. Louis
+krf@wucs1.wustl.edu
+uunet!wucs1!krf		(if uucp mail would work)
+
+22-Sep-88 01:29:19,1739;000000000002  
+DLVD to:<mills>
+Return-path: <hakanson@mist.cs.orst.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 22-Sep-88 01:29:10-UT
+Received: from CS.ORST.EDU by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA22705; Wed, 21 Sep 88 15:15:29 PDT
+Received: by orstcs.CS.ORST.EDU (5.54/1.14)
+	id AA23107; Wed, 21 Sep 88 15:11:56 PDT
+Received: from localhost by mist.CS.ORST.EDU (4.12/1.14)
+	id AA10345; Wed, 21 Sep 88 15:14:01 pdt
+Message-Id: <8809212214.AA10345@mist.CS.ORST.EDU>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: slight bug in bind48+xfer (on uc.msc.umn.edu)
+Date: Wed, 21 Sep 88 15:13:57 PDT
+From: Marion Hakanson <hakanson@mist.cs.orst.edu>
+
+There was a slight mistake in the adding of the XFER code to
+the named/db_load.c included in the stuff at umn.edu, which
+caused it to not compile when XFER is not defined.  Here's
+the patch:
+
+RCS file: RCS/db_load.c,v
+retrieving revision 1.4
+diff -c -r1.4 db_load.c
+*** /tmp/,RCSt1000692	Wed Sep 21 15:10:41 1988
+--- db_load.c	Wed Sep 21 15:04:03 1988
+***************
+*** 171,177 ****
+  			}
+  			didinclude = 1;
+  			switch(db_load(buf, tmporigin, zp)) {
+! 			case -1: read_something--; break; /* null INCLUDE */
+  			case 0:  break;			/* some valid data */
+  			default: errs++; break; 	/* invalid data */
+  			}
+--- 171,181 ----
+  			}
+  			didinclude = 1;
+  			switch(db_load(buf, tmporigin, zp)) {
+! 			case -1:
+! #ifdef XFER
+! 				read_something--;
+! #endif /* XFER */
+! 				break; /* null INCLUDE */
+  			case 0:  break;			/* some valid data */
+  			default: errs++; break; 	/* invalid data */
+  			}
+=================
+
+-- 
+Marion Hakanson         Domain: hakanson@cs.orst.edu
+                        UUCP  : {hp-pcd,tektronix}!orstcs!hakanson
+22-Sep-88 01:33:59,1500;000000000002  
+DLVD to:<mills>
+Return-path: <krf@wucs1.wustl.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 22-Sep-88 01:33:54-UT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA22755; Wed, 21 Sep 88 15:18:43 PDT
+Return-Path: <krf>
+Received: by wucs1.wustl.edu (5.59/1.31);
+Date: Tue, 20 Sep 88 18:32:55 CDT
+From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809202332.AA09872@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: Sendmail 5.59 on a Sun 4/280 with Sun OS 4.0
+
+
+Is anybody out there running Sendmail 5.59 on a Sun 4 with SunOS 4.0?
+If so, would you be willing to answer some questions?  If so, please send
+me some email with an address (a phone number would be great; I will spend
+the dimes).
+
+I am using the normal (as distributed) uucp software, and have installed
+the 5.59 sendmail.  I am having problems with incoming uucp mail, related
+somehow to uux, rmail, and sendmail.  I get "MAIL FAIL" messages in
+/usr/spool/uucp/LOGFILE, and 'queuename: Cannot create "qf~Zxxxxx" in
+"/usr/spool/mqueue": No such file or directory' errors in /usr/adm/messages.
+
+I am taking the source home for "queue.c" of sendmail, the routine guilty
+of the 'messages' errors.  That may or may not lead to anything.  If
+someone has seen this before, I would appreciate you dropping me a line.
+
+Thanks,
+
+Kevin Fenster -- Engineering Computer Lab, Washington University, St. Louis
+krf@wucs1.wustl.edu
+uunet!wucs1!krf		(if uucp mail would work)
+
+22-Sep-88 05:23:55,1263;000000000002  
+DLVD to:<mills>
+Return-path: <krf@wucs1.wustl.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 22-Sep-88 05:23:51-UT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA27182; Wed, 21 Sep 88 21:47:29 PDT
+Return-Path: <krf@wucs1.wustl.edu>
+Received: by wucs1.wustl.edu (5.59/1.31);
+Date: Wed, 21 Sep 88 23:49:45 CDT
+From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809220449.AA14757@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: thanks for the help.
+
+
+In regards to running sendmail 5.59 on a sun 4/280 with SunOS 4.0:
+
+Thanks to all who responded.  My sendmail was setuid root.  Seems that
+my /usr/spool/mqueue was not writable by group daemon.  Now it is.
+Note that I had the same problem with either sun's sendmail or berkeley's
+sendmail 5.59.  That makes me feel a little better.
+
+So, things are looking up, I can add my changes I need to sendmail, and I'm
+off.
+
+By the way, some of you received my last request 4 times.  So did I.
+I only sent it once, and as far as I can tell, it only left my machine
+once.  True?  Clues?
+
+Again, thanks.
+
+Kevin Fenster -- Engineering Computer Lab, Washington University in St. Louis
+
+krf@wucs1.wustl.edu
+uunet!wucs1!krf		uucp seems to be happy.
+22-Sep-88 06:18:59,1462;000000000002  
+DLVD to:<mills>
+Return-path: <trinkle@purdue.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 22-Sep-88 06:18:53-UT
+Received: from arthur.cs.purdue.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA27665; Wed, 21 Sep 88 22:49:02 PDT
+Received: from bors.cs.purdue.edu by arthur.cs.purdue.edu; (5.54/3.16)
+	id AA03572; Wed, 21 Sep 88 08:36:55 EST
+Received: from localhost by bors.cs.purdue.edu (3.2/SMI-4.0)
+	id AA01424; Wed, 21 Sep 88 08:36:52 EST
+Message-Id: <8809211336.AA01424@bors.cs.purdue.edu>
+To: parmelee@wayback.cs.cornell.edu (Larry Parmelee)
+Cc: bind@ucbarpa.Berkeley.EDU
+Subject: Re: internet addr to internet name 
+In-Reply-To: Your message of Wed, 21 Sep 88 06:59:55 -0400.
+             <8809211059.AA07989@wayback.cs.cornell.edu> 
+Date: Wed, 21 Sep 88 08:36:44 EST
+From: trinkle@purdue.edu
+
+     Thost is a trivial program that came with an early release (4.5?)
+of BIND.  It simply does a gethostby{name,addr} on arguments passed to
+it and reports the result.  In the version we have (maybe modified
+locally) it will work by just giving the IP address as an argument
+(i.e thost 128.10.2.1).  It first does a gethostbyname.  If that does
+not return a valid result, it attempts a gethostbyaddr.
+
+Daniel Trinkle			trinkle@cs.purdue.edu			ARPA
+Department of Computer Sciences	trinkle%purdue.edu@relay.cs.net		CSNET
+Purdue University		{ucbvax,decvax}!purdue!trinkle		UUCP
+West Lafayette, IN 47907	(317) 494-7844				PHONE
+22-Sep-88 07:02:06,1247;000000000002  
+DLVD to:<mills>
+Return-path: <krf@wucs1.wustl.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 22-Sep-88 07:02:01-UT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA28062; Wed, 21 Sep 88 23:14:57 PDT
+Return-Path: <krf>
+Received: by wucs1.wustl.edu (5.59/1.31);
+Date: Wed, 21 Sep 88 23:49:45 CDT
+From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809220449.AA14757@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: thanks for the help.
+
+
+In regards to running sendmail 5.59 on a sun 4/280 with SunOS 4.0:
+
+Thanks to all who responded.  My sendmail was setuid root.  Seems that
+my /usr/spool/mqueue was not writable by group daemon.  Now it is.
+Note that I had the same problem with either sun's sendmail or berkeley's
+sendmail 5.59.  That makes me feel a little better.
+
+So, things are looking up, I can add my changes I need to sendmail, and I'm
+off.
+
+By the way, some of you received my last request 4 times.  So did I.
+I only sent it once, and as far as I can tell, it only left my machine
+once.  True?  Clues?
+
+Again, thanks.
+
+Kevin Fenster -- Engineering Computer Lab, Washington University in St. Louis
+
+krf@wucs1.wustl.edu
+uunet!wucs1!krf		uucp seems to be happy.
+22-Sep-88 07:51:12,1247;000000000002  
+DLVD to:<mills>
+Return-path: <krf@wucs1.wustl.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 22-Sep-88 07:51:07-UT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA28639; Thu, 22 Sep 88 00:14:56 PDT
+Return-Path: <krf>
+Received: by wucs1.wustl.edu (5.59/1.31);
+Date: Wed, 21 Sep 88 23:49:45 CDT
+From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809220449.AA14757@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: thanks for the help.
+
+
+In regards to running sendmail 5.59 on a sun 4/280 with SunOS 4.0:
+
+Thanks to all who responded.  My sendmail was setuid root.  Seems that
+my /usr/spool/mqueue was not writable by group daemon.  Now it is.
+Note that I had the same problem with either sun's sendmail or berkeley's
+sendmail 5.59.  That makes me feel a little better.
+
+So, things are looking up, I can add my changes I need to sendmail, and I'm
+off.
+
+By the way, some of you received my last request 4 times.  So did I.
+I only sent it once, and as far as I can tell, it only left my machine
+once.  True?  Clues?
+
+Again, thanks.
+
+Kevin Fenster -- Engineering Computer Lab, Washington University in St. Louis
+
+krf@wucs1.wustl.edu
+uunet!wucs1!krf		uucp seems to be happy.
+22-Sep-88 09:44:35,1247;000000000002  
+DLVD to:<mills>
+Return-path: <krf@wucs1.wustl.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 22-Sep-88 09:44:30-UT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA29421; Thu, 22 Sep 88 02:14:57 PDT
+Return-Path: <krf>
+Received: by wucs1.wustl.edu (5.59/1.31);
+Date: Wed, 21 Sep 88 23:49:45 CDT
+From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809220449.AA14757@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: thanks for the help.
+
+
+In regards to running sendmail 5.59 on a sun 4/280 with SunOS 4.0:
+
+Thanks to all who responded.  My sendmail was setuid root.  Seems that
+my /usr/spool/mqueue was not writable by group daemon.  Now it is.
+Note that I had the same problem with either sun's sendmail or berkeley's
+sendmail 5.59.  That makes me feel a little better.
+
+So, things are looking up, I can add my changes I need to sendmail, and I'm
+off.
+
+By the way, some of you received my last request 4 times.  So did I.
+I only sent it once, and as far as I can tell, it only left my machine
+once.  True?  Clues?
+
+Again, thanks.
+
+Kevin Fenster -- Engineering Computer Lab, Washington University in St. Louis
+
+krf@wucs1.wustl.edu
+uunet!wucs1!krf		uucp seems to be happy.
+22-Sep-88 10:12:39,1247;000000000002  
+DLVD to:<mills>
+Return-path: <krf@wucs1.wustl.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 22-Sep-88 10:12:34-UT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA29628; Thu, 22 Sep 88 02:44:56 PDT
+Return-Path: <krf>
+Received: by wucs1.wustl.edu (5.59/1.31);
+Date: Wed, 21 Sep 88 23:49:45 CDT
+From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809220449.AA14757@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: thanks for the help.
+
+
+In regards to running sendmail 5.59 on a sun 4/280 with SunOS 4.0:
+
+Thanks to all who responded.  My sendmail was setuid root.  Seems that
+my /usr/spool/mqueue was not writable by group daemon.  Now it is.
+Note that I had the same problem with either sun's sendmail or berkeley's
+sendmail 5.59.  That makes me feel a little better.
+
+So, things are looking up, I can add my changes I need to sendmail, and I'm
+off.
+
+By the way, some of you received my last request 4 times.  So did I.
+I only sent it once, and as far as I can tell, it only left my machine
+once.  True?  Clues?
+
+Again, thanks.
+
+Kevin Fenster -- Engineering Computer Lab, Washington University in St. Louis
+
+krf@wucs1.wustl.edu
+uunet!wucs1!krf		uucp seems to be happy.
+22-Sep-88 11:14:32,1247;000000000002  
+DLVD to:<mills>
+Return-path: <krf@wucs1.wustl.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 22-Sep-88 11:14:27-UT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA00190; Thu, 22 Sep 88 03:44:56 PDT
+Return-Path: <krf>
+Received: by wucs1.wustl.edu (5.59/1.31);
+Date: Wed, 21 Sep 88 23:49:45 CDT
+From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809220449.AA14757@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: thanks for the help.
+
+
+In regards to running sendmail 5.59 on a sun 4/280 with SunOS 4.0:
+
+Thanks to all who responded.  My sendmail was setuid root.  Seems that
+my /usr/spool/mqueue was not writable by group daemon.  Now it is.
+Note that I had the same problem with either sun's sendmail or berkeley's
+sendmail 5.59.  That makes me feel a little better.
+
+So, things are looking up, I can add my changes I need to sendmail, and I'm
+off.
+
+By the way, some of you received my last request 4 times.  So did I.
+I only sent it once, and as far as I can tell, it only left my machine
+once.  True?  Clues?
+
+Again, thanks.
+
+Kevin Fenster -- Engineering Computer Lab, Washington University in St. Louis
+
+krf@wucs1.wustl.edu
+uunet!wucs1!krf		uucp seems to be happy.
+22-Sep-88 13:25:52,1247;000000000002  
+DLVD to:<mills>
+Return-path: <krf@wucs1.wustl.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 22-Sep-88 13:25:47-UT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA01187; Thu, 22 Sep 88 05:44:56 PDT
+Return-Path: <krf>
+Received: by wucs1.wustl.edu (5.59/1.31);
+Date: Wed, 21 Sep 88 23:49:45 CDT
+From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809220449.AA14757@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: thanks for the help.
+
+
+In regards to running sendmail 5.59 on a sun 4/280 with SunOS 4.0:
+
+Thanks to all who responded.  My sendmail was setuid root.  Seems that
+my /usr/spool/mqueue was not writable by group daemon.  Now it is.
+Note that I had the same problem with either sun's sendmail or berkeley's
+sendmail 5.59.  That makes me feel a little better.
+
+So, things are looking up, I can add my changes I need to sendmail, and I'm
+off.
+
+By the way, some of you received my last request 4 times.  So did I.
+I only sent it once, and as far as I can tell, it only left my machine
+once.  True?  Clues?
+
+Again, thanks.
+
+Kevin Fenster -- Engineering Computer Lab, Washington University in St. Louis
+
+krf@wucs1.wustl.edu
+uunet!wucs1!krf		uucp seems to be happy.
+22-Sep-88 15:48:21,1486;000000000002  
+DLVD to:<mills>
+Return-path: <nowicki@Sun.COM>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 22-Sep-88 15:48:09-UT
+Received: from [10.7.0.2] by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA01739; Thu, 22 Sep 88 07:54:17 PDT
+Received: from snail.sun.com by Sun.COM (4.0/SMI-4.0)
+	id AA18435; Thu, 22 Sep 88 07:51:55 PDT
+Received: from speed.sun.com (speed-ebb) by snail.sun.com (4.0/SMI-4.0)
+	id AA28302; Thu, 22 Sep 88 07:54:48 PDT
+Received: from rose.sun.com by speed.sun.com (4.1/SMI-4.1)
+	id AA17328; Thu, 22 Sep 88 07:53:00 PDT
+Date: Thu, 22 Sep 88 07:53:00 PDT
+From: nowicki@Sun.COM (Bill Nowicki)
+Message-Id: <8809221453.AA17328@speed.sun.com>
+To: bind@ucbarpa.Berkeley.EDU, krf@wucs1.wustl.edu
+Subject: Re:  thanks for the help.
+
+	By the way, some of you received my last request 4 times. 
+
+Yes, and this one about six times so far!  The trick to tracking these
+down is to look at the Received: lines.  It looks like you have hacked
+your sendmail.cf to remove the date and id, but these can be inferred 
+from the Message-Id and Date lines.  From these it is clear that
+wucs1.wustl.edu is sending it once per hour to ucbarpa.  Possibly you
+have the read timeouts set too short.  Take a look at /var/log/syslog,
+and try running /usr/lib/sendmail -bp and or /usr/lib/sendmail -q -v to
+see what error it thinks is happening.  The problem is that wucs1.wustl.edu
+thinks it is a soft error, while ucbarpa goes ahead and delivers the mail
+anyway.
+
+	-- WIN
+22-Sep-88 21:27:10,665;000000000002   
+DLVD to:<mills>
+Return-path: <kurt@hi.unm.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 22-Sep-88 21:27:06-UT
+Received: from hi.unm.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA06760; Thu, 22 Sep 88 13:29:48 PDT
+Return-Path: <kurt>
+Received: by hi.unm.edu (4.0/PPRG/02Aug88)
+	id AA14819; Thu, 22 Sep 88 09:04:01 MDT
+Date: Thu, 22 Sep 88 09:04:01 MDT
+From: kurt@hi.unm.edu (Kurt Zeilenga)
+Posted-Date: Thu, 22 Sep 88 09:04:01 MDT
+Message-Id: <8809221504.AA14819@hi.unm.edu>
+To: bind@ucbarpa.Berkeley.EDU, krf@wucs1.wustl.edu
+Subject: Re:  thanks for the help.
+
+I got 7 copies of your "thanks for the help" posting.  Very strange.
+
+	Kurt
+26-Sep-88 20:48:52,1193;000000000002  
+DLVD to:<mills>
+Return-path: <paul@uxc.cso.uiuc.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 26-Sep-88 20:48:47-UT
+Received: from UXC.CSO.UIUC.EDU by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA25346; Mon, 26 Sep 88 12:37:40 PDT
+Received: by uxc.cso.uiuc.edu (5.51/9.7)
+	id AA11109; Mon, 26 Sep 88 14:38:16 CDT
+Date: Mon, 26 Sep 88 14:38:16 CDT
+From: paul@uxc.cso.uiuc.edu (Paul Pomes)
+Message-Id: <8809261938.AA11109@uxc.cso.uiuc.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: nslookup aliases
+
+Here are some csh aliases shamelessly stolen from Matt Crawford at UChicago
+that I've found invaluable time savers when working with nslookup.  The one
+for PTR records is particularly useful.
+
+a alias a
+# BIND aliases
+a cname	"(" echo set q=CNAME ";" echo \!\* ")" "|" nslookup
+a mx	"(" echo set q=MX ";" echo \!\* ")" "|" nslookup
+a hinfo	"(" echo set q=HINFO ";" echo \!\* ")" "|" nslookup
+a ns	"(" echo set q=NS ";" echo \!\* ")" "|" nslookup
+a any	"(" echo set q=ANY ";" echo \!\* ")" "|" nslookup
+a soa	"(" echo set q=SOA ";" echo \!\* ")" "|" nslookup
+a ptr	"(" echo set q=PTR ";" echo \!\$:e.\!\$:r:e.\!\$:r:r:e.\!\$:r:r:r.in-addr.arpa ")" "|" nslookup
+
+/pbp
+27-Sep-88 04:44:58,1500;000000000002  
+DLVD to:<mills>
+Return-path: <krf@wucs1.wustl.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 27-Sep-88 04:44:52-UT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA23956; Wed, 21 Sep 88 16:44:57 PDT
+Return-Path: <krf>
+Received: by wucs1.wustl.edu (5.59/1.31);
+Date: Tue, 20 Sep 88 18:32:55 CDT
+From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809202332.AA09872@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: Sendmail 5.59 on a Sun 4/280 with Sun OS 4.0
+
+
+Is anybody out there running Sendmail 5.59 on a Sun 4 with SunOS 4.0?
+If so, would you be willing to answer some questions?  If so, please send
+me some email with an address (a phone number would be great; I will spend
+the dimes).
+
+I am using the normal (as distributed) uucp software, and have installed
+the 5.59 sendmail.  I am having problems with incoming uucp mail, related
+somehow to uux, rmail, and sendmail.  I get "MAIL FAIL" messages in
+/usr/spool/uucp/LOGFILE, and 'queuename: Cannot create "qf~Zxxxxx" in
+"/usr/spool/mqueue": No such file or directory' errors in /usr/adm/messages.
+
+I am taking the source home for "queue.c" of sendmail, the routine guilty
+of the 'messages' errors.  That may or may not lead to anything.  If
+someone has seen this before, I would appreciate you dropping me a line.
+
+Thanks,
+
+Kevin Fenster -- Engineering Computer Lab, Washington University, St. Louis
+krf@wucs1.wustl.edu
+uunet!wucs1!krf		(if uucp mail would work)
+
+27-Sep-88 05:21:44,1247;000000000002  
+DLVD to:<mills>
+Return-path: <krf@wucs1.wustl.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 27-Sep-88 05:21:38-UT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA28062; Wed, 21 Sep 88 23:14:57 PDT
+Return-Path: <krf>
+Received: by wucs1.wustl.edu (5.59/1.31);
+Date: Wed, 21 Sep 88 23:49:45 CDT
+From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809220449.AA14757@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: thanks for the help.
+
+
+In regards to running sendmail 5.59 on a sun 4/280 with SunOS 4.0:
+
+Thanks to all who responded.  My sendmail was setuid root.  Seems that
+my /usr/spool/mqueue was not writable by group daemon.  Now it is.
+Note that I had the same problem with either sun's sendmail or berkeley's
+sendmail 5.59.  That makes me feel a little better.
+
+So, things are looking up, I can add my changes I need to sendmail, and I'm
+off.
+
+By the way, some of you received my last request 4 times.  So did I.
+I only sent it once, and as far as I can tell, it only left my machine
+once.  True?  Clues?
+
+Again, thanks.
+
+Kevin Fenster -- Engineering Computer Lab, Washington University in St. Louis
+
+krf@wucs1.wustl.edu
+uunet!wucs1!krf		uucp seems to be happy.
+27-Sep-88 05:57:20,1247;000000000002  
+DLVD to:<mills>
+Return-path: <krf@wucs1.wustl.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 27-Sep-88 05:57:15-UT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA00190; Thu, 22 Sep 88 03:44:56 PDT
+Return-Path: <krf>
+Received: by wucs1.wustl.edu (5.59/1.31);
+Date: Wed, 21 Sep 88 23:49:45 CDT
+From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809220449.AA14757@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: thanks for the help.
+
+
+In regards to running sendmail 5.59 on a sun 4/280 with SunOS 4.0:
+
+Thanks to all who responded.  My sendmail was setuid root.  Seems that
+my /usr/spool/mqueue was not writable by group daemon.  Now it is.
+Note that I had the same problem with either sun's sendmail or berkeley's
+sendmail 5.59.  That makes me feel a little better.
+
+So, things are looking up, I can add my changes I need to sendmail, and I'm
+off.
+
+By the way, some of you received my last request 4 times.  So did I.
+I only sent it once, and as far as I can tell, it only left my machine
+once.  True?  Clues?
+
+Again, thanks.
+
+Kevin Fenster -- Engineering Computer Lab, Washington University in St. Louis
+
+krf@wucs1.wustl.edu
+uunet!wucs1!krf		uucp seems to be happy.
+27-Sep-88 06:26:35,1247;000000000002  
+DLVD to:<mills>
+Return-path: <krf@wucs1.wustl.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 27-Sep-88 06:26:29-UT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA01187; Thu, 22 Sep 88 05:44:56 PDT
+Return-Path: <krf>
+Received: by wucs1.wustl.edu (5.59/1.31);
+Date: Wed, 21 Sep 88 23:49:45 CDT
+From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809220449.AA14757@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: thanks for the help.
+
+
+In regards to running sendmail 5.59 on a sun 4/280 with SunOS 4.0:
+
+Thanks to all who responded.  My sendmail was setuid root.  Seems that
+my /usr/spool/mqueue was not writable by group daemon.  Now it is.
+Note that I had the same problem with either sun's sendmail or berkeley's
+sendmail 5.59.  That makes me feel a little better.
+
+So, things are looking up, I can add my changes I need to sendmail, and I'm
+off.
+
+By the way, some of you received my last request 4 times.  So did I.
+I only sent it once, and as far as I can tell, it only left my machine
+once.  True?  Clues?
+
+Again, thanks.
+
+Kevin Fenster -- Engineering Computer Lab, Washington University in St. Louis
+
+krf@wucs1.wustl.edu
+uunet!wucs1!krf		uucp seems to be happy.
+27-Sep-88 07:19:30,1193;000000000002  
+DLVD to:<mills>
+Return-path: <paul@uxc.cso.uiuc.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 27-Sep-88 07:19:26-UT
+Received: from UXC.CSO.UIUC.EDU by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA25346; Mon, 26 Sep 88 12:37:40 PDT
+Received: by uxc.cso.uiuc.edu (5.51/9.7)
+	id AA11109; Mon, 26 Sep 88 14:38:16 CDT
+Date: Mon, 26 Sep 88 14:38:16 CDT
+From: paul@uxc.cso.uiuc.edu (Paul Pomes)
+Message-Id: <8809261938.AA11109@uxc.cso.uiuc.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: nslookup aliases
+
+Here are some csh aliases shamelessly stolen from Matt Crawford at UChicago
+that I've found invaluable time savers when working with nslookup.  The one
+for PTR records is particularly useful.
+
+a alias a
+# BIND aliases
+a cname	"(" echo set q=CNAME ";" echo \!\* ")" "|" nslookup
+a mx	"(" echo set q=MX ";" echo \!\* ")" "|" nslookup
+a hinfo	"(" echo set q=HINFO ";" echo \!\* ")" "|" nslookup
+a ns	"(" echo set q=NS ";" echo \!\* ")" "|" nslookup
+a any	"(" echo set q=ANY ";" echo \!\* ")" "|" nslookup
+a soa	"(" echo set q=SOA ";" echo \!\* ")" "|" nslookup
+a ptr	"(" echo set q=PTR ";" echo \!\$:e.\!\$:r:e.\!\$:r:r:e.\!\$:r:r:r.in-addr.arpa ")" "|" nslookup
+
+/pbp
+27-Sep-88 19:30:26,1208;000000000002  
+DLVD to:<mills>
+Return-path: <netcoor@ncs.dnd.ca>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 27-Sep-88 19:30:21-UT
+Received: from NCS.DND.CA by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA10609; Tue, 27 Sep 88 11:28:33 PDT
+Received: by ncs.dnd.ca; (4.12/4.7)
+        id AA15887; Tue, 27 Sep 88 14:29:32 edt
+Date: Tue, 27 Sep 88 14:29:32 edt
+From: netcoor@ncs.dnd.ca (DRENET Coordinator)
+Message-Id: <8809271829.AA15887@ncs.dnd.ca>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: Sendmail with MX support
+
+
+In the README file that came in the BIND 4.8 release, the last paragraph
+stated that a version of Sendmail supporting MX records could be found
+in ~ftp/pub/4.3/sendmail.MX.tar{.Z} from ucbarpa.Berkeley.Edu via
+anonymous FTP. I just checked there and I there is no sendmail.MX.tar{.Z}.
+There is a sendmail.tar{.Z}, which I retreived and have examined. It does
+have some type of Domain support, but I haven't (yet) seen expicit MX support
+indicated. My question is: Is this sendmail the one refered to
+in the BIND 4.8 file, or is there another sendmail floating around
+in some other place that has MX support.
+
+
+Bob Bradford			netcoor@ncs.dnd.ca
+DREnet Coordinator		(613) 998-2520
+
+27-Sep-88 19:50:48,1208;000000000002  
+DLVD to:<mills>
+Return-path: <netcoor@ncs.dnd.ca>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 27-Sep-88 19:50:43-UT
+Received: from NCS.DND.CA by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA11263; Tue, 27 Sep 88 12:05:03 PDT
+Received: by ncs.dnd.ca; (4.12/4.7)
+        id AA15887; Tue, 27 Sep 88 14:29:32 edt
+Date: Tue, 27 Sep 88 14:29:32 edt
+From: netcoor@ncs.dnd.ca (DRENET Coordinator)
+Message-Id: <8809271829.AA15887@ncs.dnd.ca>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: Sendmail with MX support
+
+
+In the README file that came in the BIND 4.8 release, the last paragraph
+stated that a version of Sendmail supporting MX records could be found
+in ~ftp/pub/4.3/sendmail.MX.tar{.Z} from ucbarpa.Berkeley.Edu via
+anonymous FTP. I just checked there and I there is no sendmail.MX.tar{.Z}.
+There is a sendmail.tar{.Z}, which I retreived and have examined. It does
+have some type of Domain support, but I haven't (yet) seen expicit MX support
+indicated. My question is: Is this sendmail the one refered to
+in the BIND 4.8 file, or is there another sendmail floating around
+in some other place that has MX support.
+
+
+Bob Bradford			netcoor@ncs.dnd.ca
+DREnet Coordinator		(613) 998-2520
+
+27-Sep-88 20:01:02,1548;000000000002  
+DLVD to:<mills>
+Return-path: <krf@wucs1.wustl.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 27-Sep-88 20:00:56-UT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA11237; Tue, 27 Sep 88 12:02:22 PDT
+Return-Path: <krf@wucs1.wustl.edu>
+Received: by wucs1.wustl.edu
+	(4.0/1.33); id AA22423; Tue, 27 Sep 88 14:02:12 CDT
+Date: Tue, 27 Sep 88 14:02:12 CDT
+From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809271902.AA22423@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: test
+
+
+At the risk of sending multiple messages again, I am sending this test
+message.  I have gone from using 5.59 Sendmail to the sun supported sendmail,
+which I was told (by an unadvertised source :-) ) that it is based upon
+5.54 sendmail.  I'm not sure what will happen, but I promise that I will
+keep a closer eye on it this time.  Apparently sending from 5.59 sendmail
+I flooded people time and time again with the message.  I now know that
+the message sat in my queue on my machine, received a whole bunch of
+"reply: read error" messages, and kept trying to send to bind@ucbarpa.berkeley.edu.
+
+By the way, should my mailer even care that I am sending to a long mailing
+list and not to just a single recipient?  I have the feeling that this was
+discussed here, but during the transition we made, I think I lost a few
+messages.  Sorry if I brought up a "thouroughly" beaten horse.
+
+Kevin Fenster -- Engineering Computer Lab, Washington Univeristy in St. Louis
+
+krf@wucs1.wustl.edu
+uunet!wucs1!krf
+29-Sep-88 08:20:50,818;000000000002   
+DLVD to:<mills>
+Return-path: <medin@norad.arc.nasa.gov>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 29-Sep-88 08:20:46-UT
+Received: from norad.arc.nasa.gov by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA14743; Thu, 29 Sep 88 00:29:50 PDT
+Received: Thu, 29 Sep 88 00:30:35 PDT by norad.arc.nasa.gov (5.59/1.5)
+Message-Id: <8809290730.AA02246@norad.arc.nasa.gov>
+To: bind@ucbarpa.Berkeley.EDU
+Cc: namedroppers@sri-nic.arpa
+Subject: Bogus wildcard RR
+Date: Thu, 29 Sep 88 00:30:34 -0700
+From: "Milo S. Medin" (NASA ARC NSI Project Office) <medin@norad.arc.nasa.gov>
+
+
+Hi folks.  Tonight, I recieved a bogus wildcard entry from 128.248.2.50.
+This appears to be some machine out in the UIUC swamps.  Anyone here want to
+fess up as to why this behavior should be occuring?
+
+						Thanks,
+						   Milo
+29-Sep-88 17:22:27,2053;000000000002  
+DLVD to:<mills>
+Return-path: <root@SGI.COM>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 29-Sep-88 17:22:20-UT
+Received: from ucbvax.Berkeley.EDU by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA17618; Thu, 29 Sep 88 09:24:31 PDT
+Received: from SGI.COM by ucbvax.Berkeley.EDU (5.59/1.31)
+	id AA12861; Thu, 29 Sep 88 09:15:52 PDT
+Received: by sgi.sgi.com (5.52/880418.SGI)
+	(for bind@ucbarpa.berkeley.edu) id AA06258; Thu, 29 Sep 88 00:06:41 PDT
+From: root@SGI.COM (0000-Admin(0000))
+Received: from ucbarpa.berkeley.edu by sgi2.sgi.com (5.52/880418.SGI)
+	(for arc@sgi.SGI.COM) id AA00431; Wed, 28 Sep 88 12:06:15 PDT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA11237; Tue, 27 Sep 88 12:02:22 PDT
+Return-Path: <krf@wucs1.wustl.edu>
+Received: by wucs1.wustl.edu
+	(4.0/1.33); id AA22423; Tue, 27 Sep 88 14:02:12 CDT
+Date: Tue, 27 Sep 88 14:02:12 CDT
+>From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809271902.AA22423@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: test
+
+
+At the risk of sending multiple messages again, I am sending this test
+message.  I have gone from using 5.59 Sendmail to the sun supported sendmail,
+which I was told (by an unadvertised source :-) ) that it is based upon
+5.54 sendmail.  I'm not sure what will happen, but I promise that I will
+keep a closer eye on it this time.  Apparently sending from 5.59 sendmail
+I flooded people time and time again with the message.  I now know that
+the message sat in my queue on my machine, received a whole bunch of
+"reply: read error" messages, and kept trying to send to bind@ucbarpa.berkeley.edu.
+
+By the way, should my mailer even care that I am sending to a long mailing
+list and not to just a single recipient?  I have the feeling that this was
+discussed here, but during the transition we made, I think I lost a few
+messages.  Sorry if I brought up a "thouroughly" beaten horse.
+
+Kevin Fenster -- Engineering Computer Lab, Washington Univeristy in St. Louis
+
+krf@wucs1.wustl.edu
+uunet!wucs1!krf
+
+
+30-Sep-88 01:35:27,1009;000000000002  
+DLVD to:<mills>
+Return-path: <pma%hpcndm@hplabs.HP.COM>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 30-Sep-88 01:35:22-UT
+Received: from hplabs.hpl.hp.com by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA26043; Thu, 29 Sep 88 17:40:45 PDT
+Received: from hpcndm.HP.COM (hpcndm) by hplabs.HP.COM with SMTP ; Wed, 28 Sep 88 13:06:02 PST
+Received: by hpcndm.HP.COM; Wed, 28 Sep 88 15:04:24 mdt
+Message-Id: <8809282104.AA11599@hpcndm.HP.COM>
+To: bind%ucbarpa.berkeley.edu%hplabs@hplabs.HP.COM
+Subject: slaves of forwarders
+Date: Wed, 28 Sep 88 15:04:21 MST
+From: pma%hpcndm@hplabs.HP.COM
+
+
+When using the configuration of server 1 using server 2 as a forwarder
+and server 1 being a slave, I found that queries fail the first time
+after only 4 seconds.  When I try a query a second time, it succeeds.
+I turned on debugging on server 1 and watched it forward a query to
+server 2, wait 4 seconds and then give up.
+
+Shouldn't server 1 retry to the forwarder more times when it is a slave?
+
+paul
+30-Sep-88 19:23:51,1093;000000000002  
+DLVD to:<mills>
+Return-path: <apctrc!zjat02@uunet.UU.NET>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 30-Sep-88 19:23:44-UT
+Received: from uunet.UU.NET by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA04425; Fri, 30 Sep 88 10:45:10 PDT
+Received: from apctrc.UUCP by uunet.UU.NET (5.59/1.14) with UUCP 
+	id AA05545; Fri, 30 Sep 88 13:45:32 EDT
+Received: from cra2.new_comp.com by apctrc.new_comp.com (3.2/SMI-3.2)
+	id AA12029; Fri, 30 Sep 88 11:16:06 CDT
+Message-Id: <8809301616.AA12029@apctrc.new_comp.com>
+Date: Fri, 30 Sep 88 11:16:04 CDT
+From: apctrc!zjat02@uunet.UU.NET (Jon A. Tankersley)
+To: uunet!ucbarpa.berkeley.edu!bind@uunet.UU.NET
+Subject: bind questions
+
+
+Whomever,
+
+Is it possible to spoof bind into not going and looking for root servers?
+My company is wanting to get a nameserver up and running, Sun requires ARPA
+connections, which currently do not have.  Can I get bind to replace the
+named from Sun and not look for the root nameservers?
+
+Is there any special licensing requirements for Berkeley software from
+commercial customers?
+
+Thanx
+-tank-
+01-Oct-88 04:26:50,861;000000000002   
+DLVD to:<mills>
+Return-path: <karels%okeeffe.Berkeley.EDU@ucbvax.Berkeley.EDU>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 1-Oct-88 04:26:46-UT
+Received: from okeeffe.Berkeley.EDU by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA14706; Fri, 30 Sep 88 20:38:27 PDT
+Received: by okeeffe.Berkeley.EDU (5.60/1.29)
+	id AA14062; Fri, 30 Sep 88 20:37:16 PDT
+From: karels%okeeffe.Berkeley.EDU@ucbvax.Berkeley.EDU (Mike Karels)
+Message-Id: <8810010337.AA14062@okeeffe.Berkeley.EDU>
+To: netcoor@ncs.dnd.ca (DRENET Coordinator)
+Cc: bind@ucbarpa.Berkeley.EDU
+Subject: Re: Sendmail with MX support 
+In-Reply-To: Your message of Tue, 27 Sep 88 14:29:32 EDT.
+Date: Fri, 30 Sep 88 20:37:15 PDT
+
+I'm not sure if your question was answered yet, but yes, the sendmail
+sources you found are the correct ones with support for MX records
+(see getmxrr()).
+
+		Mike
+03-Oct-88 05:22:23,1207;000000000002  
+DLVD to:<mills>
+Return-path: <netcoor@ncs.dnd.ca>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 3-Oct-88 05:22:18-UT
+Received: from NCS.DND.CA by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA11263; Tue, 27 Sep 88 12:05:03 PDT
+Received: by ncs.dnd.ca; (4.12/4.7)
+        id AA15887; Tue, 27 Sep 88 14:29:32 edt
+Date: Tue, 27 Sep 88 14:29:32 edt
+From: netcoor@ncs.dnd.ca (DRENET Coordinator)
+Message-Id: <8809271829.AA15887@ncs.dnd.ca>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: Sendmail with MX support
+
+
+In the README file that came in the BIND 4.8 release, the last paragraph
+stated that a version of Sendmail supporting MX records could be found
+in ~ftp/pub/4.3/sendmail.MX.tar{.Z} from ucbarpa.Berkeley.Edu via
+anonymous FTP. I just checked there and I there is no sendmail.MX.tar{.Z}.
+There is a sendmail.tar{.Z}, which I retreived and have examined. It does
+have some type of Domain support, but I haven't (yet) seen expicit MX support
+indicated. My question is: Is this sendmail the one refered to
+in the BIND 4.8 file, or is there another sendmail floating around
+in some other place that has MX support.
+
+
+Bob Bradford			netcoor@ncs.dnd.ca
+DREnet Coordinator		(613) 998-2520
+
+03-Oct-88 05:43:12,1531;000000000002  
+DLVD to:<mills>
+Return-path: <krf@wucs1.wustl.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 3-Oct-88 05:43:07-UT
+Received: from wucs1.wustl.edu by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA13870; Tue, 27 Sep 88 14:53:42 PDT
+Return-Path: <krf>
+Received: by wucs1.wustl.edu
+	(4.0/1.33); id AA22423; Tue, 27 Sep 88 14:02:12 CDT
+Date: Tue, 27 Sep 88 14:02:12 CDT
+From: krf@wucs1.wustl.edu (Kevin Fenster)
+Message-Id: <8809271902.AA22423@wucs1.wustl.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: test
+
+
+At the risk of sending multiple messages again, I am sending this test
+message.  I have gone from using 5.59 Sendmail to the sun supported sendmail,
+which I was told (by an unadvertised source :-) ) that it is based upon
+5.54 sendmail.  I'm not sure what will happen, but I promise that I will
+keep a closer eye on it this time.  Apparently sending from 5.59 sendmail
+I flooded people time and time again with the message.  I now know that
+the message sat in my queue on my machine, received a whole bunch of
+"reply: read error" messages, and kept trying to send to bind@ucbarpa.berkeley.edu.
+
+By the way, should my mailer even care that I am sending to a long mailing
+list and not to just a single recipient?  I have the feeling that this was
+discussed here, but during the transition we made, I think I lost a few
+messages.  Sorry if I brought up a "thouroughly" beaten horse.
+
+Kevin Fenster -- Engineering Computer Lab, Washington Univeristy in St. Louis
+
+krf@wucs1.wustl.edu
+uunet!wucs1!krf
+04-Oct-88 02:19:18,1837;000000000003  
+DLVD to:<mills>
+Return-path: <pvm@venera.isi.edu>
+Received: from ucbarpa.Berkeley.EDU by DCN6.ARPA ; 4-Oct-88 02:19:09-UT
+Received: from VENERA.ISI.EDU by ucbarpa.Berkeley.EDU (5.59/1.29)
+	id AA13586; Mon, 3 Oct 88 14:03:43 PDT
+Posted-Date: Mon, 03 Oct 88 13:03:33 PST
+Message-Id: <8810032103.AA04154@venera.isi.edu>
+Received: from LOCALHOST by venera.isi.edu (5.54/5.51)
+	id AA04154; Mon, 3 Oct 88 14:03:34 PDT
+To: almquist@jessica.stanford.edu
+Cc: namedroppers@sri-nic.arpa, bind@ucbarpa.Berkeley.EDU
+Subject: Re: Bogus root nameservers fix 
+In-Reply-To: Your message of Wed, 21 Sep 88 16:36:00 -0700.
+             <8809220512.AA07737@venera.isi.edu> 
+Date: Mon, 03 Oct 88 13:03:33 PST
+From: Paul Mockapetris <pvm@venera.isi.edu>
+
+Phil,
+
+Your fix for the distributed wildcard problem isn't quite right, though it
+should cause you much more relief than pain.
+
+The right thing to do is:
+
+The name server using a wildcard RR should always synthesize an owner
+name from the query name.  Thus *'s will only be distributed when *'s
+occur in the query name.  This allows you to see if a wildcarded
+template is present at the name server (though you have to search down
+since multiple label matches may happen).
+
+The template/synthesize property should never be armed unless the name
+server is authoritative for the query name.  This effectively says that
+you do not use the *ed RRs from the cache.  Never cache *ed RRs (unless
+you understand the fine points of this issue.).  Never use their
+synthesis property unless they are in authoritative data.
+
+Resolvers are similar.  They should never used cached * RRs to
+synthesize new ones.  If they don't cache the *ed RRs there is
+no big loss.
+
+Note that you can get *ed answers out of non-VM servers, iff the
+question has an explicit * in it.
+
+paul
+
+CGIFNETMASK
+  		if (ioctl(vs, SIOCGIFNETMASK, (char *)&ifreq) < 0) {
+! 		    syslog(LOG_ERR, "get netmask: %m");
+! 		    continue;
+  		}
+  		ntp->mask = ((struct sockaddr_in *)
+  		    &ifreq.ifr_addr)->sin_addr.s_addr;
+--- 381,388 ----
+  		    ((struct sockaddr_in *)&ifreq.ifr_addr)->sin_addr;
+  #ifdef SIOCGIFNETMASK
+  		if (ioctl(vs, SIOCGIFNETMASK, (char *)&ifreq) < 0) {
+! 		    syslog(LOG_ERR, "get netmask: %m (using default)");
+! 		    ntp->mask = net_mask(ntp->my_addr);
+  		}
+  		ntp->mask = ((struct sockaddr_in *)
+  		    &ifreq.ifr_addr)->sin_addr.s_addr;
+***************
+*** 960,967 ****
+  
+  	if (code) {
+  		ddt = freopen(debugfile, "w+", stderr);
+! 		if ( ddt == NULL)
+  			syslog(LOG_WARNING, "can't open debug file: %m");
+  		else {
+  #if defined(SYSV)
+  			setvbuf(ddt, NULL, _IOLBF, BUFSIZ);
+--- 960,969 ----
+  
+  	if (code) {
+  		ddt = freopen(debugfile, "w+", stderr);
+! 		if ( ddt == NULL) {
+  			syslog(LOG_WARNING, "can't open debug file: %m");
++ 			debug = 0;
++ 		}
+  		else {
+  #if defined(SYSV)
+  			setvbuf(ddt, NULL, _IOLBF, BUFSIZ);
+21-May-88 06:06:19,2429;000000000002  
+M000 to:<mills@DCN6.ARPA>
+Return-path: <@RELAY.CS.NET:jb@cs.brown.edu>
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 21-May-88 06:06:03-UT
+Received: from RELAY.CS.NET by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA06495; Fri, 20 May 88 22:53:00 PDT
+Received: from relay2.cs.net by RELAY.CS.NET id am16847; 20 May 88 15:48 EDT
+Received: from cs.brown.edu by RELAY.CS.NET id ak29918; 20 May 88 11:41 EDT
+Received: by cs.brown.edu (5.51/1.00)
+	id AA28179; Fri, 20 May 88 09:39:34 EDT
+From: Jim Bloom <jb@cs.brown.edu>
+Message-Id: <8805201338.AA05081@archer.cs.brown.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: domain search interaction with wildcards in sendmail
+Cc: jnford@UMAXC.WEEG.UIOWA.EDU
+Date: Fri, 20 May 88 09:38:10 EDT
+
+I recently received a question from someone about problems they were
+having with sendmail (5.59) and bind (4.8).
+
+The basic problem is they were trying to send mail to u@host.third.dom.ain.
+What happened was that wildcards kept matching and the host name was
+expanding.  The host name ended up as host.third.dom.ain.dom.ain.dom.ain.
+
+The following RR was in the zone.
+
+	*.dom.ain.	MX	10	forwarder
+
+Sendmail made the queries using the domain searching as follows:
+
+getcanonname() /* canonicalize the name */
+    host.third.dom.ain.other.dom.ain	CLASS=IN TYPE=ANY
+    host.third.dom.ain.dom.ain	CLASS=IN TYPE=ANY
+
+The first of these failed since there was other data at other.dom.ain.
+The second query succeeded and rewrote the host name as queried.  Next,
+sendmail tried:
+
+getmxrr()
+    host.third.dom.ain.dom.ain.other.dom.ain	CLASS=IN TYPE=MX
+    host.third.dom.ain.dom.ain.dom.ain	CLASS=IN TYPE=MX
+
+Again the second one succeeded.  When the mail was delivered finally,
+the host was incorrect.  After the mail was sent to the forwarder, the
+forwarder did not recognize the name (not upgraded yet to newest versions).
+
+The above description is close to what happened, but I don't know exactly
+what was happening in the traces I was sent.  I have worked out parts of
+this from understanding how the queries are made.  The worst problem arises
+in that all mail matches the wildcards and gets sent to the forwarder even
+if it is outside the domain.
+
+Does anyone have any suggestions on how to deal with this problem.  The
+best one I have come up with is to not use wildcards.  Unfortunately, I
+don't think this is a great solution.
+
+					Jim
+
+23-May-88 14:50:19,1414;000000000002  
+M000 to:<mills@DCN6.ARPA>
+Return-path: <ganz-alfred@YALE.ARPA>
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 23-May-88 14:50:13-UT
+Received: from SUN2.CE.YALE.EDU by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA01483; Mon, 23 May 88 07:26:29 PDT
+Received: by yale-ee-cesun2.arpa; Mon, 23 May 88 10:18:13 EDT
+Date: Mon, 23 May 88 10:18:13 EDT
+From: Alfred Ganz <ganz-alfred@YALE.ARPA>
+Message-Id: <8805231418.AA24008@yale-ee-cesun2.arpa>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: bind 4.8 forwarding to bind 4.5
+Cc: ganz@yale-ee-cesun2.arpa, long-morrow@YALE.ARPA
+
+
+This is just to report a minor warning concerning an incompatibility between
+4.8 and 4.5 default domain resolution. The way to avoid the problem is clearly
+not to use a 4.5 bind nameserver as a forwardee.
+
+If a bind 4.8 nameserver is used with a forwarding option to a bind 4.5
+nameserver, the bind 4.5 nameserver will apply its own default domain rules
+on top of what the originator did already.
+
+If the default domains of the two servers differ from each other, this may
+have some strange results. If you ask about a non-existing name in the
+originator domain a lot of work is being done at the forwardee, if you ask for
+a name that exist in both domains, you can get a resolution at the forwardee
+by making a request ending in a period (this last result will be different
+when forwarding to a 4.8 namesrever!).
+
+AG
+ "host-related information" alias record... but it may make the MIT people's
+choice seem less arbitrary.  Another use for this kind of feature would be
+to equate "my.domain" to "somehost.in.my.domain" -- which people seem to do
+now by simply copying selected RR's (esp. the IN A record) from the latter
+to the former.  This has the right effect but seems pretty kludgy to me.
+
+	Stuart Levy, Minnesota Supercomputer Center
+30-Apr-88 09:46:55,1930;000000000002  
+S250 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:karels%okeeffe.Berkeley.EDU@ucbvax.Berkeley.EDU>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:53-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:55-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 01:35:59-UT
+Received: from okeeffe.Berkeley.EDU by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA04724; Fri, 29 Apr 88 15:21:08 PDT
+Received: by okeeffe.Berkeley.EDU (5.59/1.28)
+	id AA07273; Fri, 29 Apr 88 15:20:39 PDT
+From: karels%okeeffe.Berkeley.EDU@ucbvax.Berkeley.EDU (Mike Karels)
+Message-Id: <8804292220.AA07273@okeeffe.Berkeley.EDU>
+To: brian@ucsd.edu (Brian Kantor)
+Cc: bind@ucbarpa.Berkeley.EDU, namedroppers@sri-nic.arpa
+Subject: Re: CNAME and other data - semantic problems 
+In-Reply-To: Your message of Fri, 29 Apr 88 12:06:25 PDT.
+Date: Fri, 29 Apr 88 15:20:37 PDT
+
+It isn't BIND that declares it illegal to have both CNAMEs and other data
+for the same name, it is the name-domain system RFC's and common sense.
+A name that is an alias is just exactly that: a name that refers to another
+name.  The alias cannot have attributes that are additional to or different
+from those of the canonical name.  In particular, a CNAME is not an
+indirection for some types of queries and not for others.  CNAME
+is not host-specific or user-specific, nor are any names in the system.
+
+There are *not* three separate namespaces for hosts, mailboxes and users,
+and there is only one CNAME type.  It applies equally to any of the objects
+that may be named in this namespace.  Therefore, if you try to use
+the same name for different objects with different types of resource
+records, all will have to agree on whether the name is canonical or not,
+and if it is not, all must use the same canonical name.
+
+This isn't a bug and it isn't a design error.  Don't "fix" it.
+
+		Mike
+30-Apr-88 09:47:00,2288;000000000002  
+S250 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:nowicki@Sun.COM>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:58-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:42:01-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 02:52:16-UT
+Received: from SUN.COM by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA09910; Fri, 29 Apr 88 19:38:30 PDT
+Received: from snail.sun.com by Sun.COM (4.0/SMI-4.0)
+	id AA20543; Fri, 29 Apr 88 19:37:48 PDT
+Received: from speed.sun.com (speed-ebb) by snail.sun.com (4.0/SMI-3.2)
+	id AA29156; Fri, 29 Apr 88 19:35:05 PDT
+Received: from rose.sun.com by speed.sun.com (4.0/SMI-4.0)
+	id AA23051; Fri, 29 Apr 88 16:18:13 PDT
+Date: Fri, 29 Apr 88 16:18:13 PDT
+From: nowicki@Sun.COM (Bill Nowicki)
+Message-Id: <8804292318.AA23051@speed.sun.com>
+To: bind@ucbarpa.Berkeley.EDU, pdb@SEI.CMU.EDU
+Subject: Re:  BIND problems
+
+	To: bind@ucbarpa.Berkeley.EDU
+	Subject: BIND problems
+	Date: Fri, 29 Apr 88 12:11:25 EDT
+	From: Pat Barron <pdb@SEI.CMU.EDU>
+
+	I've seen similar problems here:  I try to telnet to a machine,
+	and I get back "unknown host" (this comes back quite quickly,
+	so it isn't a resolver timeout).  I try again immediately, and
+	it works.  Could this be a related problem?  This has just
+	started happening recently (like in the last week).
+
+I have been running the 4.8 BIND server and resolver on Sun.COM for a
+few days with no problems.  This machine handles several thousand mail
+messages per day.
+
+I did find one "gotcha" in the resolver. The res_send.c module likes to
+use connect() a lot, even on UDP sockets.  This is #ifdef'ed on BSD >=
+43, but we were defining BSD to be 43 to get the new h_adddr_list
+declaration.  However, on SunOS 3.x (and other 4.2BSD systems) multiple
+connects do not work.  After the first one, the others return with
+errors real fast, and you get the behavior that you describe if the
+first transmission times out (which can happen reasonably fast). The
+solution is to compile the resolver with BSD defined to be 42, since
+gethostnamadr.c now has an || defined(h_addr) to handle the case when
+you want 4.3BSD netdb.h on a 4.2BSD kernel.  SunOS 4.x and 4.3BSD of
+course do not have this problem.
+
+	-- WIN
+30-Apr-88 10:50:57,1363;000000000002  
+S250 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:becker@cs.rochester.edu>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:50:55-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:45:58-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:04-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 14:56:16-UT
+Received: from CS.ROCHESTER.EDU by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA25404; Fri, 29 Apr 88 07:36:22 PDT
+Received: by cayuga.cs.rochester.edu (5.52/h) id AA18665; Fri, 29 Apr 88 10:36:09 EDT
+Received: from loopback by teak.cs.rochester.edu (3.2/h) id AA13330; Fri, 29 Apr 88 10:35:47 EDT
+Message-Id: <8804291435.AA13330@teak.cs.rochester.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: bind 4.8 problem
+Date: Fri, 29 Apr 88 10:35:45 -0400
+From: Tim Becker <becker@cs.rochester.edu>
+
+I'm testing bind 4.8 on my gateway (vax).  It's been running for a few days.
+Every day, someone has reported an instance when the machine didn't know
+the address of another one of our internal machines.  (Ex.  An rsh failed
+with host unknown or a rlogin to the gateway asked for a passwd even though
+hosts.equiv is set up to not do that.)
+
+Has anyone else seen this problem?  I really want to keep running 4.8 (was
+running 4.4 before that).
+
+Tim.
+30-Apr-88 10:51:02,1427;000000000002  
+S250 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:slevy@uc.msc.umn.edu>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:00-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:03-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:09-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 15:48:59-UT
+Received: from [192.12.250.2] by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA25909; Fri, 29 Apr 88 08:35:41 PDT
+Received: by uc.msc.umn.edu (5.54/1.14)
+	id AA13198; Fri, 29 Apr 88 10:34:16 CDT
+Date: Fri, 29 Apr 88 10:34:16 CDT
+From: "Stuart Levy" <slevy@uc.msc.umn.edu>
+Message-Id: <8804291534.AA13198@uc.msc.umn.edu>
+To: becker@cs.rochester.edu, bind@ucbarpa.Berkeley.EDU
+Subject: Re:  bind 4.8 problem
+
+I've seen something that might be similar -- a 4.8 server here, the only
+server for its (fake) domain, seemed to return NXDOMAIN for a name that
+was in its database.  Or at least another machine's resolver returned NXDOMAIN.
+Before I could get in to track it down (actually run nslookup on the suspect
+server) the problem vanished -- i.e. the name "reappeared".
+
+It's conceivable that something flaky happened with the kludge I used to
+make our other machines recognize the fake domain, though, so I'm not
+-certain- that the 4.8 server was at fault.
+
+	Stuart Levy, Minnesota Supercomputer Center
+30-Apr-88 10:51:07,1171;000000000002  
+S250 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:pdb@SEI.CMU.EDU>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:05-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:08-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:13-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 19:04:08-UT
+Received: from CI.SEI.CMU.EDU by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA26530; Fri, 29 Apr 88 09:22:06 PDT
+Received: by ci.sei.cmu.edu (5.54/2.2)
+        id AA16641; Fri, 29 Apr 88 12:11:27 EDT
+Message-Id: <8804291611.AA16641@ci.sei.cmu.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: BIND problems
+Date: Fri, 29 Apr 88 12:11:25 EDT
+From: Pat Barron <pdb@SEI.CMU.EDU>
+
+I've seen similar problems here:  I try to telnet to a machine, and I get
+back "unknown host" (this comes back quite quickly, so it isn't a resolver
+timeout).  I try again immediately, and it works.  Could this be a related
+problem?  This has just started happening recently (like in the last week).
+
+BTW, I'm (still) running BIND 4.5, so it might not be a BIND 4.8 problem.
+
+--Pat.
+30-Apr-88 10:51:14,2201;000000000002  
+S250 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:gbb%fermat@bru.mayo.edu>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:10-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:13-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:18-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 19:19:51-UT
+Received: from BRU.MAYO.EDU by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA27074; Fri, 29 Apr 88 10:00:28 PDT
+Received: by bru.mayo.edu (5.54/1.14)
+	id AA00760; Fri, 29 Apr 88 11:41:49 CDT
+Received: from localhost.ARPA by fermat.mayo.edu (1.2/Ultrix2.0-B)
+	id AA26724; Fri, 29 Apr 88 11:35:19 cdt
+Message-Id: <8804291635.AA26724@fermat.mayo.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: bind.4.8 distribution
+Date: Fri, 29 Apr 88 11:35:17 CDT
+From: gbb%fermat@bru.mayo.edu
+
+
+I just ftp'ed the distribution for bind V4.8 from your machine (as
+well as the latest version of TCP/IP.  I have been requested to get
+my ULTRIX host up as our primary domain name server, and also get
+the mx version of sendmail functioning on it.  I have a V2.2 of
+ULTRIX on a VAXstation 2000.  Since we use the IP<->DECnet gateway heavily,
+I was wondering if it were possible to install the current distributions
+of bind and tcp on the system without causing any critical problems, or
+if I can install it at all, given my hardware/software/usage situation?
+
+
+As I am new to internet functions, and especially name service, I have
+little experience in such matters.  I read the accompanying documents to the
+various distribution sets, and I become quite pessimistic about the 
+probabilities of success.
+
+I guess what I am hoping for is a 'cook-book' implementation guide for bind on
+ULTRIX if the procedure is markedly different from what is discussed in the
+distribution.  Also, if there are any known problems with implementation on
+such a system.  Also, any other sources I could tap for learning more about
+integrateing internet functions into my machine.
+
+Thank you for your time.
+
+Geoffrey Brunkhorst
+Mayo Foundation
+Rochester MN 55905
+(507) 285-6941
+gbb@fermat.mayo.edu
+
+30-Apr-88 10:51:19,1953;000000000002  
+S250 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:bhoward@sol.engin.umich.edu>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:17-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:19-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:22-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 20:08:31-UT
+Received: from [35.2.64.64] by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA29795; Fri, 29 Apr 88 11:53:01 PDT
+Received: by sol.engin.umich.edu on Fri, 29 Apr 88 14:47:35 EDT
+Date: Fri, 29 Apr 88 14:47:35 EDT
+From: bhoward@sol.engin.umich.edu (Bruce Howard)
+Message-Id: <8804291847.AA14886@sol.engin.umich.edu>
+To: becker@cs.rochester.edu, bind@ucbarpa.Berkeley.EDU
+Subject: Re:  bind 4.8 problem
+
+	From @um.cc.umich.edu:becker@cs.rochester.edu Fri Apr 29 13:48:23 1988
+	To: bind@ucbarpa.Berkeley.EDU
+	Subject: bind 4.8 problem
+	
+	I'm testing bind 4.8 on my gateway (vax).  It's been running for a few days.
+	Every day, someone has reported an instance when the machine didn't know
+	the address of another one of our internal machines.  (Ex.  An rsh failed
+	with host unknown or a rlogin to the gateway asked for a passwd even though
+	hosts.equiv is set up to not do that.)
+	 
+	Has anyone else seen this problem?  I really want to keep running 4.8 (was
+	running 4.4 before that).
+	 
+	Tim.
+	
+I have noticed similar problems at our site where the first
+time I try to rlogin to a local machine, it fails, and a few
+moments later, presumably after it has looked up the name,
+rlogin works.  Same with telnet and ftp and other applications
+that use the resolver.  The nifty thing is that it started
+appearing recently (around the time that 4.8 came out actually)
+even before we upgrade our name server.  Is there some kind of
+problem that crops up when different versions of the bind 
+server interract?
+
+			Bruce
+30-Apr-88 10:51:25,1259;000000000002  
+S250 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:craig@NNSC.NSF.NET>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:22-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:24-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:27-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 20:20:59-UT
+Received: from monet.Berkeley.EDU by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA01430; Fri, 29 Apr 88 13:04:19 PDT
+Received: from WS6.NNSC.NSF.NET by monet.Berkeley.EDU (5.59/1.28)
+	id AA07376; Fri, 29 Apr 88 13:04:55 PDT
+Message-Id: <8804292004.AA07376@monet.Berkeley.EDU>
+To: philipp%opus.cs.mcgill.ca%olver.cs.mcgill.ca@NNSC.NSF.NET
+Cc: bind <@monet.Berkeley.EDU:bind@ucbarpa.berkeley.edu>
+Subject: re: RFC 1047
+Date: Fri, 29 Apr 88 16:07:22 -0400
+From: Craig Partridge <craig@NNSC.NSF.NET>
+
+
+Philip,
+
+    Yes I'm on the list.  I have not looked at repairing Sendmail --
+indeed, Sendmail folk have led me to believe that there are ways to
+configure sendmail to avoid the RFC 1047 problems.
+
+    My motivation with RFC1047 came, in part, from my work with MMDF2,
+which regularly provokes Sendmail to send multiple messages.
+
+Craig
+30-Apr-88 10:51:30,2575;000000000002  
+S250 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:brian@ucsd.edu>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:28-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:30-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:32-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 20:43:41-UT
+Received: from ucsd.edu by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA00272; Fri, 29 Apr 88 12:05:17 PDT
+Received: by ucsd.edu (5.58/UCSD-1.0);
+	Fri, 29 Apr 88 12:06:25 PDT id AA29786 for bind@ucbarpa.berkeley.edu
+Date: Fri, 29 Apr 88 12:06:25 PDT
+From: brian@ucsd.edu (Brian Kantor)
+Message-Id: <8804291906.AA29786@ucsd.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: CNAME and other data - semantic problems
+Cc: namedroppers@sri-nic.arpa
+
+We are using BIND to store MB records for mailbox names here at
+UCSD - using a variant of NSLOOKUP to provide an on-line electronic
+mail directory.
+
+We have a mailbox name "u3g".  We also have a host whose nickname
+of "u3g" is recorded as a CNAME entry under its real name.
+
+BIND 4.8 reports this as illegal; I don't think it should be illegal
+because of the difference between host-related information (A, WKS,
+HINFO, etc) and mailbox-related information (MB, MG, etc).  
+I suspect the same separation should exist for user-related data
+(UID, GID, UINFO, etc).
+
+It seems to me that we have at least three disjoint namespaces here
+- host, mailbox, and user - and that the current version of BIND
+does not properly separate them semantically when parsing the input file.
+
+Clearly I can work around this in a way that the Athena people did
+- by creating "mailbox.ucsd.edu" and "user.ucsd.edu" domains,
+and storing the data under those - but that is just as clearly not
+the right way to do it, since I shouldn't have to have separate
+subdomains as well as types of RRs.
+
+Since we have lots of personal workstations here, we're going to run
+into this more often.  It seems quite reasonable to have a USER "wade",
+a MAILBOX "wade", and a HOST "wade".  Yet these are clearly separate
+entities, and grouping of data for them between the three namespaces
+cannot be assumed.
+
+Before I go hack on the BIND source to fix this, would someone
+please let me know if I'm off-base, or whether this is really the
+design error I think it is.
+
+	Brian Kantor	UCSD Office of Academic Computing
+			Academic Network Operations Group  
+			UCSD B-028, La Jolla, CA 92093 USA
+			brian@ucsd.edu ucsd!brian BRIAN@UCSD
+30-Apr-88 10:51:36,1894;000000000002  
+S250 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:mckenney@unix.SRI.COM>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:34-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:36-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:38-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 21:56:00-UT
+Received: from [128.18.10.3] by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA26723; Fri, 29 Apr 88 09:34:37 PDT
+Received: by unix.SRI.COM (5.31/5.14)
+	id AA19721; Fri, 29 Apr 88 09:34:05 PDT
+Date: Fri, 29 Apr 88 09:34:05 PDT
+From: mckenney@unix.SRI.COM (Paul E. McKenney)
+Message-Id: <8804291634.AA19721@unix.SRI.COM>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: Re:  RFC 1047
+
+RFC 1047 tells how to minimize the length of the synchronization gap, but
+how about taking steps to eliminate it?  For example, the SMTP server could
+keep a database of message-ID's that it has received in the last day or so
+(along with a list of the mail addresses that the message was forwarded to).
+If the server later received a duplicate copy of the message that was not
+to be forwarded to anyone not on the list for that message, the server would
+simply acknowledge and discard the message.
+
+The list of mail addresses that a given message was forwarded to must be kept
+in order to handle source routing, for example:
+
+	mail @stanford.edu:someone@sri.com @berkeley.edu:me@sri.com
+
+(In this example, the use of source routing will force sri.com to get
+two copies of the message, one that was forwarded through Stanford, the
+other that was forwarded through Berkeley.)
+
+Note that this requires no changes to the SMTP standard, and that mailers
+that do this can coexist with mailers that do not.
+
+				Thanx, Paul
+
+PS.  Usenet uses a similiar scheme to prevent article duplication.
+30-Apr-88 10:51:42,2429;000000000002  
+M452 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:ehrlich@blitz.cs.psu.edu>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:39-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:41-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:43-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 22:17:46-UT
+Received: from psuvax1.cs.psu.edu by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA03688; Fri, 29 Apr 88 14:34:47 PDT
+Received: by psuvax1.cs.psu.edu (5.54/Psu2.1)
+	id AA01496; Fri, 29 Apr 88 17:16:11 EDT
+Received: by blitz.cs.psu.edu (3.2/Psu2.1)
+	id AA21868; Fri, 29 Apr 88 17:15:53 EDT
+From: ehrlich@blitz.cs.psu.edu (Dan Ehrlich)
+Message-Id: <8804292115.AA21868@blitz.cs.psu.edu>
+To: Tim Becker <becker@cs.rochester.edu>
+Cc: bind@ucbarpa.Berkeley.EDU
+Subject: Re: bind 4.8 problem 
+Precedence: special-delivery
+X-Work-Address: Department of Computer Science, 333 Whitmore Laboratory
+		The Pennsylvania State University, University Park, PA 16802
+X-Work-Phone: +1 814 863 1142
+In-Reply-To: Your message of Fri, 29 Apr 88 10:35:45 D.
+             <8804291435.AA13330@teak.cs.rochester.edu> 
+Date: Fri, 29 Apr 88 17:15:52 EDT
+
+>To:  bind@ucbarpa.Berkeley.EDU
+>Subject:  bind 4.8 problem
+>Date:  Fri, 29 Apr 88 10:35:45 -0400
+>From:  Tim Becker <becker@cs.rochester.edu>
+>
+>I'm testing bind 4.8 on my gateway (vax).  It's been running for a few days.
+>Every day, someone has reported an instance when the machine didn't know
+>the address of another one of our internal machines.  (Ex.  An rsh failed
+>with host unknown or a rlogin to the gateway asked for a passwd even though
+>hosts.equiv is set up to not do that.)
+>
+>Has anyone else seen this problem?  I really want to keep running 4.8 (was
+>running 4.4 before that).
+>
+>Tim.
+
+Not knowing what your configuration I will through out a wild guess.  I
+you are acting as a secondary domain server for another your name
+server will not respond to requests while the zone transfer is in
+progress.  This is especially noticable if the othe name server is not
+reachable as this state of catatonia will last until you have timed out
+all the addresses listed for the zone to be transfered.  There were a
+set of patches against version 4.7.3 posted by the folks at BBN (I do
+not remember exaclty who.) that fixed this.
+
+--Dan Ehrlich
+30-Apr-88 10:51:48,1854;000000000002  
+S250 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:slevy@uc.msc.umn.edu>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:46-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:47-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:49-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 23:20:13-UT
+Received: from [192.12.250.2] by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA05700; Fri, 29 Apr 88 15:51:17 PDT
+Received: by uc.msc.umn.edu (5.54/1.14)
+	id AA16435; Fri, 29 Apr 88 17:50:51 CDT
+Date: Fri, 29 Apr 88 17:50:51 CDT
+From: "Stuart Levy" <slevy@uc.msc.umn.edu>
+Message-Id: <8804292250.AA16435@uc.msc.umn.edu>
+To: bind@ucbarpa.Berkeley.EDU, brian@ucsd.edu
+Subject: Re:  CNAME and other data - semantic problems
+Cc: namedroppers@sri-nic.arpa
+
+[... BIND 4.8 reports an error when given a CNAME and MB or other data
+     for the same name...]
+
+BIND is following the RFCs in reporting this error.  CNAME is not supposed
+to be just a host alias, it gives the canonical name for the whole -domain-:
+one could interpret
+X	CNAME	Y
+as meaning "all data pertaining to X is stored under Y's domain entry."
+
+See RFC 1034 page 15, which tells you that if a domain contains a CNAME record
+it should contain no other RR's.
+
+This isn't much help in your present situation, where what you really want is
+a "host-related information" alias record... but it may make the MIT people's
+choice seem less arbitrary.  Another use for this kind of feature would be
+to equate "my.domain" to "somehost.in.my.domain" -- which people seem to do
+now by simply copying selected RR's (esp. the IN A record) from the latter
+to the former.  This has the right effect but seems pretty kludgy to me.
+
+	Stuart Levy, Minnesota Supercomputer Center
+30-Apr-88 10:51:54,2019;000000000002  
+M451 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:karels%okeeffe.Berkeley.EDU@ucbvax.Berkeley.EDU>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:52-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:53-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:55-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 01:35:59-UT
+Received: from okeeffe.Berkeley.EDU by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA04724; Fri, 29 Apr 88 15:21:08 PDT
+Received: by okeeffe.Berkeley.EDU (5.59/1.28)
+	id AA07273; Fri, 29 Apr 88 15:20:39 PDT
+From: karels%okeeffe.Berkeley.EDU@ucbvax.Berkeley.EDU (Mike Karels)
+Message-Id: <8804292220.AA07273@okeeffe.Berkeley.EDU>
+To: brian@ucsd.edu (Brian Kantor)
+Cc: bind@ucbarpa.Berkeley.EDU, namedroppers@sri-nic.arpa
+Subject: Re: CNAME and other data - semantic problems 
+In-Reply-To: Your message of Fri, 29 Apr 88 12:06:25 PDT.
+Date: Fri, 29 Apr 88 15:20:37 PDT
+
+It isn't BIND that declares it illegal to have both CNAMEs and other data
+for the same name, it is the name-domain system RFC's and common sense.
+A name that is an alias is just exactly that: a name that refers to another
+name.  The alias cannot have attributes that are additional to or different
+from those of the canonical name.  In particular, a CNAME is not an
+indirection for some types of queries and not for others.  CNAME
+is not host-specific or user-specific, nor are any names in the system.
+
+There are *not* three separate namespaces for hosts, mailboxes and users,
+and there is only one CNAME type.  It applies equally to any of the objects
+that may be named in this namespace.  Therefore, if you try to use
+the same name for different objects with different types of resource
+records, all will have to agree on whether the name is canonical or not,
+and if it is not, all must use the same canonical name.
+
+This isn't a bug and it isn't a design error.  Don't "fix" it.
+
+		Mike
+30-Apr-88 10:52:01,2377;000000000002  
+M451 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:nowicki@Sun.COM>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:58-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:58-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:42:01-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 02:52:16-UT
+Received: from SUN.COM by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA09910; Fri, 29 Apr 88 19:38:30 PDT
+Received: from snail.sun.com by Sun.COM (4.0/SMI-4.0)
+	id AA20543; Fri, 29 Apr 88 19:37:48 PDT
+Received: from speed.sun.com (speed-ebb) by snail.sun.com (4.0/SMI-3.2)
+	id AA29156; Fri, 29 Apr 88 19:35:05 PDT
+Received: from rose.sun.com by speed.sun.com (4.0/SMI-4.0)
+	id AA23051; Fri, 29 Apr 88 16:18:13 PDT
+Date: Fri, 29 Apr 88 16:18:13 PDT
+From: nowicki@Sun.COM (Bill Nowicki)
+Message-Id: <8804292318.AA23051@speed.sun.com>
+To: bind@ucbarpa.Berkeley.EDU, pdb@SEI.CMU.EDU
+Subject: Re:  BIND problems
+
+	To: bind@ucbarpa.Berkeley.EDU
+	Subject: BIND problems
+	Date: Fri, 29 Apr 88 12:11:25 EDT
+	From: Pat Barron <pdb@SEI.CMU.EDU>
+
+	I've seen similar problems here:  I try to telnet to a machine,
+	and I get back "unknown host" (this comes back quite quickly,
+	so it isn't a resolver timeout).  I try again immediately, and
+	it works.  Could this be a related problem?  This has just
+	started happening recently (like in the last week).
+
+I have been running the 4.8 BIND server and resolver on Sun.COM for a
+few days with no problems.  This machine handles several thousand mail
+messages per day.
+
+I did find one "gotcha" in the resolver. The res_send.c module likes to
+use connect() a lot, even on UDP sockets.  This is #ifdef'ed on BSD >=
+43, but we were defining BSD to be 43 to get the new h_adddr_list
+declaration.  However, on SunOS 3.x (and other 4.2BSD systems) multiple
+connects do not work.  After the first one, the others return with
+errors real fast, and you get the behavior that you describe if the
+first transmission times out (which can happen reasonably fast). The
+solution is to compile the resolver with BSD defined to be 42, since
+gethostnamadr.c now has an || defined(h_addr) to handle the case when
+you want 4.3BSD netdb.h on a 4.2BSD kernel.  SunOS 4.x and 4.3BSD of
+course do not have this problem.
+
+	-- WIN
+30-Apr-88 11:55:45,1452;000000000002  
+M000 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:becker@cs.rochester.edu>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 11:55:43-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:50:55-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:45:58-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:04-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 14:56:16-UT
+Received: from CS.ROCHESTER.EDU by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA25404; Fri, 29 Apr 88 07:36:22 PDT
+Received: by cayuga.cs.rochester.edu (5.52/h) id AA18665; Fri, 29 Apr 88 10:36:09 EDT
+Received: from loopback by teak.cs.rochester.edu (3.2/h) id AA13330; Fri, 29 Apr 88 10:35:47 EDT
+Message-Id: <8804291435.AA13330@teak.cs.rochester.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: bind 4.8 problem
+Date: Fri, 29 Apr 88 10:35:45 -0400
+From: Tim Becker <becker@cs.rochester.edu>
+
+I'm testing bind 4.8 on my gateway (vax).  It's been running for a few days.
+Every day, someone has reported an instance when the machine didn't know
+the address of another one of our internal machines.  (Ex.  An rsh failed
+with host unknown or a rlogin to the gateway asked for a passwd even though
+hosts.equiv is set up to not do that.)
+
+Has anyone else seen this problem?  I really want to keep running 4.8 (was
+running 4.4 before that).
+
+Tim.
+30-Apr-88 11:55:50,1516;000000000002  
+M000 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:slevy@uc.msc.umn.edu>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 11:55:48-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:00-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:03-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:09-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 15:48:59-UT
+Received: from [192.12.250.2] by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA25909; Fri, 29 Apr 88 08:35:41 PDT
+Received: by uc.msc.umn.edu (5.54/1.14)
+	id AA13198; Fri, 29 Apr 88 10:34:16 CDT
+Date: Fri, 29 Apr 88 10:34:16 CDT
+From: "Stuart Levy" <slevy@uc.msc.umn.edu>
+Message-Id: <8804291534.AA13198@uc.msc.umn.edu>
+To: becker@cs.rochester.edu, bind@ucbarpa.Berkeley.EDU
+Subject: Re:  bind 4.8 problem
+
+I've seen something that might be similar -- a 4.8 server here, the only
+server for its (fake) domain, seemed to return NXDOMAIN for a name that
+was in its database.  Or at least another machine's resolver returned NXDOMAIN.
+Before I could get in to track it down (actually run nslookup on the suspect
+server) the problem vanished -- i.e. the name "reappeared".
+
+It's conceivable that something flaky happened with the kludge I used to
+make our other machines recognize the fake domain, though, so I'm not
+-certain- that the 4.8 server was at fault.
+
+	Stuart Levy, Minnesota Supercomputer Center
+30-Apr-88 11:55:56,1260;000000000002  
+M000 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:pdb@SEI.CMU.EDU>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 11:55:54-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:05-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:08-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:13-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 19:04:08-UT
+Received: from CI.SEI.CMU.EDU by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA26530; Fri, 29 Apr 88 09:22:06 PDT
+Received: by ci.sei.cmu.edu (5.54/2.2)
+        id AA16641; Fri, 29 Apr 88 12:11:27 EDT
+Message-Id: <8804291611.AA16641@ci.sei.cmu.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: BIND problems
+Date: Fri, 29 Apr 88 12:11:25 EDT
+From: Pat Barron <pdb@SEI.CMU.EDU>
+
+I've seen similar problems here:  I try to telnet to a machine, and I get
+back "unknown host" (this comes back quite quickly, so it isn't a resolver
+timeout).  I try again immediately, and it works.  Could this be a related
+problem?  This has just started happening recently (like in the last week).
+
+BTW, I'm (still) running BIND 4.5, so it might not be a BIND 4.8 problem.
+
+--Pat.
+30-Apr-88 11:56:03,2290;000000000002  
+M000 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:gbb%fermat@bru.mayo.edu>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 11:56:00-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:10-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:13-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:18-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 19:19:51-UT
+Received: from BRU.MAYO.EDU by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA27074; Fri, 29 Apr 88 10:00:28 PDT
+Received: by bru.mayo.edu (5.54/1.14)
+	id AA00760; Fri, 29 Apr 88 11:41:49 CDT
+Received: from localhost.ARPA by fermat.mayo.edu (1.2/Ultrix2.0-B)
+	id AA26724; Fri, 29 Apr 88 11:35:19 cdt
+Message-Id: <8804291635.AA26724@fermat.mayo.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: bind.4.8 distribution
+Date: Fri, 29 Apr 88 11:35:17 CDT
+From: gbb%fermat@bru.mayo.edu
+
+
+I just ftp'ed the distribution for bind V4.8 from your machine (as
+well as the latest version of TCP/IP.  I have been requested to get
+my ULTRIX host up as our primary domain name server, and also get
+the mx version of sendmail functioning on it.  I have a V2.2 of
+ULTRIX on a VAXstation 2000.  Since we use the IP<->DECnet gateway heavily,
+I was wondering if it were possible to install the current distributions
+of bind and tcp on the system without causing any critical problems, or
+if I can install it at all, given my hardware/software/usage situation?
+
+
+As I am new to internet functions, and especially name service, I have
+little experience in such matters.  I read the accompanying documents to the
+various distribution sets, and I become quite pessimistic about the 
+probabilities of success.
+
+I guess what I am hoping for is a 'cook-book' implementation guide for bind on
+ULTRIX if the procedure is markedly different from what is discussed in the
+distribution.  Also, if there are any known problems with implementation on
+such a system.  Also, any other sources I could tap for learning more about
+integrateing internet functions into my machine.
+
+Thank you for your time.
+
+Geoffrey Brunkhorst
+Mayo Foundation
+Rochester MN 55905
+(507) 285-6941
+gbb@fermat.mayo.edu
+
+30-Apr-88 11:56:10,2042;000000000002  
+M000 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:bhoward@sol.engin.umich.edu>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 11:56:07-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:17-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:19-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:22-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 20:08:31-UT
+Received: from [35.2.64.64] by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA29795; Fri, 29 Apr 88 11:53:01 PDT
+Received: by sol.engin.umich.edu on Fri, 29 Apr 88 14:47:35 EDT
+Date: Fri, 29 Apr 88 14:47:35 EDT
+From: bhoward@sol.engin.umich.edu (Bruce Howard)
+Message-Id: <8804291847.AA14886@sol.engin.umich.edu>
+To: becker@cs.rochester.edu, bind@ucbarpa.Berkeley.EDU
+Subject: Re:  bind 4.8 problem
+
+	From @um.cc.umich.edu:becker@cs.rochester.edu Fri Apr 29 13:48:23 1988
+	To: bind@ucbarpa.Berkeley.EDU
+	Subject: bind 4.8 problem
+	
+	I'm testing bind 4.8 on my gateway (vax).  It's been running for a few days.
+	Every day, someone has reported an instance when the machine didn't know
+	the address of another one of our internal machines.  (Ex.  An rsh failed
+	with host unknown or a rlogin to the gateway asked for a passwd even though
+	hosts.equiv is set up to not do that.)
+	 
+	Has anyone else seen this problem?  I really want to keep running 4.8 (was
+	running 4.4 before that).
+	 
+	Tim.
+	
+I have noticed similar problems at our site where the first
+time I try to rlogin to a local machine, it fails, and a few
+moments later, presumably after it has looked up the name,
+rlogin works.  Same with telnet and ftp and other applications
+that use the resolver.  The nifty thing is that it started
+appearing recently (around the time that 4.8 came out actually)
+even before we upgrade our name server.  Is there some kind of
+problem that crops up when different versions of the bind 
+server interract?
+
+			Bruce
+30-Apr-88 11:56:16,1348;000000000002  
+M000 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:craig@NNSC.NSF.NET>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 11:56:14-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:22-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:24-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:27-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 20:20:59-UT
+Received: from monet.Berkeley.EDU by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA01430; Fri, 29 Apr 88 13:04:19 PDT
+Received: from WS6.NNSC.NSF.NET by monet.Berkeley.EDU (5.59/1.28)
+	id AA07376; Fri, 29 Apr 88 13:04:55 PDT
+Message-Id: <8804292004.AA07376@monet.Berkeley.EDU>
+To: philipp%opus.cs.mcgill.ca%olver.cs.mcgill.ca@NNSC.NSF.NET
+Cc: bind <@monet.Berkeley.EDU:bind@ucbarpa.berkeley.edu>
+Subject: re: RFC 1047
+Date: Fri, 29 Apr 88 16:07:22 -0400
+From: Craig Partridge <craig@NNSC.NSF.NET>
+
+
+Philip,
+
+    Yes I'm on the list.  I have not looked at repairing Sendmail --
+indeed, Sendmail folk have led me to believe that there are ways to
+configure sendmail to avoid the RFC 1047 problems.
+
+    My motivation with RFC1047 came, in part, from my work with MMDF2,
+which regularly provokes Sendmail to send multiple messages.
+
+Craig
+30-Apr-88 11:56:22,2664;000000000002  
+M000 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:brian@ucsd.edu>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 11:56:20-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:28-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:30-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:32-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 20:43:41-UT
+Received: from ucsd.edu by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA00272; Fri, 29 Apr 88 12:05:17 PDT
+Received: by ucsd.edu (5.58/UCSD-1.0);
+	Fri, 29 Apr 88 12:06:25 PDT id AA29786 for bind@ucbarpa.berkeley.edu
+Date: Fri, 29 Apr 88 12:06:25 PDT
+From: brian@ucsd.edu (Brian Kantor)
+Message-Id: <8804291906.AA29786@ucsd.edu>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: CNAME and other data - semantic problems
+Cc: namedroppers@sri-nic.arpa
+
+We are using BIND to store MB records for mailbox names here at
+UCSD - using a variant of NSLOOKUP to provide an on-line electronic
+mail directory.
+
+We have a mailbox name "u3g".  We also have a host whose nickname
+of "u3g" is recorded as a CNAME entry under its real name.
+
+BIND 4.8 reports this as illegal; I don't think it should be illegal
+because of the difference between host-related information (A, WKS,
+HINFO, etc) and mailbox-related information (MB, MG, etc).  
+I suspect the same separation should exist for user-related data
+(UID, GID, UINFO, etc).
+
+It seems to me that we have at least three disjoint namespaces here
+- host, mailbox, and user - and that the current version of BIND
+does not properly separate them semantically when parsing the input file.
+
+Clearly I can work around this in a way that the Athena people did
+- by creating "mailbox.ucsd.edu" and "user.ucsd.edu" domains,
+and storing the data under those - but that is just as clearly not
+the right way to do it, since I shouldn't have to have separate
+subdomains as well as types of RRs.
+
+Since we have lots of personal workstations here, we're going to run
+into this more often.  It seems quite reasonable to have a USER "wade",
+a MAILBOX "wade", and a HOST "wade".  Yet these are clearly separate
+entities, and grouping of data for them between the three namespaces
+cannot be assumed.
+
+Before I go hack on the BIND source to fix this, would someone
+please let me know if I'm off-base, or whether this is really the
+design error I think it is.
+
+	Brian Kantor	UCSD Office of Academic Computing
+			Academic Network Operations Group  
+			UCSD B-028, La Jolla, CA 92093 USA
+			brian@ucsd.edu ucsd!brian BRIAN@UCSD
+30-Apr-88 11:56:28,1983;000000000003  
+M000 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:mckenney@unix.SRI.COM>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 11:56:26-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:34-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:36-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:38-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 21:56:00-UT
+Received: from [128.18.10.3] by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA26723; Fri, 29 Apr 88 09:34:37 PDT
+Received: by unix.SRI.COM (5.31/5.14)
+	id AA19721; Fri, 29 Apr 88 09:34:05 PDT
+Date: Fri, 29 Apr 88 09:34:05 PDT
+From: mckenney@unix.SRI.COM (Paul E. McKenney)
+Message-Id: <8804291634.AA19721@unix.SRI.COM>
+To: bind@ucbarpa.Berkeley.EDU
+Subject: Re:  RFC 1047
+
+RFC 1047 tells how to minimize the length of the synchronization gap, but
+how about taking steps to eliminate it?  For example, the SMTP server could
+keep a database of message-ID's that it has received in the last day or so
+(along with a list of the mail addresses that the message was forwarded to).
+If the server later received a duplicate copy of the message that was not
+to be forwarded to anyone not on the list for that message, the server would
+simply acknowledge and discard the message.
+
+The list of mail addresses that a given message was forwarded to must be kept
+in order to handle source routing, for example:
+
+	mail @stanford.edu:someone@sri.com @berkeley.edu:me@sri.com
+
+(In this example, the use of source routing will force sri.com to get
+two copies of the message, one that was forwarded through Stanford, the
+other that was forwarded through Berkeley.)
+
+Note that this requires no changes to the SMTP standard, and that mailers
+that do this can coexist with mailers that do not.
+
+				Thanx, Paul
+
+PS.  Usenet uses a similiar scheme to prevent article duplication.
+30-Apr-88 11:56:41,1943;000000000002  
+M000 to:<mills@DCN6.ARPA>
+Return-path: <@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU,@UDEL2.UDEL.EDU:slevy@uc.msc.umn.edu>
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 11:56:38-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 10:51:46-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 09:46:47-UT
+Received: from UDEL2.UDEL.EDU by UDEL2.UDEL.EDU ; 30-Apr-88 08:41:49-UT
+Received: from ucbarpa.Berkeley.EDU by UDEL2.UDEL.EDU ; 29-Apr-88 23:20:13-UT
+Received: from [192.12.250.2] by ucbarpa.Berkeley.EDU (5.59/1.28)
+	id AA05700; Fri, 29 Apr 88 15:51:17 PDT
+Received: by uc.msc.umn.edu (5.54/1.14)
+	id AA16435; Fri, 29 Apr 88 17:50:51 CDT
+Date: Fri, 29 Apr 88 17:50:51 CDT
+From: "Stuart Levy" <slevy@uc.msc.umn.edu>
+Message-Id: <8804292250.AA16435@uc.msc.umn.edu>
+To: bind@ucbarpa.Berkeley.EDU, brian@ucsd.edu
+Subject: Re:  CNAME and other data - semantic problems
+Cc: namedroppers@sri-nic.arpa
+
+[... BIND 4.8 reports an error when given a CNAME and MB or other data
+     for the same name...]
+
+BIND is following the RFCs in reporting this error.  CNAME is not supposed
+to be just a host alias, it gives the canonical name for the whole -domain-:
+one could interpret
+X	CNAME	Y
+as meaning "all data pertaining to X is stored under Y's domain entry."
+
+See RFC 1034 page 15, which tells you that if a domain contains a CNAME record
+it should contain no other RR's.
+
+This isn't much help in your present situation, where what you really want is
+a "host-related information" alias record... but it may make the MIT people's
+choice seem less arbitrary.  Another use for this kind of feature would be
+to equate "my.domain" to "somehost.in.my.domain" -- which people seem to do
+now by simply copying selected RR's (esp. the IN A record) from the latter
+to the former.  This has the right effect but seems pretty kludg

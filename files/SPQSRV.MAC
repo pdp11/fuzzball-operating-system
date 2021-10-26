@@ -1,0 +1,402 @@
+	.TITLE	SPQSRV	Unix spooler server
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Unix spooler server
+;
+; This program is called from the TCP server upon boogie to port 515.
+; Such nonsense is gratuitous for the Unix printer-spooler server. Data
+; received this way are parked in files on SY: for later printing with the
+; PRTQ program.
+;
+; Format of control file
+;
+; Hdcn9		host name of the machine where lpr was invoked
+; Pmills	login name of the person who invoked lpr
+; Jdead.letter	string to be used for the job name on burst page
+; Cdcn9		string to be used for the classification line on burst page
+; Lmills	identification info from the password file for banner page
+; fdfA005dcn9	name of the (formatted) file to output (v filter)
+; UdfA005dcn9	name of the file to delete upon completion of output (F Fuzz)
+; Ndead.letter	name of the file on the host machine
+;
+; External symbols
+;
+	.GLOBL	RDASC,HASH	;ioh routines
+	.GLOBL	FNDQUE		;collect queue info
+	.GLOBL	CONECT		;user routine
+;
+; Entry symbols
+;
+	.GLOBL	RDBYT,PRBYT	;char i/o routines
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.MSG,.COM,.CHR,.TRDEF,.TRAP,.PRT,.CHN ;dcnlib macros
+	.MCALL	CALL,FORMAT	;netlib definitions
+	.MCALL	.EXIT,.GTJB,.TTYOU,.TTYIN,.DATE,.GTIM ;rt-11 definitions
+	.MCALL	.LOOKU,.ENTER,.PURGE,.WRITW,.CLOSE
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.TRDEF			;define trap codes
+	.PRT			;define queue file entry format
+	.CHN			;define argument area
+;
+; Module definitions
+;
+SPQSIZ	=	20.		;max elements on special queue
+UX.ACK	=	0		;command complete
+UX.NAK	=	1		;command failure
+;
+; Procedure segment
+;
+	.PSECT	$BOSI,RO,I
+;
+; The TCP connection request on port 515 is folowed by the string
+; <command> <printer> <LF>, where <command> is one of the following
+; codes and <printer> is the Unix device name:
+;
+; 1printer\n	check the queue for jobs and print any found
+; 2printer\n	receive a job from another machine and queue it
+; 3printer [users ...] [jobs ...]\n
+;		return the current state of the queue (short form)
+; 4printer [users ...] [jobs ...]\n
+;		return the current state of the queue (long form)
+; 5printer person [users ...] [jobs ...]\n
+;		remove jobs from the queue
+; 6printer\n	enable queuing on the specified printer queue
+; 7printer\n	disable queuing on the specified printer queue
+; 8printer\n	return the queue status (queuing enabled or disabled)
+;
+; This is followed by strings of the form <code> <count> <SP> <filename> <LF>,
+; where <count> is the number of bytes in the file <filename>. This program
+; then answers with another <0> and receives the file, following which it
+; answers with another <0> and waits for the next string. The <codes> are:
+;
+; 1	cleanup because of bad data
+; 2	read the cf file
+; 3	read the df file
+;
+; Entry point
+;
+START:	MOV	R0,CHAIN	;save argument pointer
+	BIS	#40000,@#44	;disable folding
+	.MSG	<#^RLOG>	;switch to log process
+	JSR	PC,RDBYT	;get command code
+	MOVB	R0,CMMD
+	JSR	PC,HASH		;get spool device name
+	MOV	R0,DEVICE
+	MOVB	CMMD,R0		;do the deed
+	CMPB	R0,#8.
+	BHI	1$		;branch if invalid
+	ASL	R0
+	ADD	R0,PC
+	BR	1$		;0 invalid
+	BR	1$		;1 invalid
+	BR	NEXT		;2 queue job
+	BR	2$		;3 display queue
+	BR	2$		;4 display queue
+	BR	1$		;5 delete job
+	BR	1$		;6 start printer
+	BR	1$		;7 stop printer
+	BR	2$		;8 display queue
+;
+1$:	MOV	#UX.NAK,R0	;invalid. nak that bust
+	JSR	PC,UACK
+	.EXIT
+;
+2$:	.MSG	<#^RTT >	;display queue. switch to virtual terminal
+	JSR	PC,LIST		;batter out a queue list
+	.MSG	<#^RLOG>	;switch to log process
+	.EXIT
+;
+; Queue job
+;
+NEXT:	MOV	#UX.ACK,R0	;ack that bit
+	JSR	PC,UACK
+	JSR	PC,RDBYT	;get file code
+	MOVB	R0,CODE
+	JSR	PC,RDDEC	;get count
+	MOV	R0,COUNT
+	MOV	R1,COUNT+2
+	MOV	#FILE,R1	;get file name
+1$:	JSR	PC,RDBYT
+	BEQ	2$
+	MOVB	R0,(R1)+
+	BR	1$
+;	
+2$:	CLRB	(R1)+		;plant backstop
+	CMPB	CODE,#2		;is this a control file
+	BEQ	6$		;branch if yes
+	.GTJB	#ARGBLK,#AREA,#-1 ;no. construct unique file name
+	MOV	DEVEXT,FILNAM
+	MOV	AREA+22,FILNAM+2
+	MOV	DEVEXT+4,FILNAM+4
+	MOV	DEVEXT+6,FILNAM+6
+3$:	INC	FILNAM+4	;does file already exist
+	.PURGE	#0
+	.LOOKU	#ARGBLK,#0,#FILNAM
+	BCC	3$		;branch if yes
+	MOV	#HEADER,R0	;no. clear header area
+	MOV	#SQ.LEN/2,R2
+4$:	CLR	(R0)+
+	SOB	R2,4$
+	.DATE			;insert timestamp
+	MOV	R0,HEADER+SQ.DAT
+	.GTIM	#ARGBLK,#HEADER+SQ.TIM
+	MOV	FILNAM,HEADER+SQ.FIL ;insert data file name
+	MOV	FILNAM+2,HEADER+SQ.FIL+2
+	MOV	FILNAM+4,HEADER+SQ.FIL+4
+	MOV	DEVICE,HEADER+SQ.FIL+6	
+	MOV	DEVICE,HEADER+SQ.DEV ;insert device name
+	BIS	#SX.DEL,HEADER+SQ.FLG ;set delete flags
+	MOV	COUNT,R0	;compute data file size (blocks)
+	MOV	COUNT+2,R1
+	ADD	#777,R1
+	ADC	R0
+	ASHC	#-9.,R0
+	MOV	R1,HEADER+SQ.SIZ
+	.ENTER	#ARGBLK,#0,#HEADER+SQ.FIL,R1 ;open data file
+	BCC	XFER		;branch if ok
+	BR	7$
+;
+6$:	MOV	FILNAM,HEADER+SQ.QUE ;insert control file name
+	MOV	FILNAM+2,HEADER+SQ.QUE+2
+	MOV	FILNAM+4,HEADER+SQ.QUE+4
+	MOV	FILNAM+6,HEADER+SQ.QUE+6
+	.ENTER	#ARGBLK,#0,#HEADER+SQ.QUE,#1 ;open control file
+	BCC	XFER		;branch if ok
+7$:	FORMAT	#COM05,#STOBGN	;insufficient disk storage
+ERR1:	.PURGE	#0		;wash channels
+	MOV	#UX.NAK,R0	;nak that bust
+	JSR	PC,UACK
+	.EXIT
+;
+; Copy connection data to file
+;
+XFER:	MOV	#BUFFER,BUFPTR	;transfer begins
+	CLR	BLOCK
+	CMPB	CODE,#2		;is this control file
+	BNE	2$		;branch if no
+	MOV	#HEADER,R1	;yes. copy control header
+1$:	MOVB	(R1)+,R0
+	JSR	PC,WRFIL
+	BCS	5$		;branch if error
+	CMP	R1,#HEADER+SQ.LEN
+	BLO	1$
+2$:	MOV	#UX.ACK,R0	;ack that bit
+	JSR	PC,UACK
+3$:	JSR	PC,RDBYT	;get next byte
+	JSR	PC,WRFIL
+	BCS	5$		;branch if error
+	SUB	#1,COUNT+2	;update count
+	SBC	COUNT
+	TST	COUNT
+	BNE	3$		;branch if more
+	TST	COUNT+2
+	BNE	3$		;branch if more
+	CMPB	CODE,#2		;done. is this control file
+	BNE	4$		;branch if no
+	JSR	PC,DECODE	;yes. decode user and host strings
+	CALL	CONECT,#BUFFER+SQ.USR,#0,#0 ;try to connect user directory
+	TST	R0
+	BEQ	4$		;branch if ok
+	CALL	CONECT,#ANONY,#0,#0 ;nobody home. try anonymous
+	TST	R0
+	BEQ	4$		;branch if ok
+	FORMAT	#COM60,#STOBGN	;unknown userid
+	BR	ERR1
+;
+4$:	CMP	BUFPTR,#BUFFER	;is buffer empty
+	BEQ	6$		;branch if yes
+	CLR	R0		;no zero-fill remainder of block
+	JSR	PC,WRFIL
+	BCC	4$
+5$:	FORMAT	#COM10,#STOBGN	;write error
+	BR	ERR1
+;
+6$:	.CLOSE	#0
+	JSR	PC,RDBYT	;discard final flag byte
+	CMPB	CODE,#2		;is this control file
+	BNE	7$		;branch if no
+	FORMAT	#COM12,#STOBGN	;queue...
+	.MSG	<#^RLOG>	;flush buffer
+	.TRAP	#TR.SMP,#<^RPRT>,#1 ;flag for prtq
+7$:	JMP	NEXT
+;
+; Subroutine to read byte
+; R0 = byte
+;
+RDBYT:	.TTYIN			;fetch byte
+	CMPB	R0,#LF		;set cc
+	RTS	PC
+;
+; Subroutine to write byte
+; R0 = byte
+;
+PRBYT:	.TTYOU			;put byte
+	RTS	PC
+;
+; Subroutine to write ack to unix spooler
+; R0 = ack (0) or nak (1)
+;
+UACK:	MOV	R0,-(SP)	;tidy up
+	.MSG	<#^RTT >	;switch to virtual terminal
+	MOV	(SP)+,R0
+	.TTYOU
+	.MSG	<#^RLOG>	;switch to log process
+	RTS	PC
+;
+; Subroutine to output byte
+; R0 = byte
+;
+WRFIL:	MOVB	R0,@BUFPTR	;stash byte
+	INC	BUFPTR
+	CMP	BUFPTR,#BUFEND	;is buffer full
+	BLO	1$		;branch if no
+	.WRITW	#ARGBLK,#0,#BUFFER,#256.,BLOCK ;yes. write block
+	BCS	2$		;branch if error
+	INC	BLOCK		;cool. mumble pointers
+	MOV	#BUFFER,BUFPTR
+1$:	CLC			;normal exit
+2$:	RTS	PC
+;
+; Subroutine to decode host, user and file strings
+;
+DECODE:	MOV	#BUFFER+SQ.LEN,R1 ;search for user and host strings
+1$:	CMP	R1,BUFPTR	;is scan complete
+	BHIS	5$		;branch if yes
+	MOVB	(R1)+,R0	;no. get string code
+	MOV	#BUFFER+SQ.USR,R2 ;is it person info
+	CMPB	R0,#'P
+	BEQ	3$		;branch if yes
+	MOV	#BUFFER+SQ.USD,R2 ;no. is it identification info
+	CMPB	R0,#'L
+	BEQ	3$		;branch if yes
+	MOV	#FILE,R2	;no. is it file name
+	CMPB	R0,#'N
+	BEQ	3$		;branch if yes
+	MOV	#AREA,R2	;no. just stash
+	CMPB	R0,#'v		;is printer-specific filter requested
+	BNE	2$		;branch if no
+	BIS	#SX.FLT,BUFFER+SQ.FLG ;yes. so indicate
+2$:	CMPB	R0,#'U		;is unix file requested
+	BNE	3$		;branch if no
+	BIS	#SX.UNX,BUFFER+SQ.FLG ;yes. so indicate
+3$:	CMP	R1,BUFPTR	;is field complete
+	BHIS	4$		;branch if yes
+	MOVB	(R1)+,R0	;no. is this end of field
+	CMP	R0,#LF
+	BEQ	4$		;branch if yes
+	MOVB	R0,(R2)+
+	BR	3$
+;
+4$:	CLRB	(R2)+		;backstop
+	BR	1$
+;
+5$:	RTS	PC
+;
+; Subroutine to list queue contents
+;
+LIST:	MOV	#DEVEXT,R0	;build queue list
+	MOV	#QUELST,R1
+	JSR	PC,FNDQUE
+	TST	@R1		;is anything doing
+	BNE	2$		;branch if yes
+	FORMAT	#COM15		;no spool files queued
+1$:	RTS	PC
+;
+2$:	FORMAT	#COM18,CHAIN	;display header line
+	FORMAT	#COM18A,#STOBGN
+	CLR	IDENT
+	MOV	#QUELST,R1	;scan queue list
+3$:	TST	@R1		;is this end of list
+	BEQ	1$		;branch if yes
+	MOV	R1,-(SP)	;no. list entry
+	FORMAT	#COM11,#STOBGN
+	MOV	(SP)+,R1
+	MOV	#COM17,R0
+	JSR	PC,FORMAT
+	ADD	#SQ.LEN,R1
+	INC	IDENT
+	BR	3$
+;
+; Rddec (rdo) read decimal string
+; Returns r0-r1 = number
+;
+RDDEC:	MOV	R2,-(SP)	;save
+	MOV	R3,-(SP)
+	CLR	R2		;clear accumulator
+	CLR	R3
+1$:	JSR	PC,RDASC	;read next char and type
+	BEQ	11$		;branch if eor
+	BMI	8$		;branch if numeric
+	BR	1$		;unwashed other
+;
+8$:	ADD	#0-'0,R0	;convert to numeric
+	ADD	R0,R3
+	ADC	R2
+	JSR	PC,RDASC	;read next char and type
+	BPL	9$		;branch if not digit
+	ASHC	#1,R2		;multiply accumulator by 10
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	ASHC	#2,R2
+	ADD	(SP)+,R3
+	ADC	R2
+	ADD	(SP)+,R2
+	BR	8$
+;
+9$:	MOV	R3,R1		;get assembled value
+	MOV	R2,R0
+11$:	MOV	(SP)+,R3	;evas
+	MOV	(SP)+,R2
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D	;read-only data
+;
+DEVEXT:	.RAD50	'SY $$$000SPQ'	;control file name prototype
+ANONY:	.ASCIZ	'ANONYMOUS'	;catch-all directory
+COM60:	.ASCIZ	'?SPQSRV-F-Unknown userid ^A'<HEADER+SQ.USR-STOBGN>
+COM10:	.ASCIZ	'?SPQSRV-F-File write error'
+COM05:	.ASCIZ	'?SPQSRV-F-Insufficient disk storage'
+COM12:	.ASCII	'?SPQSRV-I-Queue ^A'<BUFFER+SQ.USR-STOBGN>
+	.ASCII	' ^A'<FILE-STOBGN>'[^I'<BUFFER+SQ.SIZ-STOBGN>']'
+	.ASCIZ	' as ^F'<BUFFER+SQ.FIL-STOBGN>
+COM15:	.ASCIZ	'?SPQSRV-I-No output files queued'
+COM18:	.ASCIZ	'?SPQSRV-I-^A'<LCLNAM+5>'^+'
+COM18A:	.ASCII	' ^R'<DEVICE-STOBGN>':^/'
+	.ASCII	'QueID	Submitted	Owner, file, destination^/'
+	.ASCII	'------------------------------------------------------------'
+	.ASCIZ	'-------'
+COM11:	.ASCIZ	'^I'<IDENT-STOBGN>'^+'
+COM17:	.ASCII	'	^T'<SQ.TIM>'	^A'<SQ.USR>', ^F'<SQ.FIL>'[^I'<SQ.SIZ>
+	.ASCIZ	'], ^F'<SQ.DEV>' ^C'<SQ.DST>
+	.EVEN
+;
+	.PSECT	$ERAS,RW,I	;read/write data
+;
+STOBGN	=	.		;format fence
+HEADER:	.BLKW	SQ.LEN/2	;control file header
+CHAIN:	.BLKW	1		;argument pointer
+COUNT:	.BLKW	2		;byte count
+IDENT:	.BLKW	1		;entry identifier
+DEVICE:	.BLKW	1		;unix device name (rad50)
+FILE:	.BLKB	128.		;unix file name
+CMMD:	.BLKB	1		;command code
+CODE:	.BLKB	1		;file code
+	.EVEN
+BUFFER:	.BLKW	256.		;buffer
+BUFEND	=	.		;end of buffer
+FILNAM:	.BLKW	4		;control file name
+ARGBLK:	.BLKW	5		;rt-11 argument block
+AREA:	.BLKW	39.		;csi/gtjb argument block
+BLOCK:	.BLKW	1		;file block
+BUFPTR:	.BLKW	1		;buffer pointer
+QUELST:	.BLKW	SPQSIZ*SQ.LEN/2+1 ;spool queue
+;
+	.END	START
+                                                                                                                                                                                                                                                                                                    

@@ -1,0 +1,417 @@
+	.TITLE	PRTNET	Network spooler
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Network spooler
+;
+; This module is part of the spooler daemon. It copies files to a remote host
+; which supports the Unix spooler (port 515) or MPM (port 45) protocols.
+;
+; External symbols
+;
+	.GLOBL	CTRL,SEND,RECV,NETMSG,RTNMSG ;network routines
+	.GLOBL	QUELST,FILBUF,FILBLK,HOST,PRTPTR ;sharp pointers
+	.GLOBL	PRIDNT		;display ident
+;
+; Entry symbols
+;
+	.GLOBL	PRTNET		;network daemon
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.PRT,.MSG ;dcnlib macros
+	.MCALL	$DFSIG		;moslib macroni
+	.MCALL	.LOOKU,.READW,.WRITW,.PURGE,.MRKT,.CMKT,.SETTO ;rt-11 macroni
+	.MCALL	.SPND,.RSUM
+	.MCALL	CALL,FORMAT	;netlib macros
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.PRT			;define queue file entry format
+	$DFSIG			;define interprocess signals
+;
+; Module definitions
+;
+; Assembly parameters
+;
+MAXSIZ	=	4		;max blocks input buffer
+TCBSIZ	=	1024.		;min size of tcb
+P.TCP	=	6.		;tcp protocol number
+S.PRT	=	515.		;unix spooler port number
+M.PRT	=	45.		;mpm port number
+M.LIST	=	11		;list (type code)
+;
+; Procedure segment
+;
+	.PSECT	$BOSI,RO,I
+;
+; Network spooler
+;
+PRTNET:	CLR	CCBLOC+4	;set local port
+	MOV	QUELST+SQ.DST,CCBADR ;set destination address and port
+	MOV	QUELST+SQ.DST+2,CCBADR+2
+	MOV	#S.PRT+1,CCBLOC+4
+	MOV	#S.PRT,CCBADR+4
+	BIT	#SX.MPM,QUELST+SQ.FLG ;is this mpm
+	BEQ	1$		;branch if no
+	MOV	#M.PRT+1,CCBLOC+4 ;yes. use postel private parts
+	MOV	#M.PRT,CCBADR+4
+1$:	SWAB	CCBLOC+4	;swab decks
+	SWAB	CCBADR+4
+	CLR	STATE
+	CLR	FLAGS
+	MOV	@#50,TCBPTR	;find a spot for tcb
+	ADD	#3,TCBPTR
+	BIC	#1,TCBPTR
+	.SETTO	#-2		;ask for all of memory
+	TST	(R0)+		;compute size	
+	SUB	TCBPTR,R0
+	MOV	R0,CCB
+	CMP	R0,#TCBSIZ	;is it reasonable
+	BHIS	2$		;branch if yes
+	FORMAT	#COM20		;insufficient memory
+	BR	5$
+;
+2$:	CLR	@TCBPTR		;(pass check in open)
+	CALL	CTRL,#CM.OPN,#CCB,TCBPTR ;open connection
+	TST	R0
+	BEQ	3$		;branch if no error
+	JSR	PC,PRIDNT	;error. display message
+	JSR	PC,RTNMSG
+	BR	5$
+;
+3$:	.SPND			;lots happen in there
+	TST	FLAGS		;yes there error
+	BEQ	5$		;branch if no
+	SEC			;error return (retry later)
+	RTS	PC
+;
+5$:	CLC			;normal return
+	RTS	PC
+;
+; Net trap routine
+;
+NCA:	MOV	SD.ADR(R0),R1	;get signal particulars
+	MOV	SD.CHN(R0),R0
+	BIC	#^C17,R0	;decode signal
+	MOV	R0,R2
+	ASL	R2
+	JSR	PC,@NCATAB(R2)
+	BCC	1$		;branch if ok
+	INC	FLAGS		;indicate error
+	JSR	PC,SIGERY	;close connection
+1$:	RTS	PC
+;
+; Subroutine to close connection
+;
+SIGERZ:	FORMAT	#COM02		;reply timeout
+SIGERY:	.CMKT	#ARGBLK,#1,#0	;stop timer
+	.MSG	<#^RLOG>	;flush buffer
+	CALL	CTRL,#CM.CLS,#0,TCBPTR ;ip close
+	.MRKT	#ARGBLK,#TIME,#SIGERZ,#1 ;yes. start timer
+	CLR	STATE
+	CLC
+	RTS	PC
+;
+; Error signals (1,2,5,7-11)
+;
+SIGERR:	JSR	PC,PRIDNT	;net error. display message
+	JSR	PC,NETMSG
+	SEC
+	RTS	PC
+;
+; Closed signal (3)
+;
+SIGCLS:	.CMKT	#ARGBLK,#1,#0	;stop timer
+	.RSUM			;unlock mainline
+	CLC
+	RTS	PC
+;
+; Open signal (0)
+;
+SIGOPN:	BIT	#SX.MPM,QUELST+SQ.FLG ;is this mpm
+	BEQ	SIGUNX		;branch if no
+	.READW	#ARGBLK,#3,#FILBUF,#256.,FILBLK ;yes. read first block
+	BCC	1$		;branch if ok
+	FORMAT	#COM14,#QUELST	;file read error
+	SEC
+	RTS	PC
+;
+1$:	CMPB	#M.LIST,FILBUF	;is this mpm mailbag
+	BNE	2$		;branch if no
+	CLRB	COUNT+1		;likely. is count valid
+	MOVB	FILBUF+1,COUNT
+	MOVB	FILBUF+2,COUNT+3
+	MOVB	FILBUF+3,COUNT+2
+	TST	COUNT
+	BNE	3$		;branch if yes
+	CMP	COUNT+2,#2
+	BHIS	3$		;branch if yes
+2$:	FORMAT	#COM14A,#QUELST	;bad file format
+	SEC
+	RTS	PC
+;
+3$:	ADD	#5,COUNT+2	;adjust total count
+	ADC	COUNT
+	JSR	PC,SNDSEG	;send first segment
+	RTS	PC
+;
+SIGUNX:	.LOOKU	#ARGBLK,#0,#DEVUNQ ;unix. get unique sequence *** semaphore
+	BCS	1$		;branch if error
+	.READW	#ARGBLK,#0,#FILBUF,#MAXSIZ*256.,#0
+	BCS	1$		;branch if error
+	MOV	FILBUF,UNIQUE
+	ADD	#MAXSIZ,FILBUF
+	.WRITW	#ARGBLK,#0,#FILBUF,#256.,#0
+1$:	.PURGE	#0
+	MOV	#FILBUF,PRTPTR	;send destination filespec
+	FORMAT	#MSG01,#QUELST	;<2> <device> <lf>
+	JSR	PC,SNDFIL	;exit to state 1
+	RTS	PC
+;
+; Send complete signal (6)
+;
+SIGCOM:	ADD	STATE,PC	;handrail
+	BR	2$		;0 idle
+	BR	3$		;1 wait for destination ack
+	BR	3$		;2 wait for source ack
+	BR	4$		;3 wait for eof
+	BR	3$		;4 wait for file ack
+	BR	3$		;5 wait for control ack		
+	BR	3$		;6 wait for final ack
+;
+2$:	TST	COUNT		;state 0 (mpm). is there more
+	BNE	4$		;branch if yes
+	TST	COUNT+2
+	BNE	4$		;branch if yes
+	JSR	PC,SIGERY	;no. done here
+	RTS	PC
+;
+3$:	.MRKT	#ARGBLK,#TIME,#SIGERZ,#1 ;state 1,2. start timer
+	RTS	PC
+;
+4$:	JSR	PC,SNDSEG	;state 2. send next segment
+	RTS	PC
+;
+; Data available signal (4)
+;
+SIGDAT:	CALL	RECV,#256.,#BUFFER,TCBPTR ;read reply
+	BIC	#100000,R0	;is reply exactly one octet
+	CMP	R0,#1
+	BLOS	1$		;branch if yes
+	CLRB	BUFFER-1(R0)	;no. must be error message
+	FORMAT	#COM19,#BUFFER	;protocol error message <text>
+	BR	3$
+;
+1$:	TSTB	BUFFER		;is this valid reply code
+	BNE	2$		;branch if no
+	.CMKT	#ARGBLK,#1,#0	;yes. stop timer
+	ADD	STATE,PC	;handrail
+	BR	4$		;0 idle
+	BR	5$		;1 wait for destination ack
+	BR	6$		;2 wait for source ack
+	BR	4$		;3 wait for eof
+	BR	7$		;4 wait for file ack
+	BR	8$		;5 wait for control ack		
+	BR	9$		;6 wait for final ack
+;
+2$:	FORMAT	#COM18,#BUFFER	;protocol error code <code>
+3$:	SEC			;error return
+	RTS	PC
+;
+4$:	CLC			;nothing happening
+	RTS	PC
+;
+5$:	CLR	R0		;state 1. send data filespec
+	MOV	QUELST+SQ.SIZ,R1
+	ASHC	#9.,R0
+	MOV	R1,COUNT+2
+	MOV	R0,COUNT
+	MOV	#FILBUF,PRTPTR
+	FORMAT	#MSG02,#STOBGN	;<3> <count> <sp> <filespec> <lf>
+	FORMAT	#MSG04,#HOST
+	JSR	PC,SNDFIL
+	RTS	PC		;exit to state 2
+;
+6$:	ADD	#2,STATE	;state 2. send data file
+	JSR	PC,SNDSEG
+	RTS	PC		;exit to state 3
+;
+7$:	JSR	PC,ENCODE	;state 4. encode control file
+	MOV	#FILBUF,PRTPTR	;send control filespec
+	FORMAT	#MSG03,#STOBGN	;<2> <count> <sp> <filespec> <lf>
+	FORMAT	#MSG04,#HOST
+	JSR	PC,SNDFIL
+	RTS	PC		;exit to state 5
+;
+8$:	ADD	#2,STATE	;state 5. send control file
+	MOV	#BUFFER+1,R1
+	MOV	COUNT+2,R0
+	INC	R0
+	BIS	#100000,R0	;send (pushed) tcp segment
+	JSR	PC,SNDCTL
+	RTS	PC		;exit to state 6
+;
+9$:	JSR	PC,SIGERY	;state 6. close down
+	RTS	PC		;exit to state 0
+;
+; Subroutine to read and send next segment
+; Returns c(cc) = 1 if error, increments state if eof
+;
+SNDSEG:	.READW	#ARGBLK,#3,#FILBUF,#MAXSIZ*256.,FILBLK ;read next segment
+	BCS	2$		;branch if error
+	ADD	#MAXSIZ,FILBLK	;update pointers
+	ASL	R0		;convert to byte count
+	TST	COUNT		;is this block full
+	BNE	1$		;branch if yes
+	CMP	R0,COUNT+2
+	BLOS	1$		;branch if yes
+	MOV	COUNT+2,R0	;no. trim excess
+1$:	SUB	R0,COUNT+2	;decrement count
+	SBC	COUNT
+	MOV	#FILBUF,R1	;send (unpushed) tcp segment
+	JSR	PC,SNDCTL
+	RTS	PC
+;
+2$:	TSTB	@#52		;error. is this end of file
+	BNE	3$		;branch if no
+	MOV	#FILBUF+1,PRTPTR ;yes. send final flag
+	CLRB	FILBUF
+	JSR	PC,SNDFIL	;up state
+	RTS	PC
+;
+3$:	FORMAT	#COM14,#QUELST	;file read error
+	SEC
+	RTS	PC
+;
+; Subroutine to send formatted segment
+; Segment extends from the beginning of FILBUF to PRTPTR
+; Returns c(cc) = 1 if error, also increments state
+;
+SNDFIL:	ADD	#2,STATE	;up yours
+	MOV	#FILBUF,R1	;rassle parameters
+	MOV	PRTPTR,R0
+	SUB	R1,R0
+	CLR	PRTPTR
+	BIS	#100000,R0	;send (pushed) tcp segment
+;
+; Subroutine to send tcp segment
+; R0 = segment size, R1 = segment pointer, returns c(cc) = 1 if error
+;
+SNDCTL:	CALL	SEND,R0,R1,TCBPTR  ;send tcp segment
+	TST	R0		;did it take
+	BEQ	1$		;branch if yes
+	JSR	PC,PRIDNT	;no. display message
+	JSR	PC,RTNMSG
+	SEC			;error exit
+	RTS	PC
+;
+1$:	CLC			;normal exit
+	RTS	PC
+;
+; Subroutine to encode control file
+;
+ENCODE:	MOV	#BUFFER+1,PRTPTR ;encode control file
+	FORMAT	#MSG05,#HOST
+	FORMAT	#MSG06,#QUELST
+	FORMAT	#MSG07,#HOST
+	FORMAT	#MSG08,#QUELST
+	MOV	#MSG09,R0	;is this filter
+	BIT	#SX.FLT,QUELST+SQ.FLG
+	BEQ	1$		;branch if no
+	MOV	#MSG19,R0	;yes. use "v" instead of "f"
+1$:	FORMAT	R0,#STOBGN
+	FORMAT	#MSG10,#HOST
+	MOV	#MSG21,R0	;is this unix file
+	BIT	#SX.UNX,QUELST+SQ.FLG
+	BEQ	2$		;branch if no
+	MOV	#MSG11,R0	;yes. use "U" instead of "F"
+2$:	FORMAT	R0,#STOBGN
+	FORMAT	#MSG12,#HOST
+	FORMAT	#MSG13,#QUELST
+	MOV	PRTPTR,R0
+	CLRB	@R0		;(final flag)
+	SUB	#BUFFER+1,R0	;compute size
+	MOV	R0,COUNT+2
+	CLR	COUNT
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D	;read-only data
+;
+; Net signal transfer vector
+;
+NCATAB:	.WORD	SIGOPN		;0 open
+	.WORD	SIGERR		;1 connection error
+	.WORD	SIGERR		;2 host not responding
+	.WORD	SIGCLS		;3 closed
+	.WORD	SIGDAT		;4 data available
+	.WORD	SIGERR		;5 connection reset
+	.WORD	SIGCOM		;6 send complete
+	.WORD	SIGERR		;7 remote disconnect
+	.WORD	SIGERR		;10 remote interrupt
+	.WORD	SIGERR		;11 nsp (decnet)
+;
+TIME:	.WORD	0,120.*60.	;reply timeout (120 sec)
+DEVUNQ:	.RAD50	'SY UNIQUESYS'	;system sequence file
+COM20:	.ASCIZ	'?PRTQ-F-Insufficient memory'
+COM14:	.ASCIZ	'?PRTQ-F-File read error ^F'<SQ.FIL>
+COM14A:	.ASCIZ	'?PRTQ-F-Bad file format ^F'<SQ.FIL>
+COM19:	.ASCIZ	'?PRTQ-F-Protocol error message ^A'<0>
+COM18:	.ASCIZ	'?PRTQ-F-Protocol error code ^BI'<0>
+COM02:	.ASCIZ	'?PRTQ-F-Reply timeout'
+MSG01:	.ASCIZ	<2>'^R'<SQ.DEV><LF>'^+'
+MSG02:	.ASCIZ	<3>'^I'<COUNT+2-STOBGN>' df^K'<UNIQUE-STOBGN>'^+'
+MSG03:	.ASCIZ	<2>'^I'<COUNT+2-STOBGN>' cf^K'<UNIQUE-STOBGN>'^+'
+MSG04:	.ASCIZ	'^A'<0><LF>'^+'
+;
+; Format of control record sent to unix server
+;
+; Hdcn9		host name of the machine where lpr was invoked
+; Pmills	login name of the person who invoked lpr
+; Jdead.letter	string to be used for the job name on burst page
+; Cdcn9		string to be used for the classification line on burst page
+; Lmills	identification info from the password file for banner page
+; fdfA005dcn9	name of the (formatted) file to output (v for filter)
+; UdfA005dcn9	name of the file to delete upon completion of output
+; Ndead.letter	name of the file on the host machine
+;
+MSG05:	.ASCIZ	'H^A'<0><LF>'^+'
+MSG06:	.ASCII	'P^A'<SQ.USR><LF>
+	.ASCIZ	'J^F'<SQ.FIL><LF>'^+'
+MSG07:	.ASCIZ	'C^A'<0><LF>'^+'
+MSG08:	.ASCIZ	'L^A'<SQ.USD><LF>'^+'
+MSG09:	.ASCIZ	'fdf^K'<UNIQUE-STOBGN>'^+'
+MSG19:	.ASCIZ	'vdf^K'<UNIQUE-STOBGN>'^+'
+MSG10:	.ASCIZ	'^A'<0><LF>'^+'
+MSG11:	.ASCIZ	'Udf^K'<UNIQUE-STOBGN>'^+'
+MSG21:	.ASCIZ	'Fdf^K'<UNIQUE-STOBGN>'^+'
+MSG12:	.ASCIZ	'^A'<0><LF>'^+'
+MSG13:	.ASCIZ	'N^F'<SQ.FIL><LF>'^+'
+	.EVEN
+;
+	.PSECT	$DATA,RW,I	;initialized read/write data
+;
+; Connection control block
+;
+CCB:	.WORD	0		;ccb length
+	.WORD	NCA		;completion routine
+	.BYTE	P.TCP,45	;protocol, flags
+CCBLOC:	.WORD	0,0,0		;local socket (default)
+CCBADR:	.WORD	0,0,0		;remote socket
+	.WORD	0,0		;max datagram size, options (default)
+;
+	.PSECT	$ERAS,RW,I	;read/write data
+;
+STOBGN	=	.		;format fence
+ARGBLK:	.BLKW	5		;rt-11 argument block
+FLAGS:	.BLKW	1		;things that wave
+STATE:	.BLKW	1		;current state
+COUNT:	.BLKW	2		;file size (octets)
+TCBPTR:	.BLKW	1		;transmission control block pointer
+UNIQUE:	.BLKW	1		;unique sequence number
+BUFFER:	.BLKW	256.		;reply buffer
+;
+	.END
+                                                                                                                                                                                                                                                                                                                  

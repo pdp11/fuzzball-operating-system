@@ -1,0 +1,467 @@
+	.TITLE	SBNETH	Ethernet leader processing
+	.NLIST	BEX
+	.ENABL	LC
+;
+; PDP11/DCN - Ethernet leader processing.
+;
+; This module adds and removes Ethernet leaders, as well as performing the
+; Ethernet Address Resolution Protocol (ARP. It is designed to work with
+; multiple subnets sharing the same cable and with multiple cables. In
+; broadcast mode ARP is used to resolve addresses. In point-to-point mode
+; all packets are sent to the broadcast address.
+;
+; Option bits:
+; bstbit	point-to-point (0), broadcast (1)
+;
+; Conditional assembly switches
+;
+.IIF NDF,CS.CHL CS.CHL == 1	;0: normal, 1: check ethernet broadcast
+.IIF NDF,CS.PRB CS.PRB == 1	;0: normal, 1: check subnet arp source
+.IIF NDF,CS.IPF CS.IPF == 0	;0: normal, 1: enable ip forwarding
+;
+; External Symbols
+;
+	.GLOBL	ADRMAP,ADRGAT,NETEST ;routing functions
+	.GLOBL	$NETID,$HOSAD,GATVPT ;host/gateway tables
+	.GLOBL	RDRIN,RDROT	;redirect functions
+;
+; Entry symbols
+;
+	.GLOBL	SBNETH		;type interlan ethernet transfer vector
+	.GLOBL	SBNDEQ		;type deqna ethernet transfer vector
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.PSA,.GAT,.SMF ;dcnlib definitions
+	.MCALL	.PPKT,.FPKT,.DLAY,.PSEM,.VSEM ;dcnlib macros
+	.MCALL	$DFIH,$DFEH,$DFTBL,$DFTIM,$SGNLI,$DFSIG,.ETH ;moslib defs
+	.COM			;define common area
+	.PSA			;define process storage area
+	.GAT			;define gateway/bridge storage areas
+	.ETH			;define ethernet storage areas
+	.SMF			;define semaphore ids
+	$DFIH			;define internet header
+	$DFEH			;define Ethernet leader
+	$DFTBL			;define host/gateway table formats
+	$DFTIM			;define timeout intervals
+	$DFSIG			;define signal values
+;
+; Module definitions
+;
+TX.ARP	=	1200.		;arp cache timeout (sec)
+;
+; Define format of address resolution message
+;
+.	=	EH.LEN
+AR.HPR:	.BLKW	1		;hardware to resolve
+H.ETH	=	400		;ethernet hardware number (byte-swapped)
+AR.PPR:	.BLKW	1		;protocol to do resolution for
+AR.HLN:	.BLKB	1		;hardware address length
+AR.PLN:	.BLKB	1		;protocol address length
+AR.OP:	.BLKW	1		;operation to perform
+AR.REQ	=	400		;address resolution request (byte-swapped)
+AR.REP	=	1000		;address resolution reply (byte-swapped)
+AR.SHA:	.BLKW	3		;source hardware address
+AR.SPA:	.BLKW	2		;source protocol address
+AR.THA:	.BLKW	3		;target hardware address
+AR.TPA:	.BLKW	2		;target protocol address
+AR.LEN	=	.		;length of address resolution message
+;
+	.PAGE
+	.SBTTL	Input Processing
+;
+; Procedure segment
+;
+; Process-state procedure
+; Dsects: R3 = par, R5 = psa
+;
+	.PSECT	$SUPI,RO,I
+;
+; Initilize input
+; Initialize output
+;
+ETHINI:	MOV	PARVEC(R3),R0	;initialize driver
+	EMT	INI+EXTBAS
+	MOV	#$NETID,R1	;find table pointers
+	JSR	PC,ADRMAP
+	BCS	2$		;branch if wierdness (broken tables)
+	MOV	ETHADR(R3),HOSLNA(R1) ;insert local leader (only for display)
+	MOV	ETHADR+2(R3),HOSLNA+2(R1)
+	MOV	ETHADR+4(R3),HOSLNA+4(R1)
+	TST	PARADR(R3)	;is address configured
+	BNE	2$		;branch if yes
+	MOV	R3,R1		;no. insert broadcast address
+	ADD	#PARADR+4,R1
+	MOV	$NETID+2,-(R1)	;assume zeros variant
+	BIC	$NETID+6,@R1
+	MOV	$NETID,-(R1)
+	BIC	$NETID+4,@R1
+	JSR	PC,ADRMAP	;is this the right one
+	BCS	1$		;branch if no
+	BITB	#1,HOSLNA(R1)
+	BNE	2$		;branch if yes
+1$:	BIS	$NETID+4,PARADR(R3) ;no. assume ones variant
+	BIS	$NETID+6,PARADR+2(R3)
+2$:	RTS	PC
+;
+; Start input
+; R2 = data area length, r4 = buffer pointer, returns c(cc) = c if reset
+; Note: hardware and driver software filter out all packets except those for
+; this and the broadcast/multicast ethernet destination address. This section
+; filters out all packets with broadcast/multicast ethernet source address.
+;
+ETHINP:	MOV	R2,-(SP)	;adjust pointers
+	ADD	#EH.LEN,@SP
+INPR:	MOV	R4,R1
+	ADD	#BUFLDR-EH.LEN,R1 ;point to start of ethernet leader
+	MOV	@SP,R0		;get length
+	CCC			;clean condition codes
+	EMT	SIO+EXTBAS	;wait for device completion
+	BCS	INPR		;branch if error
+	MOV	R0,R2
+	SUB	#EH.LEN,R2	;is this valid ethernet leader
+	BLE	INPR		;branch if no (too short)
+	BITB	#1,EH.SAD(R1)
+	BNE	INPR		;branch if no (from a multicast address)
+	CMP	#ETHARP,EH.TYP(R1)
+	BEQ	INP10		;branch if yes (arp)
+	CMP	#ETHIP,EH.TYP(R1)
+	BNE	INPR		;branch if no (not ip)
+;
+; Ip datagram
+; Note: this section (optionally) filters out ip broadcast/multicast packets
+; with destination protocol other than hello
+;
+INP11:	BIT	#BSTBIT,PAROPT(R3) ;is this broadcast mode
+	BEQ	1$		;branch if no
+	.IF	NE,CS.CHL	;conditional assembly for chernobyl
+	BITB	#1,EH.DAD(R1)	;is this to a multicast address
+	BEQ	1$		;branch if no
+	CMPB	IH.PRO(R4),#P.LNP ;yes. is this hello msg
+	BNE	INPR		;branch if no
+	.ENDC
+1$:	MOV	EH.SAD(R1),NTRLNA(R5) ;save local source address
+	MOV	EH.SAD+2(R1),NTRLNA+2(R5)
+	MOV	EH.SAD+4(R1),NTRLNA+4(R5)
+	MOV	R2,R0		;deliver goods
+	MOV	(SP)+,R2	
+	CLC
+	RTS	PC
+;
+; Arp datagram
+; Note: this section captures arp packets only if the request is from the same
+; subnet and cable or if the reply is to this specific host.
+;
+INP10:	CMP	R2,#AR.LEN-EH.LEN ;is this valid arp header
+	BLO	2$		;branch if no
+	MOV	R1,R2
+	CMP	#H.ETH,AR.HPR(R2)
+	BNE	2$		;branch if no
+	CMP	#ETHIP,AR.PPR(R2)
+	BNE	2$		;branch if no
+	CMP	#4*400+6,AR.HLN(R2)
+	BNE	2$		;branch if no
+	CMP	#AR.REP,AR.OP(R2) ;yes. is this reply
+	BNE	1$		;branch if no
+	CMP	AR.TPA(R2),$NETID ;yes. is destination correct
+	BNE	2$		;branch if no
+	CMP	AR.TPA+2(R2),$NETID+2
+	BNE	2$		;branch if no
+	INC	ETHARR(R3)	;okay. tally arp reply received
+	MOV	AR.SHA(R2),ETHEQX(R3)
+	MOV	AR.SHA+2(R2),ETHEQX+2(R3)
+	MOV	AR.SHA+4(R2),ETHEQX+4(R3)
+	JSR	PC,ADRARP	;update tables for arp response
+	BR	INPR
+;
+1$:	CMP	#AR.REQ,AR.OP(R2) ;is this request
+	.IF	EQ,CS.PRB	;conditional assembly for proteon subnet
+	BNE	2$		;branch if no
+	MOV	R2,R1		;is source on same subnet
+	ADD	#AR.SPA,R1
+	JSR	PC,NETEST
+	.ENDC
+	BEQ	INP20		;branch if yes
+2$:	INC	ETHAXR(R3)	;no. tally arp input error
+	MOV	AR.SHA(R2),ETHIAR(R3)
+	MOV	AR.SHA+2(R2),ETHIAR+2(R3)
+	MOV	AR.SHA+4(R2),ETHIAR+4(R3)
+	BR	INPR
+;
+; Note: this section sends an arp reply if the target host is reachable and
+; not another host on this cable and not the broadcast address.
+;
+INP20:	INC	ETHAQR(R3)	;tally arp request received
+	MOV	AR.TPA(R2),ETHIQR(R3)
+	MOV	AR.TPA+2(R2),ETHIQR+2(R3)
+	MOV	R2,R1
+	ADD	#AR.TPA,R1
+	CMP	@R1,PARADR(R3)	;is this broadcast address
+	BNE	1$		;branch if no
+	CMP	2(R1),PARADR+2(R3)
+	BEQ	2$		;branch if yes
+1$:	.IF	EQ,CS.IPF	;conditional assembly for ip forwarding
+	CMP	@R1,$NETID	;is this the host
+	BNE	2$		;branch if no
+	CMP	2(R1),$NETID+2
+	BNE	2$		;branch if no
+	.ENDC
+	CLR	R0		;find target pointer
+	JSR	PC,ADRGAT
+	BCS	2$		;branch if not reachable
+	CMPB	PARPID(R3),HOSPID(R1)
+	BEQ	2$		;branch if same cable (don't reply for him)
+	JSR	PC,ADRARP	;no. update tables for arp request
+	BCS	2$		;branch if cant
+	MOV	#AR.LEN-EH.LEN,R0 ;grab an arp packet buffer
+	.PPKT
+	BEQ	2$		;branch if cant
+	MOV	R0,-(SP)
+	ADD	#EH.DAD,R0	;construct ethernet leader
+	MOV	EH.SAD(R2),(R0)+ ;(eh.dad)
+	MOV	EH.SAD+2(R2),(R0)+
+	MOV	EH.SAD+4(R2),(R0)+
+	MOV	ETHADR(R3),(R0)+ ;(eh.sad)
+	MOV	ETHADR+2(R3),(R0)+
+	MOV	ETHADR+4(R3),(R0)+
+	MOV	#ETHARP,(R0)+	;(eh.typ)
+	MOV	#H.ETH,(R0)+	;(ar.hpr) construct arp message
+	MOV	#ETHIP,(R0)+	;(ar.ppr)
+	MOV	#4*400+6,(R0)+	;(ar.hln,ar.pln)
+	MOV	#AR.REP,(R0)+	;(ar.op)
+	MOV	ETHADR(R3),(R0)+ ;(ar.sha)
+	MOV	ETHADR+2(R3),(R0)+
+	MOV	ETHADR+4(R3),(R0)+
+	MOV	AR.TPA(R2),(R0)+ ;(ar.spa)
+	MOV	AR.TPA+2(R2),(R0)+
+	MOV	AR.SHA(R2),(R0)+ ;(ar.tha)
+	MOV	AR.SHA+2(R2),(R0)+
+	MOV	AR.SHA+4(R2),(R0)+
+	MOV	AR.SPA(R2),(R0)+ ;(ar.tpa)
+	MOV	AR.SPA+2(R2),(R0)+
+	MOV	(SP)+,R0
+	$SGNLI	PARPID(R3),#SG.WRK,PARPID(R3),#0,R0 ;fwd reply to output proc
+2$:	JMP	INPR
+;
+; Process redirect
+; R1 = icmp packet pointer, r2 = icmp header pointer, r4 = data packet pointer
+;
+ETHRDR:	MOV	NTRLNA(R5),PH.LDR(R1) ;insert local address
+	MOV	NTRLNA+2(R5),PH.LDR+2(R1)
+	MOV	NTRLNA+4(R5),PH.LDR+4(R1)
+	JSR	PC,RDROT	;construct redirect
+	RTS	PC
+	.PAGE
+	.SBTTL	Output Processing
+;
+; Reset output
+; R2 = message pointer
+;
+ETHRST:	CMPB	SD.CHN(R2),#SG.WRK ;is this arp
+	BEQ	1$		;branch if yes
+	EMT	RSX+EXTBAS	;no. reset link
+	RTS	PC
+;
+1$:	MOV	SD.ADR(R2),R1	;arp. handoff to driver
+	MOV	#AR.LEN,R0
+	EMT	SIO+EXTBAS
+	BCS	2$		;branch if error
+	INC	ETHARX(R3)	;tally arp reply sent
+	MOV	AR.THA(R1),ETHEQR(R3)
+	MOV	AR.THA+2(R1),ETHEQR+2(R3)
+	MOV	AR.THA+4(R1),ETHEQR+4(R3)
+2$:	MOV	R1,R0		;release buffer
+	.FPKT
+	RTS	PC
+;
+; Start output
+; R2 = data area length, r4 = buffer pointer, returns c(cc) = c if error
+;
+ETHOUT:	MOV	R4,R1		;point to leader
+	ADD	#PH.LDR+6,R1
+	CMP	PH.LDR(R4),#377*400 ;is ethernet address present
+	BNE	1$		;branch if yes
+	MOV	#BSTADR+6,R1	;no. use broadcast address
+	BIT	#BSTBIT,PAROPT(R3) ;is this broadcast mode
+	BEQ	1$		;branch if no
+	CMP	PARADR(R3),PH.LDR+2(R4) ;yes. is broadcast requested
+	BNE	2$		;branch if no
+	CMP	PARADR+2(R3),PH.LDR+4(R4)
+	BNE	2$		;branch if no
+1$:	MOV	-(R1),-(SP)	;yes. save ethernet address
+	MOV	-(R1),-(SP)
+	MOV	-(R1),-(SP)
+	MOV	R4,R0		;construct ethernet leader
+	ADD	#BUFLDR-EH.LEN+EH.DAD,R0
+	MOV	(SP)+,(R0)+	;(eh.dad)
+	MOV	(SP)+,(R0)+
+	MOV	(SP)+,(R0)+
+	MOV	ETHADR(R3),(R0)+ ;(eh.sad)
+	MOV	ETHADR+2(R3),(R0)+
+	MOV	ETHADR+4(R3),(R0)+
+	MOV	#ETHIP,(R0)+	;(eh.typ)
+	MOV	R4,R1		;establish transfer parameters
+	ADD	#BUFLDR-EH.LEN,R1
+	MOV	R2,R0
+	ADD	#EH.LEN,R0
+	CCC			;handoff to driver
+	EMT	SIO+EXTBAS
+	RTS	PC
+;
+2$:	MOV	#AR.LEN-EH.LEN,R0 ;grab arp packet buffer
+	.PPKT
+	BEQ	5$		;branch if cant
+	MOV	R0,R1		;construct arp request
+	MOV	PH.LDR+4(R4),-(SP) ;save ip address
+	MOV	PH.LDR+2(R4),-(SP)
+	ADD	#EH.DAD,R0	;construct ethernet leader
+	MOV	BSTADR,(R0)+	;(eh.dad)
+	MOV	BSTADR+2,(R0)+
+	MOV	BSTADR+4,(R0)+
+	MOV	ETHADR(R3),(R0)+ ;(eh.sad)
+	MOV	ETHADR+2(R3),(R0)+
+	MOV	ETHADR+4(R3),(R0)+
+	MOV	#ETHARP,(R0)+	;(eh.typ)
+	MOV	#H.ETH,(R0)+	;(ar.hpr) construct arp message
+	MOV	#ETHIP,(R0)+	;(ar.ppr)
+	MOV	#4*400+6,(R0)+	;(ar.hln,ar.pln)
+	MOV	#AR.REQ,(R0)+	;(ar.op)
+	MOV	ETHADR(R3),(R0)+ ;(ar.sha)
+	MOV	ETHADR+2(R3),(R0)+
+	MOV	ETHADR+4(R3),(R0)+
+	MOV	$NETID,(R0)+	;(ar.spa)
+	MOV	$NETID+2,(R0)+
+	CLR	(R0)+		;(ar.tha)
+	CLR	(R0)+
+	CLR	(R0)+
+	MOV	(SP)+,(R0)+	;(ar.tpa)
+	MOV	(SP)+,(R0)+
+	MOV	#AR.LEN,R0	;send arp request
+	EMT	SIO+EXTBAS
+	BCS	4$		;branch if error
+	INC	ETHAQX(R3)	;tally arp request sent
+	MOV	AR.TPA(R1),ETHIQX(R3)
+	MOV	AR.TPA+2(R1),ETHIQX+2(R3)
+4$:	MOV	R1,R0		;release buffer
+	.FPKT
+	MOV	PARTRY(R3),R0	;wait for arp reply
+	.DLAY
+	MOV	R4,R1		;try again
+	JSR	PC,GATE
+	BCS	5$		;branch if not found or down
+	CMP	PH.LDR(R4),#377*400 ;is ethernet address present
+	BNE	6$		;branch if yes
+5$:	INC	ETHAXX(R3)	;no. tally arp output error
+	MOV	ETHIQX(R3),ETHIAX(R3)
+	MOV	ETHIQX+2(R3),ETHIAX+2(R3)
+	SEC			;error return
+	RTS	PC
+;
+6$:	JMP	ETHOUT
+;
+; Subroutine to update routing tables
+; R2 = ethernet leader pointer
+;
+; If source is on this cable and covered by hello algorithm, update only local
+; leader. Otherwise, create new entries if required and update all fields.
+; Suppress update if the Ethernet address of either the source or entry to be
+; updated are multicast addresses.
+;
+ADRARP:	.PSEM	#SF.RUT		;lock routing tables
+	MOV	R2,R1		;find source entry
+	ADD	#AR.SPA,R1
+	JSR	PC,ADRMAP
+	BCS	4$		;branch if not found
+	BITB	#1,HOSLNA(R1)
+	BNE	4$		;branch if multicast
+	BITB	#GT.END,GATFLG(R0)
+	BNE	1$		;branch if default
+	CMPB	GATHID(R0),$HOSAD-1 ;no default. is this hello entry
+	BHIS	6$		;branch if no
+	CMPB	PARPID(R3),HOSPID(R1) ;yes. is source on this cable
+	BNE	4$		;branch if no
+	BR	7$		;update leader only
+;
+1$:	SUB	#GATLEN,R0	;default. back to previous entry
+	BITB	#GT.CAC,GATFLG(R0) ;is this cache entry
+	BEQ	4$		;branch if no
+	TSTB	GATTTL(R0)	;yes. is it free
+	BNE	1$		;branch if no
+	CLR	R1		;yes. find free hid
+	BISB	$HOSAD-1,R1
+	MOVB	R1,-(SP)
+	MUL	#HOSLEN,R1
+	ADD	#$HOSAD,R1
+2$:	CMPB	@SP,$HOSAD-2	;is hid available
+	BHIS	3$		;branch if no
+	TSTB	HOSPID(R1)	;yes. is it free
+	BEQ	5$		;branch if yes
+	ADD	#HOSLEN,R1	;no. advance to next one
+	INCB	@SP
+	BR	2$
+;
+3$:	TSTB	(SP)+		;no hid available
+4$:	.VSEM	#SF.RUT		;unlock routing tables
+	SEC			;error return
+	RTS	PC
+;
+5$:	MOVB	(SP)+,GATHID(R0) ;found free hid. initialize host entry
+	MOV	AR.SPA(R2),GATNET(R0)
+	MOV	AR.SPA+2(R2),GATNET+2(R0)
+	CLR	GATMSK(R0)
+	CLR	GATMSK+2(R0)
+	CLR	GATLDR(R0)
+	CLR	GATLDR+2(R0)
+	MOVB	#GT.CAC,GATFLG(R0)
+	CLRB	GATHOP(R0)
+6$:	MOVB	#TX.ARP/30.,GATTTL(R0) ;tickle ttl
+	MOVB	PARPID(R3),HOSPID(R1) ;update routing entry
+	CLRB	HOSTTL(R1)
+	CLR	HOSTIM(R1)	;(fake time)
+	CLR	HOSTIM+2(R1)
+	MOV	#TM.MIN*2,HOSDLY(R1)
+	CLR	HOSOFS(R1)
+7$:	MOV	AR.SHA(R2),HOSLNA(R1) ;update local leader
+	MOV	AR.SHA+2(R2),HOSLNA+2(R1)
+	MOV	AR.SHA+4(R2),HOSLNA+4(R1)
+	MOV	GATVPT,R0	;scan net table for gateways
+8$:	CMP	AR.SPA(R2),GATLDR(R0) ;is this same gateway
+	BNE	9$		;branch if no
+	CMP	AR.SPA+2(R2),GATLDR+2(R0)
+	BNE	9$		;branch if no
+	CLR	R1		;yes. point to routing entry
+	BISB	GATHID(R0),R1
+	MUL	#HOSLEN,R1
+	ADD	#$HOSAD,R1
+	MOV	AR.SHA(R2),HOSLNA(R1) ;update local leader
+	MOV	AR.SHA+2(R2),HOSLNA+2(R1)
+	MOV	AR.SHA+4(R2),HOSLNA+4(R1)
+9$:	BITB	#GT.END,GATFLG(R0) ;is this end of table
+	BNE	10$		;branch if yes
+	ADD	#GATLEN,R0	;no. advance to next entry
+	BR	8$
+;
+10$:	.VSEM	#SF.RUT		;unlock routing tables
+	CLC			;normal return
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$SUPD,RO,D
+;
+; Transfer vector
+;
+SBNDEQ	=	.		;deqna
+SBNETH:	.WORD	ETHINI		;0 initialize input
+	.WORD	ETHINP		;1 start input
+	.WORD	RDRIN		;2 process leader
+	.WORD	ETHRDR		;3 process redirect
+	.WORD	ETHINI		;4 initialize output
+	.WORD	ETHOUT		;5 start output
+	.WORD	ETHRST		;6 reset output
+;
+BSTADR:	.WORD	177777,177777,177777 ;ethernet broadcast address
+;
+	.END
+                                                                                                

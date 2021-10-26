@@ -1,0 +1,804 @@
+	.TITLE	GATX25	Network xqcp driver
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn network xqcp driver
+;
+; This module is an extension of the network processes. it transmits and
+; Receives packets using the acc xq/cp network link interface and either
+; the 1822/hdh or x.25 proms.
+;
+; External symbols
+;
+	.GLOBL	.WAIT,.STIM	;supervisor services
+	.GLOBL	NETINP,NETOUT	;process initialization
+;
+; Entry symbols
+;
+	.GLOBL	X2IPAT		;input process control vector
+	.GLOBL	X2OPAT		;output process control vector
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.PSA,.GAT,.PAT ;dcnlib definitions
+	.MCALL	.SETV,.SKED,.ASYN,.STIM,.CTIM ;dcnlib macros
+	.COM			;define common data
+	.PSA			;define process stoage areas
+	.GAT			;define gateway/bridge storage areas
+;
+; Module definitions
+;
+	.MACRO	FSA	STATE,OFFSET,ACTION
+	MOV	STATE,R0
+	ADD	OFFSET,R0
+	MOV	ACTION,R1
+	JSR	PC,FSA
+	.ENDM	FSA
+;
+; Assembly parameters
+;
+N.CHAN	=	3		;number of logical channels
+QUESIZ	=	20		;request queue size
+X25LEN	=	2		;x25 interface leader length
+DLYTIM	=	5000.		;output timeout
+;
+; FSA unit state eventa
+;
+RESET 	=	0		;start reset
+OUTPUT	=	1		;start output
+DONE	=	2		;output done
+LINEUP	=	3		;line status up
+LINDWN	=	4		;line status down
+;
+; FSA channel read state events
+;
+READ	=	0		;Read Request
+CTS	=	1		;Clear-to-Send
+;
+; FSA channel write state events
+;
+WRITE	=	0		;Write Request
+RTS	=	1		;Request-to-Send
+;
+; Common channel state events
+;
+LABORT	=	2		;Local Abort
+RABORT	=	3		;Remote Abort
+ABOACK	=	4		;Abort ACK
+MORE	=	5		;More Data to come
+IOC	=	6		;I/O Completion and/or End-of-Stream
+;
+; FSA receive interrupt state events
+;
+RCVCMD	=	0		;Received RTS, CTS, etc.
+RCVDFE	=	1		;Received some flavor of DATA FOLOWS
+;
+; FSA transmit interrupt state events
+;
+XMTCMD	=	0		;Send RTS, CTS, etc.
+XMTDFE	=	1		;Send some flavor of a DATA FOLLOWS message
+XMTIOC	=	2		;I/O Completion Event
+;
+; Message codes
+;
+P.CTS	=	0		;Clear-to-Send "n" bytes.
+P.RTS	=	1		;Request-to-Send "n" bytes.
+P.DF	=	2		;Data Follows
+P.DFE	=	3		;Data Follows End-of-Stream
+P.ABOR	=	4		;Abort
+P.ABAC	=	5		;Abort Ack
+;
+; Logical channel block
+;
+.	=	0
+C.RED:	.BLKW	1		;read state
+C.WRT:	.BLKW	1		;write state
+C.RTS:	.BLKW	1		;rts byte count
+C.WBUF:	.BLKW	1		;write buffer address
+C.WXFR:	.BLKW	1		;write current byte count
+C.END	=	.		;end of block
+;
+; Parameter area extension (par)
+;
+.	=	PARLDL
+;LINCMD:	.BLKW	1		;line control command
+;	.BLKB	10
+LINCMD:	.BLKW	1		;use line status command (PGM, 6/12/87)
+	.BLKB	12.		;need more room for line status command
+HSTTMO:	.BLKW	1		;line timeouts
+HSTDER:	.BLKW	1		;data errors
+HSTISR:	.BLKW	1		;IMP detected HDLC sequence errors
+HSTHSR:	.BLKW	1		;IF-11Q detected HDLC sequence errors
+UNTSTA:	.BLKW	1		;unit state
+UNTSIG:	.BLKW	1		;unit signal
+UNTBUF:	.BLKW	1		;input buffer pointer
+UNTXFR:	.BLKW	1		;input bytes remaining
+UNTCNT:	.BLKW	1		;input bytes requested
+RECSTA:	.BLKW	1		;receive interrupt state
+RECBLK:	.BLKW	2		;receive control message
+XMTSTA:	.BLKW	1		;transmit interrupt state
+XMTBLK:	.BLKW	2		;transmit control message
+LCHAN:	.BLKW	1		;logical channel number (high byte)
+CHNPTR:	.BLKW	1		;logical channel pointer
+CHNBLK:	.BLKW	N.CHAN*C.END/2	;logical channel blocks
+;
+QUEPUT:	.BLKW	1		;request queue put pointer
+QUEGET:	.BLKW	1		;request queue get pointer
+QUEBGN:	.BLKW	1		;beginning of queue
+QUEEND:	.BLKW	1		;end of queue
+QUEUE:	.BLKW	2*QUESIZ	;request queue
+;
+; Process save area extension (dmr)
+;
+.	=	GATENR
+	.BLKW	REGEND/2+NTISTK	;process stack
+DMREND	=	.		;end of dmr extension
+;
+; Process save area extension (dmx)
+;
+.	=	GATENX
+	.BLKW	REGEND/2+NTOSTK	;process stack
+DMXEND	=	.		;end of dmx extension
+;
+; XQ/CP device register block (dev)
+;
+.	=	0
+RCSR:	.BLKW	1		;recieve control/status register
+RERR	=	100000		;Composite Read Error Flag
+XQRDY	=	002000		;XQ/CP ready for first I/O bit
+RIEN	=	000100		;Interrupt Enable
+RRESET	=	000002		;Set to Init Receive Side
+RGO	=	000001		;Command Strobe
+RBUF:	.BLKW	1		;receive  buffer
+RDBA:	.BLKW	1		;recieve bus address register
+RDWC:	.BLKW	1		;receive byte count register
+XCSR:	.BLKW	1		;transmit control/status register
+XERR	=	100000		;Composite Transmit Error Flag
+XIEN	=	000100		;Interrupt Enable
+XZ80	=	000010		;Set to Reset Z80
+XRESET	=	000002		;Set to Init Transmit Side
+XGO	=	000001		;Command Strobe
+XBUF:	.BLKW	1		;transmit buffer
+XDBA:	.BLKW	1		;transmit bus address register
+XDWC:	.BLKW	1		;transmit byte count register
+	.PAGE
+;
+; Procedure segment
+;
+; Supervisor-state procedure
+; Dsects: r2 = dev, r3 = par, r4 = reg, r5 = psa
+;
+; Note: calling process sets r0 = byte count, r1 = starting address.
+; At completion of transfer r0 = byte count.
+;
+	.PSECT	$KERI,RO,I
+;
+; Initialize transmit
+;
+DMXINI:	ADD	#4,R0		;allocate transmit vector
+	MOV	#INT+EXTBAS,R1
+	.SETV
+	RTS	PC
+;
+; Initialize receive
+;
+DMRINI:	MOV	#INT+EXTBAS,R1	;allocate receive vector
+	.SETV
+	MOV	#RRESET,RCSR(R2) ;reset dma and z80
+	MOV	#XRESET+XZ80,XCSR(R2)
+1$:	BIT	#XQRDY,RCSR(R2)	;wait for z80 ready
+	BEQ	1$
+	MOV	#UNT0,UNTSTA(R3) ;init unit state
+	MOV	#REC0,RECSTA(R3) ;init interrupt states
+	MOV	#XMT0,XMTSTA(R3)
+	MOV	R3,R1		;init channel blocks
+	ADD	#CHNBLK,R1
+	MOV	#N.CHAN,R0
+2$:	MOV	#RED0,(R1)+	;(c.red)
+	MOV	#WRT0,(R1)+	;(c.wrt)
+	CLR	(R1)+		;(c.rts)
+	CLR	(R1)+		;(c.wbuf)
+	CLR	(R1)+		;(c.wxfr)
+	SOB	R0,2$
+	MOV	R3,R1		;set queue pointers
+	ADD	#QUEUE,R1
+	MOV	R1,QUEPUT(R3)
+	MOV	R1,QUEGET(R3)
+	MOV	R1,QUEBGN(R3)
+	ADD	#4*QUESIZ,R1
+	MOV	R1,QUEEND(R3)
+	MOV	#4,R0		;receive command
+	MOV	R3,R1
+	ADD	#RECBLK,R1
+	JSR	PC,RCV
+	RTS	PC
+;
+; Input request
+;
+DMRSIO:	MOV	R1,UNTBUF(R3)	;save transfer parameters
+	ADD	#BUFTLR,R0	;(allow tailing bits)
+	MOV	R0,UNTCNT(R3)
+	MOV	R0,UNTXFR(R3)
+	CMP	PARSBT(R3),#<^RX25> ;is this x25
+	BNE	1$		;branch if no
+	ADD	#X25LEN,UNTBUF(R3) ;yes. adjust for interface leader
+	SUB	#X25LEN,UNTXFR(R3)
+1$:	BIS	#100000,UNTSIG(R3) ;set indicator
+	JSR	PC,.WAIT
+	CLR	R1		;scan input channels
+2$:	MOV	R1,R0		;is channel waiting
+	JSR	PC,SETCHN
+	CMP	C.RED(R0),#RED1
+	BEQ	3$		;branch if yes
+	ADD	#2,R1		;no. advance to next channel
+	CMP	R1,#N.CHAN*2
+	BLO	2$
+	RTS	PC
+;
+3$:	FSA	R0,#C.RED,#READ	;declare read event
+	RTS	PC
+;
+; Output request control channel (device reset)
+;
+DMXRST:	JSR	PC,.WAIT	;start reset
+	FSA	R3,#UNTSTA,#RESET
+	RTS	PC
+;
+; Output request data channel
+;
+DMXSIO:	JSR	PC,.WAIT	;start output
+	FSA	R3,#UNTSTA,#OUTPUT
+	MOV	#DLYTIM,R0	;start output timeout
+	JMP	.STIM
+;
+; Receive interrupt
+;
+DMRINT:	MOVB	RECBLK+1(R3),R0	;select channel
+	JSR	PC,SETCHN
+	MOV	#RCVDFE,R1	;does data follow
+	CMPB	RECBLK(R3),#P.DF
+	BEQ	1$		;branch if yes
+	CMPB	RECBLK(R3),#P.DFE
+	BEQ	1$		;branch if yes
+	MOV	#RCVCMD,R1	;no, ordinary command
+1$:	FSA	R3,#RECSTA,R1	;declare receive event
+	RTS	PC
+;
+; Transmit interrupt
+;
+DMXINT:	MOVB	XMTBLK+1(R3),R0	;select channel
+	JSR	PC,SETCHN
+	FSA	R3,#XMTSTA,#XMTIOC ;declare transmit event
+	CMP	QUEGET(R3),QUEPUT(R3) ;is request ueue empty
+	BEQ	2$		;branch if yes
+	MOV	#XMTDFE,R1	;no. does data follow
+	CMPB	@QUEGET(R3),#P.DF
+	BEQ	1$		;branch if yes
+	CMPB	@QUEGET(R3),#P.DFE
+	BEQ	1$		;branch if yes
+	MOV	#XMTCMD,R1	;no. ordinary command
+1$:	FSA	R3,#XMTSTA,R1	;start transmit
+2$:	RTS	PC
+;
+; FSA driver routine
+; R0 = state variable pointer, r1 = event code
+;
+FSA:	ASH	#2,R1		;compute table pointer
+	ADD	@R0,R1
+	MOV	(R1)+,@R0	;update state
+	JSR	PC,@(R1)+	;call routine
+IGNORE:	RTS	PC		;do-nothing entry
+;
+; FSA unit routines
+;
+; UNTRST - start reset
+;
+UNTRST:	MOV	#1,R0		;select control channel (write)
+	JSR	PC,SETCHN
+	MOV	R3,R1		;send control message
+	ADD	#LINCMD,R1
+	MOV	(R1)+,C.WXFR(R0)
+	MOV	R1,C.WBUF(R0)
+	FSA	R0,#C.WRT,#WRITE ;declare write event
+	RTS	PC
+;
+; UNTOUT - start output
+;
+UNTOUT:	MOV	REGR1(R4),R1	;retrieve buffer pointer
+	CMP	PARSBT(R3),#<^RX25> ;is this x25
+	BNE	1$		;branch if no
+	MOV	(R1)+,R0	;yes. select channel
+	JSR	PC,SETCHN
+	MOV	R1,C.WBUF(R0)	;initialize transfer parameters
+	MOV	@R4,C.WXFR(R0)
+	SUB	#X25LEN,C.WXFR(R0) ;adjust for interface leader
+	BR	2$
+;
+1$:	MOV	#3,R0		;hdh. select channel
+	JSR	PC,SETCHN
+	MOV	R1,C.WBUF(R0)	;initialize transfer parameters
+	MOV	@R4,C.WXFR(R0)
+2$:	MOVB	LCHAN+1(R3),LCHAN(R3) ;save for possible timeout
+	FSA	R0,#C.WRT,#WRITE ;declare write event
+	RTS	PC
+;
+; UNTIOC - output completion
+;
+UNTIOC:	.CTIM
+	.SKED
+	RTS	PC
+;
+; FSA read routines
+;
+; IDLRTS - RTS Received with no outstanding read request
+;
+IDLRTS:	MOV	CHNPTR(R3),R0	;save byte count
+	MOV	RECBLK+2(R3),C.RTS(R0)
+	TST	UNTSIG(R3)	;is buffer waiting
+	BPL	1$		;branch if no
+	FSA	CHNPTR(R3),#C.RED,#READ ;yes. start things
+1$:	RTS	PC
+;
+; GOTRD - Read Request after previous RTS
+;
+GOTRD:	MOV	CHNPTR(R3),R0	;compute min(rts,req)
+	MOV	C.RTS(R0),R1
+	BR	GOT10
+;
+; GOTRTS - RTS received with read pending
+;
+GOTRTS:	MOV	CHNPTR(R3),R0	;compute min(rts,req)
+	MOV	RECBLK+2(R3),R1
+GOT10:	BIC	#100000,UNTSIG(R3) ;clear indicator
+	CMP	R1,UNTXFR(R3)
+	BLOS	1$
+	MOV	UNTXFR(R3),R1
+1$:	MOV	R1,C.RTS(R0)	;save byte count
+	MOV	#P.CTS,R0	;send cts
+	JSR	PC,SNDCMD
+	RTS	PC
+;
+; RMORE - read completion and continue
+;
+RMORE:	MOV	CHNPTR(R3),R0	;update transfer parameters
+	ADD	C.RTS(R0),UNTBUF(R3)
+	SUB	C.RTS(R0),UNTXFR(R3)
+	RTS	PC
+;
+; RIOC - read completion and end
+;
+RIOC:	JSR	PC,RMORE	;update transfer parameters
+	MOVB	LCHAN+1(R3),R0	;tossabout
+	MOV	REGR1(R4),R1
+	CMP	PARSBT(R3),#<^RX25> ;is this x25
+	BEQ	1$		;branch if yes
+	CMPB	R0,#2		;no. is this control channel
+	BHIS	5$		;branch if no
+	CMPB	@R1,#360	;is this line status
+	BNE	5$		;branch if no
+	MOVB	1(R1),R0	;yes. extract hdh line status
+;	CMPB	R0,#4		;is code in range
+	CMPB	R0,#9.		;is code in range (PGM, 06/12/87)
+	BHIS	5$		;branch if no
+	ASL	R0		;yes. decode
+	ADD	R0,PC
+	BR	5$		;0 undefined
+	BR	2$		;1 line up
+	BR	3$		;2 line down
+	BR	5$		;3 ack line up request, but line is still down
+	BR	6$		;4 line timeout
+	BR	5$		;5 loopback message
+	BR	7$		;6 host data error detected
+	BR	8$		;7 HDLC sequence error detected by IMP
+	BR	9$		;8 HDLC sequence error detected by IF-11Q
+;
+1$:	MOV	R0,@R1		;x25. save channel
+	CMPB	R0,#2		;is this control channel
+	BHIS	5$		;branch if no
+	CMPB	X25LEN(R1),#141	;is this x25 line status
+	BNE	5$		;branch if no
+	MOVB	X25LEN+2(R1),R0	;yes. extract x25 line status
+	BIC	#^C3,R0
+	ASL	R0
+	ADD	R0,PC
+	BR	3$		;0 line down
+	BR	2$		;1 line up
+	BR	3$		;2 line disabled
+	BR	5$		;3 undefined
+;
+2$:	MOVB	#LINEUP,UNTSIG(R3) ;line up
+	BR	4$
+;
+3$:	MOVB	#LINDWN,UNTSIG(R3) ;line down
+4$:	JSR	PC,WIOC1	;wake up output side
+5$:	MOV	UNTCNT(R3),@R4	;retrieve transfer parameters
+	SUB	UNTXFR(R3),@R4
+	BR	RAPS1
+;
+6$:	INC	HSTTMO(R3)	;count line timeouts
+	BR	5$
+7$:	INC	HSTDER(R3)	;count data errors
+	BR	5$
+8$:	INC	HSTISR(R3)	;count IMP detected HDLC sequence errors
+	BR	5$
+9$:	INC	HSTHSR(R3)	;count IF-11Q detected HDLC sequence errors
+	BR	5$
+;
+; SNDABY - send abort and end
+; RRAPS - read error and end
+;
+SNDABY:	JSR	PC,SNDABO	;send abort
+RRAPS:	BIS	#1,REGPS(R4)	;end error
+RAPS1:	.SKED
+	RTS	PC
+;
+; FSA write routines
+;
+; GOTWR - Write Request
+;
+GOTWR:	MOV	CHNPTR(R3),R1	;send rts
+	MOV	C.WXFR(R1),R1
+	MOV	#P.RTS,R0
+	JSR	PC,SNDCMD
+	RTS	PC
+;
+; GOTCTS - Received Clear-to-Send
+;
+GOTCTS:	MOV	#P.DF,R0	;is transfer complete
+	MOV	CHNPTR(R3),R1
+	CMP	RECBLK+2(R3),C.WXFR(R1)
+	BNE	10$		;branch if no
+	MOV	#P.DFE,R0	;yes. use dfe
+10$:	MOV	RECBLK+2(R3),R1
+	JSR	PC,PUTCQ
+	FSA	R3,#XMTSTA,#XMTDFE ;start transmit
+	RTS	PC
+;
+; WIOC - write completion and end
+;
+SNDABX:	JSR	PC,SNDABA	;send abort ack
+WIOC:	MOVB	#DONE,UNTSIG(R3) ;signal io done
+WIOC1:	MOVB	PARPID(R3),R1	;signal output side
+	MOV	#ASY,R0
+	.ASYN
+	RTS	PC
+;
+; Asynchronous interrupt output
+;
+DMXASY:	TSTB	R0		;is this timer interrupt
+	BNE	1$		;branch if no
+	MOVB	LCHAN(R3),R0	;select channel
+	JSR	PC,SETCHN
+	FSA	CHNPTR(R3),#C.WRT,#LABORT ;yes. abort write
+	BIS	#1,REGPS(R4)	;indicate output error
+	RTS	PC
+;
+1$:	FSA	R3,#UNTSTA,UNTSIG(R3) ;crank engine
+	RTS	PC
+;
+; FSA receive routines
+;
+; RCVCOM - Process protocol command message
+;
+RCVCOM:	MOVB	RECBLK(R3),R1	;decode command
+	MOVB	DECODE(R1),R1
+	BITB	#1,LCHAN+1(R3)	;decode transfer direction
+	BNE	1$		;branch if write
+	FSA	CHNPTR(R3),#C.RED,R1 ;read
+	BR	RCV2
+;
+1$:	FSA	CHNPTR(R3),#C.WRT,R1 ;write
+	BR	RCV2
+;
+; RCVHDR - prepare for user data
+;
+RCVHDR:	MOV	RECBLK+2(R3),R0	;receive data
+	MOV	UNTBUF(R3),R1
+	JSR	PC,RCV
+	RTS	PC
+;
+; RCVDAT - process user data message
+;
+RCVDAT:	MOV	#IOC,R1		;is transfer complete
+	CMPB	RECBLK(R3),#P.DFE
+	BEQ	1$		;branch if yes
+	MOV	#MORE,R1	;no. set more
+1$:	FSA	CHNPTR(R3),#C.RED,R1
+RCV2:	MOV	#4,R0		;receive command
+	MOV	R3,R1
+	ADD	#RECBLK,R1
+	JSR	PC,RCV
+	RTS	PC
+;
+; FSA transmit routines
+;
+; CMDDFE - send protocol command message
+; R1 = message block pointer
+;
+CMDDFE:	MOV	R3,R1		;set transmit pointer
+	ADD	#XMTBLK,R1
+	MOV	R2,-(SP)	;queue message
+	MOV	QUEGET(R3),R2
+	MOV	(R2)+,@R1	;control word
+	MOV	(R2)+,2(R1)	;record size
+	CMP	R2,QUEEND(R3)
+	BLO	3$
+	MOV	QUEBGN(R3),R2
+3$:	MOV	R2,QUEGET(R3)
+	MOV	(SP)+,R2
+	MOV	#4,R0		;start transmit
+	JSR	PC,XMT
+	RTS	PC
+;
+; XMTDAT - transmit user data
+;
+XMTDAT:	MOV	CHNPTR(R3),R1	;set transfer parameters
+	MOV	XMTBLK+2(R3),R0	;construct transfer parameters
+	MOV	C.WBUF(R1),-(SP)
+	ADD	R0,C.WBUF(R1)
+	SUB	R0,C.WXFR(R1)
+	MOV	(SP)+,R1
+	JSR	PC,XMT		;start transmit
+	RTS	PC
+;
+; DATIOC - process write completion
+;
+DATIOC:	MOV	#IOC,R1		;(presume END)
+	MOV	CHNPTR(R3),R0
+	TST	C.WXFR(R0)
+	BEQ	10$
+	MOV	#MORE,R1
+10$:	FSA	R0,#C.WRT,R1
+	RTS	PC
+;
+; FSA support routines
+;
+; SNDABO - send abort
+;
+SNDABO:	MOV	#P.ABOR,R0	;send abort
+	CLR	R1
+	BR	SNDCMD
+;
+; SNDABA - send abort ack
+;
+SNDABA:	MOV	#P.ABAC,R0	;send abort ack
+	CLR	R1
+	BR	SNDCMD
+;
+; SNDCMD - send command
+; r0 = message type, r1 = byte count
+;
+SNDCMD:	JSR	PC,PUTCQ	;queue message
+	FSA	R3,#XMTSTA,#XMTCMD ;start transmit
+	RTS	PC
+;
+; PUTCQ - add word to the circle queue
+; r0-r1 = data words
+;
+PUTCQ:	MOV	R2,-(SP)	;preserve order
+	MOV	LCHAN(R3),R2	;insert channel bits
+	BIC	#377,R2
+	BIS	R2,R0
+	MOV	QUEPUT(R3),R2	;copy request block
+	MOV	R0,(R2)+
+	MOV	R1,(R2)+
+	CMP	R2,QUEEND(R3)
+	BLO	1$
+	MOV	QUEBGN(R3),R2
+1$:	MOV	R2,QUEPUT(R3)
+	MOV	(SP)+,R2
+	RTS	PC
+;
+; RCV - transfer next message from xq/cp to pdp-11
+; r0 = Byte Count, R1 ->Buffer
+;
+RCV:	INC	R0		;round up to word count
+	ASR	R0
+	NEG	R0
+	MOV	R0,RDWC(R2)	;word count
+	MOV	R1,RDBA(R2)	;buffer address
+	BIS	#RIEN+RGO,RCSR(R2) ;start operation
+	RTS	PC
+;
+; XMT - tranfer next message from pdp-11 to xq/cp
+; r0 = Byte Count, R1 ->Buffer
+;
+XMT:	INC	R0		;round up to word count
+	ASR	R0
+	NEG	R0
+	MOV	R0,XDWC(R2)	;word count
+	MOV	R1,XDBA(R2)	;buffer address
+	BIS	#XIEN+XGO,XCSR(R2) ;start operation
+	RTS	PC
+;
+; DIE - illegal state/event trap
+;
+DIE:	HALT
+;
+; SETCHN - sets channel number and pointer
+; R0 = channel number, returns r0 = channel pointer
+;
+SETCHN:	MOVB	R0,LCHAN+1(R3)	;save channel number/write flag
+	ASR	R0		;compute channel block pointer
+	ASL	R0		;(c.end = 10.)
+	MOV	R0,-(SP)
+	ASH	#2,R0
+	ADD	(SP)+,R0
+	ADD	R3,R0
+	ADD	#CHNBLK,R0
+	MOV	R0,CHNPTR(R3)
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$KERD,RO,D
+;
+; Process headers
+;
+X2IPAT:	.PAT	DMREND,NETINP,PRI3,<0,0,DMRINI,DMRSIO,DMRINT>
+X2OPAT:	.PAT	DMXEND,NETOUT,PRI3,<0,DMXASY,DMXINI,DMXSIO,DMXINT,DMXRST>
+;
+; Message type decode
+;
+DECODE:	.BYTE	CTS		;0 (P.CTS) Clear-to-Send "n" bytes.
+	.BYTE	RTS		;1 (P.RTS) Request-to-Send "n" bytes.
+	.BYTE	200		;2 (P.DF) Data Follows
+	.BYTE	200		;3 (P.DFE) Data Follows End-of-Stream 
+	.BYTE	RABORT		;4 (P.ABOR) Abort
+	.BYTE	ABOACK		;5 (P.ABAC) Abort Ack
+	.BYTE	200		;6 invalid code
+	.BYTE	200		;7 invalid code
+;
+; Unit state tables (unt)
+;
+UNT0:	.WORD	UNT2,UNTRST	;*RESET (line up)
+	.WORD	UNT3,UNTOUT	;*OUTPUT
+	.WORD	UNT0,IGNORE	;DONE
+	.WORD	UNT0,IGNORE	;LINEUP
+	.WORD	UNT0,IGNORE	;LINDWN
+;
+UNT3:	.WORD	UNT3,IGNORE	;RESET (wait for output and end operation)
+	.WORD	UNT3,IGNORE	;OUTPUT
+	.WORD	UNT0,UNTIOC	;*DONE
+	.WORD	UNT3,IGNORE	;LINEUP
+	.WORD	UNT3,IGNORE	;LINDWN
+;
+UNT2:	.WORD	UNT2,IGNORE	;RESET (wait for output and end operation)
+	.WORD	UNT2,IGNORE	;OUTPUT
+	.WORD	UNT1,IGNORE	;*DONE
+	.WORD	UNT4,IGNORE	;*LINEUP
+	.WORD	UNT2,IGNORE	;LINDWN
+;
+UNT1:	.WORD	UNT1,IGNORE	;RESET (wait for output and end operation)
+	.WORD	UNT1,IGNORE	;OUTPUT
+	.WORD	UNT1,IGNORE	;DONE
+	.WORD	UNT0,UNTIOC	;*LINEUP
+	.WORD	UNT1,IGNORE	;LINDWN
+;
+UNT4:	.WORD	UNT4,IGNORE	;RESET (wait for output and end operation)
+	.WORD	UNT4,IGNORE	;OUTPUT
+	.WORD	UNT0,UNTIOC	;*DONE
+	.WORD	UNT4,IGNORE	;LINEUP
+	.WORD	UNT4,IGNORE	;LINDWN
+;
+; Read state tables (red)
+;
+RED0:	.WORD	RED2,IGNORE	;*READ (Wait for Read or RTS)
+	.WORD	RED1,IDLRTS	;*RTS
+	.WORD	RED5,SNDABO	;LOCAL ABORT
+	.WORD	RED0,SNDABA	;REMOTE ABORT
+	.WORD	RED4,SNDABO	;ABORT ACK
+	.WORD	RED4,SNDABO	;MORE
+	.WORD	RED4,SNDABO	;IOC
+;
+RED1:	.WORD	RED3,GOTRD	;*READ (Read Wait)
+	.WORD	RED4,SNDABO	;RTS
+	.WORD	RED5,SNDABO	;LOCAL ABORT
+	.WORD	RED0,SNDABA	;REMOTE ABORT
+	.WORD	RED4,SNDABO	;ABORT ACK
+	.WORD	RED4,SNDABO	;MORE
+	.WORD	RED4,SNDABO	;IOC
+;
+RED2:	.WORD	RED2,IGNORE	;READ (RTS Wait)
+	.WORD	RED3,GOTRTS	;*RTS
+	.WORD	RED5,SNDABO	;LOCAL ABORT
+	.WORD	RED0,SNDABY	;REMOTE ABORT
+	.WORD	RED5,SNDABO	;ABORT ACK
+	.WORD	RED5,SNDABO	;MORE
+	.WORD	RED5,SNDABO	;IOC
+;
+RED3:	.WORD	RED3,IGNORE	;READ (Read I/O in Progress)
+	.WORD	RED5,SNDABO	;RTS
+	.WORD	RED5,SNDABO	;LOCAL ABORT
+	.WORD	RED0,SNDABY	;REMOTE ABORT
+	.WORD	RED5,SNDABO	;ABORT ACK
+	.WORD	RED2,RMORE	;*MORE
+	.WORD	RED0,RIOC	;*IOC
+;
+RED4:	.WORD	RED5,IGNORE	;READ (Read Abort Pending, No Signal)
+	.WORD	RED4,IGNORE	;RTS
+	.WORD	RED5,IGNORE	;LOCAL ABORT
+	.WORD	RED4,SNDABA	;REMOTE ABORT
+	.WORD	RED0,IGNORE	;*ABORT ACK
+	.WORD	RED4,IGNORE	;MORE
+	.WORD	RED4,IGNORE	;IOC
+;
+RED5:	.WORD	RED5,IGNORE	;READ (Read Abort Pending and Signal)
+	.WORD	RED5,IGNORE	;RTS
+	.WORD	RED5,IGNORE	;LOCAL ABORT
+	.WORD	RED5,SNDABA	;REMOTE ABORT
+	.WORD	RED0,RRAPS	;*ABORT ACK
+	.WORD	RED5,IGNORE	;MORE
+	.WORD	RED5,IGNORE	;IOC
+;
+; Write state tables (wrt)
+;
+WRT0:	.WORD	WRT1,GOTWR	;*WRITE (Wait for Write Request)
+	.WORD	WRT3,SNDABO	;CTS
+	.WORD	WRT4,SNDABO	;LOCAL ABORT
+	.WORD	WRT0,SNDABA	;REMOTE ABORT
+	.WORD	WRT3,SNDABO	;ABORT ACK
+	.WORD	WRT3,SNDABO	;MORE
+	.WORD	WRT3,SNDABO	;IOC
+;
+WRT1:	.WORD	WRT1,IGNORE	;WRITE (Wait for Clear-to-Send)
+	.WORD	WRT2,GOTCTS	;*CTS
+	.WORD	WRT4,SNDABO	;LOCAL ABORT
+	.WORD	WRT0,SNDABX	;REMOTE ABORT
+	.WORD	WRT4,SNDABO	;ABORT ACK
+	.WORD	WRT4,SNDABO	;MORE
+	.WORD	WRT4,SNDABO	;IOC
+;
+WRT2:	.WORD	WRT2,IGNORE	;WRITE (Write I/O in Progress)
+	.WORD	WRT4,SNDABO	;CTS
+	.WORD	WRT4,SNDABO	;LOCAL ABORT
+	.WORD	WRT0,SNDABX	;REMOTE ABORT
+	.WORD	WRT4,SNDABO	;ABORT ACK
+	.WORD	WRT1,GOTWR	;*MORE
+	.WORD	WRT0,WIOC	;*IOC
+;
+WRT3:	.WORD	WRT4,IGNORE	;WRITE (Write Abort Pending, No Signal)
+	.WORD	WRT3,IGNORE	;CTS
+	.WORD	WRT4,IGNORE	;LOCAL ABORT
+	.WORD	WRT3,SNDABA	;REMOTE ABORT
+	.WORD	WRT0,IGNORE	;*ABORT ACK
+	.WORD	WRT3,IGNORE	;MORE
+	.WORD	WRT3,IGNORE	;IOC
+;
+WRT4:	.WORD	WRT4,IGNORE	;WRITE (Write Abort Pending and Signal)
+	.WORD	WRT4,IGNORE	;CTS
+	.WORD	WRT4,IGNORE	;LOCAL ABORT
+	.WORD	WRT4,SNDABA	;REMOTE ABORT
+	.WORD	WRT0,WIOC	;*ABORT ACK
+	.WORD	WRT4,IGNORE	;MORE
+	.WORD	WRT4,IGNORE	;IOC
+;
+; Receive state tables (rec)
+;
+REC0:	.WORD	REC0,RCVCOM	;*RCVCMD (Ready to Receive a Command)
+	.WORD	REC1,RCVHDR	;*RCVDFE
+;
+REC1:	.WORD	13,DIE		;RCVCMD (Receive User Data)
+	.WORD	REC0,RCVDAT	;*RCVDFE
+;
+; Transmit state tables (xmt)
+;
+XMT0:	.WORD	XMT1,CMDDFE	;*XMTCMD (Idle, Ready for work)
+	.WORD	XMT2,CMDDFE	;*XMTDFE
+	.WORD	14,DIE		;XMTIOC
+;
+XMT1:	.WORD	XMT1,IGNORE	;XMTCMD (Command I/O Pending)
+	.WORD	XMT1,IGNORE	;XMTDFE
+	.WORD	XMT0,IGNORE	;*XMTIOC
+;
+XMT2:	.WORD	XMT2,IGNORE	;XMTCMD (Data Follows Command I/O Pending)
+	.WORD	XMT2,IGNORE	;XMTDFE
+	.WORD	XMT3,XMTDAT	;*XMTIOC
+;
+XMT3:	.WORD	XMT3,IGNORE	;XMTCMD (User Data I/O Pending)
+	.WORD	XMT3,IGNORE	;XMTDFE
+	.WORD	XMT0,DATIOC	;*XMTIOC
+;
+	.END
+                                                                                                                                                                                                                                                                                                                                                                                                                             

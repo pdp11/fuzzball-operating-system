@@ -1,0 +1,681 @@
+	.TITLE	RSOLV	Domain resolver
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Domain resolver
+;
+; This program queries a name server for resources associated with a given
+; name. It is designed to conform with RFC-883.
+;
+; External symbols
+;
+	.GLOBL	CTRL,NETMSG,RTNMSG ;network routines
+	.GLOBL	RNAME		;domain-name server
+	.GLOBL	RDASC,RDDEC,HASH ;utility i/o routines
+;
+; Entry symbols
+;
+	.GLOBL	RDBYT,PRBYT	;char i/o routines
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.WIND,.KWTAB ;dcnlib macros
+	.MCALL	.TTYIN,.TTYOU,.EXIT,.QSET ;rt-11 macroni
+	.MCALL	.SPND,.RSUM,.MRKT,.CMKT,.SCCA,.GTLIN
+	.MCALL	$DFIH,$DFUH,$DFSIG ;moslib macroni
+	.MCALL	CALL,FORMAT	;netlib macros
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	$DFIH			;define internet header
+	$DFUH			;define user datagram header
+	$DFSIG			;define interprocess signals
+;
+; Module definitions
+;
+; Assembly parameters
+;
+QUESIZ	=	20.		;max elements on completion queue
+TCBSIZ	=	256.		;size of tcb
+S.DNM	=	53.		;domain name server
+RTXMAX	=	3		;max retries
+;
+; Flags bits
+;
+DMPBIT	=	000001		;dump command/response packets
+;
+; Domain name header format
+;
+.	=	0
+HD.ID:	.BLKW	1		;query id
+HD.OP:	.BLKB	1		;operation code and flags
+OP.QUE	=	0*10		;standard query (QUERY)
+OP.INV	=	1*10		;inverse query (IQUERY)
+OP.CQM	=	2*10		;completion query, multiple answers (CQUERYM)
+OP.CQS	=	3*10		;completion query, single answer (CQUERYU)
+OP.AA	=	004		;authoritative answer bit
+OP.TC	=	002		;truncation bit
+OP.RD	=	001		;recursion desired bit
+HD.RSP:	.BLKB	1		;response code and flags
+OR.RA	=	200		;recursion available bit
+OR.OK	=	000		;no error condition
+OR.FMT	=	001		;format error
+OR.BUG	=	002		;server failure
+OR.NAM	=	003		;unknown name
+OR.NYP	=	004		;not implemented
+OR.REF	=	005		;refused
+HD.QCT:	.BLKW	1		;count of question entries
+HD.ACT:	.BLKW	1		;count of answer records
+HD.NCT:	.BLKW	1		;count of authority records
+HD.RCT:	.BLKW	1		;count of additional records
+HD.LEN	=	.		;length of header
+;
+; Resource record format
+;
+.	=	0
+RR.TYP:	.BLKW	1		;type
+RR.CLS:	.BLKW	1		;class
+RR.TTL:	.BLKW	2		;time to live (sec)
+RR.RDL:	.BLKW	1		;rdata length
+RR.DAT	=	.		;rdata
+;
+; Procedure segment
+;
+	.PSECT	$BOSI,RO,I
+;
+; Domain name server query program
+;
+; Program is called with the domain name of the name server as argument. In
+; response to the prompt, enter the following:
+;		<domain name> [<op> [<type> [<class>]]] ,
+; where <domain name> is the fully-qualified name, <op> is the operation
+; (0 = normal, 1 = inverted), <type> is the query type and <class> is the
+; query class.
+;
+START:	BIS	#40000,@#44	;disable folding
+	.QSET	#QUEUE,#QUESIZ	;allocate space for completion queue
+	MOV	#512,R1		;is argument in chain area
+	TSTB	@R1
+	BNE	1$		;branch if yes
+	MOV	#TIMNAM,R1	;no. use default
+1$:	CALL	RNAME,R1,#CCBADR,#0 ;fetch Internet address
+	TST	R0
+	BEQ	2$		;branch if found
+	JSR	PC,PRIDNT	;error. display message
+	JSR	PC,RTNMSG
+	.EXIT
+;
+2$:	CLR	FLAGS
+3$:	.GTLIN	#CMDBUF,#PROMPT	;get argument
+	MOV	#CMDBUF,CMDPTR	;point to command string
+	JSR	PC,HASH		;get command name
+	BEQ	3$		;ignore if empty line
+	MOV	#KWKTBL,R1	;search for match
+4$:	TST	(R1)+		;is this end of table
+	BEQ	5$		;branch if yes
+	CMP	R0,-2(R1)	;no. do entries match
+	BEQ	5$		;branch if yes
+	TST	(R1)+		;no. step to next
+	BR	4$
+;
+5$:	ADD	@R1,R1		;entries match. call subroutine
+	JSR	PC,@R1
+	BR	3$
+;
+; Command interpreter segments
+;
+; Argument
+; Arg1 = query op, arg2 = type, arg3 = class
+;
+ARG:	JSR	PC,RDDEC	;get op
+	MOV	R0,QOP
+	JSR	PC,RDDEC	;get type
+	BNE	1$
+	MOV	#1,R0
+1$:	MOV	R0,QTYPE
+	JSR	PC,RDDEC	;get class
+	BNE	2$
+	MOV	#1,R0
+2$:	MOV	R0,QCLASS
+	RTS	PC
+;
+; Timeout (res) set rtx timeout
+; (segment of command language interpreter)
+; Arg1 = timeout value (milliseconds)
+;
+TIME:	JSR	PC,RDDEC	;get value
+	MUL	#3.,R0		;convert to 60ths
+	DIV	#50.,R0
+	MOV	R0,TIME1+2
+	RTS	PC
+;
+; 'on' (cmd) set option bits on
+; (segment of command language interpreter)
+; Arg1... = option types
+;
+CMDON:	JSR	PC,CTLGET	;do the work
+	BCS	1$		;branch if error
+	BIS	R0,FLAGS
+1$:	RTS	PC
+;
+; 'off' (cmd) set option bits off
+; (segment of command language interpreter)
+; Arg1 ... = option types
+;
+CMDOFF:	JSR	PC,CTLGET	;do the work
+	BCS	1$		;branch if error
+	BIC	R0,FLAGS
+1$:	RTS	PC
+;
+; Subroutine to get bit mask
+; Returns r0 = control bits
+;
+CTLGET:	CLR	-(SP)		;preset bits
+9$:	JSR	PC,HASH		;get option type (rad50)
+	BEQ	10$		;branch if missing
+	MOV	#CTLTBL,R1	;get control table pointer
+5$:	TST	@R1		;is this last entry
+	BEQ	6$		;branch if yes
+	CMP	R0,(R1)+	;no. does it match
+	BEQ	7$		;branch if yes
+	TST	(R1)+		;no. go to next
+	BR	5$
+;
+7$:	BIS	(R1)+,@SP	;assemble flags
+	BR	9$
+;
+6$:	FORMAT	#COM28		;unrecognized option type
+	SEC
+	BR	8$
+;
+10$:	CLC
+8$:	MOV	(SP)+,R0	;get flags
+	RTS	PC
+;
+; Unrecognized command
+; (resolve name)
+;
+NTFD:	CLR	SCCA		;disable control-c
+	.SCCA	#ARGBLK,#SCCA
+	MOV	#RTXMAX,RETRY	;gogetum
+	CLR	TCB		;(pass check in open)
+	CALL	CTRL,#CM.OPN,#CCB,#TCB ;open connection
+	TST	R0
+	BEQ	1$		;branch if no error
+	JSR	PC,PRIDNT	;error. display message
+	JSR	PC,RTNMSG
+	BR	2$
+;
+1$:	.SPND			;lots happen in there
+2$:	.SCCA	#ARGBLK,#0	;enable control-c
+	RTS	PC
+;
+; Net trap routine
+;
+NCA:	MOV	SD.ADR(R0),R1	;get signal particulars
+	MOV	SD.CHN(R0),R0
+	BIC	#^C17,R0	;decode signal
+	MOV	R0,R2
+	ASL	R2
+	ADD	R2,PC
+	BR	SIGOPN		;0 open
+	BR	SIGERR		;1 connection error
+	BR	SIGERR		;2 host not responding
+	BR	SIGCLS		;3 closed
+	BR	SIGDAT		;4 data available
+	BR	SIGERR		;5 connection reset
+	BR	SIGERR		;6 send complete
+	BR	SIGERR		;7 remote disconnect
+	BR	SIGERR		;10 remote interrupt
+	BR	SIGERR		;11 nsp (decnet)
+;
+SIGERR:	JSR	PC,PRIDNT	;net error. display message
+	JSR	PC,NETMSG
+	RTS	PC
+;
+SIGCLS:	.RSUM			;close complete. unlock mainline
+	RTS	PC
+;
+SIGOPN:	TST	SCCA		;is control-c pending
+	BNE	SIG77		;branch if yes
+	CALL	CTRL,#CM.GET,#TEMP,#TCB ;no. allocate and init ip datagram
+	TST	R0
+	BEQ	1$		;branch if no error
+	JSR	PC,PRIDNT	;display error message
+	JSR	PC,RTNMSG
+	BR	3$
+;
+1$:	MOV	TEMP,R1		;get packet pointers
+	MOV	R1,R2
+	ADD	PH.OFS(R1),R2
+	MOV	R2,R3
+	ADD	#UH.LEN,R3
+	JSR	PC,ENCOD	;encode request
+	SUB	R2,R3		;fill in remaining header fields
+	MOV	R3,PH.LNG(R1)
+	MOV	PH.TIM+2(R1),DELAY
+	JSR	PC,DUMP		;dump packet
+	CALL	CTRL,#CM.UDP,R1,#TCB ;send udp datagram
+	TST	R0
+	BEQ	3$		;branch if no error
+	JSR	PC,PRIDNT	;display error message
+	JSR	PC,RTNMSG
+3$:	.MRKT	#ARGBLK,#TIME1,#SMPSRV,#1 ;arm watchdog bark
+	RTS	PC
+;
+SMPSRV:	DEC	RETRY		;has max retries been reached
+	BNE	SIGOPN		;branch if no
+	FORMAT	#COM20		;timeout
+SIG77:	BR	SIGERY
+;
+SIGDAT:	CLR	R0		;map packet into user space
+	.WIND
+	JSR	PC,DUMP		;dump packet
+	MOV	R1,R2		;get packet pointers
+	ADD	PH.OFS(R1),R2
+	BIT	#IH.MF+IH.OFF,IH.FRG(R1) ;is packet a fragment
+	BNE	1$		;branch if yes
+	CMP	PH.LNG(R1),#UH.LEN+HD.LEN ;no. is packet long enough
+	BHIS	2$		;branch if yes
+	FORMAT	#COM21		;invalid packet format
+1$:	CALL	CTRL,#CM.FRE,R1,#TCB ;no. free ip packet
+	RTS	PC
+;
+2$:	.CMKT	#ARGBLK,#1,#0	;kill timeout
+	SUB	PH.TIM+2(R1),DELAY ;compute delay
+	NEG	DELAY
+	MOV	R2,R3
+	ADD	#UH.LEN,R3
+	JSR	PC,DECOD	;decode contents
+	CALL	CTRL,#CM.FRE,R1,#TCB ;free ip packet
+SIGERY:	CALL	CTRL,#CM.CLS,#0,#TCB ;udp close
+	RTS	PC
+;
+; Subroutine to encode name-server request
+; r3 = header pointer
+;
+ENCOD:	MOV	R1,-(SP)	;save
+	MOV	#CMDBUF,CMDPTR	;point to command string
+	CLR	(R3)+		;(hd.id)
+	MOV	QOP,(R3)+	;(hd.op,hd.rsp)
+	CMP	R0,#OP.INV	;is it inverted
+	BEQ	5$		;branch if yes	
+	MOV	#1*400,(R3)+	;(hd.qct) normal
+	CLR	(R3)+		;(hd.act)
+	CLR	(R3)+		;(hd.nct)
+	CLR	(R3)+		;(hd.rct)
+1$:	CLRB	(R3)+		;insert count field
+	MOV	R3,R1
+2$:	JSR	PC,RDASC	;is this end of name
+	BEQ	4$		;branch if yes
+	CMPB	R0,#<' >
+	BEQ	4$		;branch if yes
+	CMPB	R0,#'.		;no. is this domain delimiter
+	BEQ	3$		;branch if yes
+	MOVB	R0,(R3)+	;no. copy char
+	BR	2$
+;
+3$:	MOV	R3,R0		;domain delimiter. insert length
+	SUB	R1,R0
+	MOVB	R0,-(R1)
+	BR	1$
+;
+4$:	MOV	R3,R0		;insert length
+	SUB	R1,R0
+	MOVB	R0,-(R1)
+	CLRB	(R3)+		;backstop
+	MOVB	QTYPE+1,(R3)+	;qtype
+	MOVB	QTYPE,(R3)+
+	MOVB	QCLASS+1,(R3)+	;qclass
+	MOVB	QCLASS,(R3)+
+	BR	6$
+;
+5$:	CLR	(R3)+		;(hd.qct) inverted query
+	MOV	#1*400,(R3)+	;(hd.act)
+	CLR	(R3)+		;(hd.nct)
+	CLR	(R3)+		;(hd.rct)
+	CLRB	(R3)+		;null name
+	MOVB	QTYPE+1,(R3)+	;qtype
+	MOVB	QTYPE,(R3)+
+	MOVB	QCLASS+1,(R3)+	;qclass
+	MOVB	QCLASS,(R3)+
+	CLRB	(R3)+		;(rdttl)
+	CLRB	(R3)+
+	CLRB	(R3)+
+	CLRB	(R3)+
+	CLRB	(R3)+		;(rdlen)
+	MOVB	#4,(R3)+
+	JSR	PC,RDDEC	;(rdata) insert address
+	MOVB	R0,(R3)+
+	JSR	PC,RDDEC
+	MOVB	R0,(R3)+
+	JSR	PC,RDDEC
+	MOVB	R0,(R3)+
+	JSR	PC,RDDEC
+	MOVB	R0,(R3)+
+6$:	MOV	(SP)+,R1	;evas
+	RTS	PC
+;
+; Subroutine to decode name-server reply
+; R3 = header pointer
+;
+DECOD:	MOV	R1,-(SP)	;save
+	MOV	R4,-(SP)
+	SWAB	HD.QCT(R3)	;swab decks
+	SWAB	HD.ACT(R3)
+	SWAB	HD.NCT(R3)
+	SWAB	HD.RCT(R3)
+	MOVB	HD.RSP(R3),R0	;decode reply
+	BIC	#^C7,R0
+	ASL	R0
+	BEQ	1$		;branch if no error
+	JSR	PC,PRIDNT	;display error comment
+	FORMAT	RSLTXT(R0),R0
+	BR	2$
+;
+1$:	MOV	R3,R1		;set pointers
+	ADD	#HD.LEN,R1
+	MOV	R3,R4
+	ADD	#HD.QCT,R4
+	MOV	#COM04,R0	;question records
+	JSR	PC,DEC1
+	MOV	#COM05,R0	;answer records
+	JSR	PC,DEC1
+	MOV	#COM06,R0	;authority records
+	JSR	PC,DEC1
+	MOV	#COM07,R0	;additional records
+	JSR	PC,DEC1
+2$:	MOV	(SP)+,R4	;evas
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to decode and display resource records
+; R0 = label pointer, r1 = field pointer, R4 = count pointer
+;
+DEC1:	TST	@R4		;are there any records at all
+	BEQ	1$		;branch if no
+	FORMAT	R0		;yes. label this thing
+1$:	DEC	@R4		;are there more records
+	BGE	2$		;branch if yes
+	TST	(R4)+		;no. go home
+	RTS	PC
+;
+2$:	JSR	PC,SKPNAM	;decode name string
+	MOVB	(R1)+,RREC+1	;(rr.typ) copy and align remainder of header
+	MOVB	(R1)+,RREC
+	MOVB	(R1)+,RREC+3	;(rr.cls)
+	MOVB	(R1)+,RREC+2
+	MOV	R3,R0		;is this question
+	ADD	#HD.QCT,R0
+	CMP	R4,R0
+	BHI	3$		;branch if no
+	FORMAT	#COM01,#RREC	;misc fields
+	FORMAT	#COM02A,#STOBGN	;name field
+	BR	1$
+;
+3$:	MOVB	(R1)+,RREC+5	;(rr.ttl)
+	MOVB	(R1)+,RREC+4
+	MOVB	(R1)+,RREC+7
+	MOVB	(R1)+,RREC+6
+	MOVB	(R1)+,RREC+11	;(rr.rdl)
+	MOVB	(R1)+,RREC+10
+	FORMAT	#COM01,#RREC	;misc fields
+	FORMAT	#COM02,#STOBGN	;name field
+	MOV	RREC+RR.TYP,R0	;keep type for later
+	MOV	RREC+RR.RDL,-(SP) ;compute next field pointer
+	ADD	R1,@SP
+	BIC	#^C17,R0	;handrail
+	ASL	R0
+	ADD	R0,PC
+	BR	10$		;0 invalid
+	BR	4$		;1 (A) host address
+	BR	8$		;2 (NS) authoritative name server
+	BR	8$		;3 (MD) mail destination
+	BR	8$		;4 (MF) mail forwarder
+	BR	8$		;5 (CNAME) canonical name for an alias
+	BR	10$		;6 (SOA) marks start of a zone of authority
+	BR	8$		;7 (MB) mailbox domain name
+	BR	8$		;8 (MG) mail group member
+	BR	8$		;9 (MR) mail rename domain name
+	BR	10$		;10 (NULL) null RR
+	BR	6$		;11 (WKS) well known service description
+	BR	8$		;12 (PTR) domain name pointer
+	BR	9$		;13 (HINFO) host information
+	BR	9$		;14 (MINFO) mailbox or mail list information
+	BR	10$		;15 invalid
+;
+4$:	MOV	RREC+RR.RDL,TEMP ;host address. is anything therer
+	BEQ	10$		;branch if no
+	MOV	#RREC,R0	;yes. copy and align
+5$:	MOVB	(R1)+,(R0)+
+	DEC	TEMP
+	BNE	5$
+	FORMAT	#COM03,#RREC	;host address
+	BR	11$
+;
+6$:	MOV	RREC+RR.RDL,TEMP ;host services. is anything there
+	BEQ	10$		;branch if no
+	MOV	#RREC,R0	;yes. copy and align
+7$:	MOVB	(R1)+,(R0)+
+	DEC	TEMP
+	BNE	7$
+	MOV	R0,TEMP		;save backstop
+	FORMAT	#COM03A,#RREC	;host services
+	JSR	PC,DEC2		;decode bit map
+	FORMAT	#COM03B
+	BR	11$
+;
+8$:	JSR	PC,SKPNAM	;single name
+	FORMAT	#COM04A,#STOBGN
+	BR	11$
+;
+9$:	JSR	PC,SKPNAM	;double name
+	FORMAT	#COM04B,#STOBGN
+	JSR	PC,SKPNAM
+	FORMAT	#COM04C,#STOBGN
+	BR	11$
+;
+10$:	FORMAT	#COM04D		;invalid or null
+11$:	MOV	(SP)+,R1	;put things back
+	JMP	1$
+;
+; Subroutine to decode bit map
+;
+DEC2:	MOV	R2,-(SP)	;save
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	MOV	#RREC+5,R4	;initialize octets
+	CLR	TEMP+2
+1$:	CMP	R4,TEMP		;is there an octet
+	BHIS	4$		;branch if no
+	MOVB	(R4)+,R2	;yes. initialize bits
+	MOV	#8.,R3
+2$:	ROLB	R2		;is there a hit
+	BCC	3$		;branch if no
+	FORMAT	#COM03C,#TEMP+2	;yes. output port
+3$:	INC	TEMP+2
+	SOB	R3,2$		;wander on	
+	BR	1$
+;
+4$:	MOV	(SP)+,R4	;evas
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	RTS	PC
+;
+; Subroutine to decode name
+; R1 = field pointer, r3 = header pointer
+;
+SKPNAM:	MOV	R2,-(SP)	;save
+	MOV	#CMDBUF,R2	;point somewhere useful
+	JSR	PC,SKP1
+	MOV	(SP)+,R2	;evas
+	RTS	PC
+;
+SKP1:	MOVB	(R1)+,R0	;get initial count
+1$:	TSTB	R0		;examine count
+	BEQ	4$		;branch if end of field
+	BMI	3$		;branch if real count
+2$:	MOVB	(R1)+,(R2)+	;copy label
+	SOB	R0,2$
+	MOVB	(R1)+,R0	;get next count
+	BEQ	4$		;branch if end of field
+	MOVB	#'.,(R2)+	;flag for next label	
+	BR	1$
+;
+3$:	BIC	#^C77,R0	;pointer. munge away
+	SWAB	R0
+	BISB	(R1)+,R0
+	MOV	R1,-(SP)
+	MOV	R0,R1
+	ADD	R3,R1
+	JSR	PC,SKP1
+	MOV	(SP)+,R1
+4$:	CLRB	(R2)+		;backstop
+	RTS	PC
+;
+; Subroutine to read byte from terminal
+; R0 = byte
+;
+RDBYT:	MOVB	@CMDPTR,R0	;fetch byte
+	BEQ	1$		;branch if backstop
+	INC	CMDPTR		;update pointer (clear z bit)
+1$:	RTS	PC
+;
+; Subroutine to write byte to terminal
+; R0 = byte
+;
+PRBYT:	.TTYOU			;vanilla is a flavor
+	RTS	PC
+;
+; Subroutine to display program ident
+;
+PRIDNT:	MOV	R0,-(SP)	;appear transparent
+	MOV	#COM00,R0	;display program ident
+	JSR	PC,FORMAT
+	MOV	(SP)+,R0
+	RTS	PC
+;
+; Subroutine to dump udp datagram
+; R1 = packet pointer
+;
+DUMP:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	BIT	#DMPBIT,FLAGS	;is dump wanted
+	BEQ	4$		;branch if no
+	MOV	PH.OFS(R1),R2	;yes. compute total packet length
+	ADD	PH.LNG(R1),R2
+	SUB	#BUFLDR-1,R2
+	ASR	R2
+	ADD	#BUFLDR,R1	;point to ip header
+	MOV	R1,TEMP		;display current address
+	FORMAT	#DMP00,#TEMP
+1$:	MOV	#8.,R3		;set loop count
+2$:	FORMAT	#DMP01		;display current word
+	TST	(R1)+
+	DEC	R2
+	BLE	3$		;branch if done
+	SOB	R3,2$		;loop until end line
+	FORMAT	#DMP02		;end line
+	BR	1$
+;
+3$:	FORMAT	#DMP03		;end line
+4$:	MOV	(SP)+,R3	;evas
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D	;read-only data
+;
+; Command table for kwik
+;
+KWKTBL:	.KWTAB	<ARG>,ARG	;specify arguments
+	.KWTAB	<ON>,CMDON	;set option switch
+	.KWTAB	<OFF>,CMDOFF	;clear option switch
+	.KWTAB	<   >,NTFD	;end of table
+;
+; Option bit table
+;
+CTLTBL:	.RAD50	'DUM'		;dump packets
+	.WORD	DMPBIT
+	.WORD	0		;end of table
+;
+RSLTXT:	.WORD	0		;0 normal return
+	.WORD	RSL01		;1 format error
+	.WORD	RSL02		;2 server failure
+	.WORD	RSL03		;3 unknown name
+	.WORD	RSL04		;4 not implemented
+	.WORD	RSL05		;5 refused
+	.WORD	RSL01		;6 invalid
+	.WORD	RSL01		;7 invalid
+;
+COM29:	.ASCIZ	'?RSOLV-F-Unrecognized command'
+COM28:	.ASCIZ	'?RSOLV-F-Unrecognized option'
+COM00:	.ASCIZ	'?RSOLV-^+'
+COM20:	.ASCIZ	'?RSOLV-F-Reply timeout'
+COM21:	.ASCIZ	'?RSOLV-W-Invalid packet format'
+PROMPT:	.ASCII	'*'<200>
+RSL01:	.ASCIZ	'F-Format error'
+RSL02:	.ASCIZ	'F-Server failure'
+RSL03:	.ASCIZ	'F-Unknown name'
+RSL04:	.ASCIZ	'F-Not implemented'
+RSL05:	.ASCIZ	'F-Refused'
+DMP00:	.ASCIZ	'^K'<0>' ^+'
+DMP01:	.ASCIZ	' ^K'<0>'^+'
+DMP02:	.ASCIZ	'^/       ^+'
+DMP03:	.BYTE	0
+COM04:	.ASCIZ	'Question records'
+COM05:	.ASCIZ	'Answer records'
+COM06:	.ASCIZ	'Authority records'
+COM07:	.ASCIZ	'Additional records'
+COM01:	.ASCIZ	'Type ^I'<RR.TYP>'^+'
+COM02:	.ASCIZ	'  domain name ^A'<CMDBUF-STOBGN>'  ^+'
+COM02A:	.ASCIZ	'  domain name ^A'<CMDBUF-STOBGN>
+COM04A:	.ASCIZ	'host name ^A'<CMDBUF-STOBGN>
+COM03:	.ASCIZ	'host address ^C'<0>
+COM03A:	.ASCII	'host services ^C'<0>'  protocol ^BI'<4>'^/  Ports^+'
+COM03B:	.BYTE
+COM03C:	.ASCIZ	' ^I'<0>'^+'
+COM04B:	.ASCIZ	'^/  Host information ^A'<CMDBUF-STOBGN>'^+'
+COM04C:	.ASCIZ	' ^A'<CMDBUF-STOBGN>
+COM04D:	.ASCIZ	'Invalid or null RR record'
+	.EVEN
+;
+	.PSECT	$DATA,RW,I	;initialized read/write data
+;
+; Connection control block
+;
+CCB:	.WORD	TCBSIZ		;ccb length
+	.WORD	NCA		;completion routine
+	.BYTE	P.UDP,0		;protocol, flags
+	.WORD	0,0,0		;local socket (default)
+CCBADR:	.WORD	0,0,S.DNM*400	;remote socket
+	.WORD	0,0		;max datagram size, options (default)
+;
+QOP:	.WORD	OP.QUE		;query op (query)
+QTYPE:	.WORD	1		;query type (a)
+QCLASS:	.WORD	1		;query class (in)
+TIME1:	.WORD	0,3*60.		;retry timeout (three seconds)
+TIMNAM:	.ASCIZ	'SRI-NIC.ARPA'	;default name-server host name
+	.EVEN
+;
+	.PSECT	$ERAS,RW,I	;read/write data
+;
+STOBGN	=	.		;format fence
+ARGBLK:	.BLKW	5		;rt-11 argument block
+SCCA:	.BLKW	1		;control-c switch
+RETRY:	.BLKW	1		;retry count
+DELAY:	.BLKW	1		;roundtrip time
+TEMP:	.BLKW	2		;temporary
+FLAGS:	.BLKW	1		;flags that wave
+CMDPTR:	.BLKW	1		;command buffer pointer
+CMDBUF:	.BLKB	80.		;command buffer
+	.EVEN
+RREC:	.BLKW	128.		;resource record buffer
+QUEUE:	.BLKW	QUESIZ.*7.	;space for completion queue
+TCB:	.BLKW	TCBSIZ		;transmission control block
+;
+	.END	START
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                

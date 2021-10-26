@@ -1,0 +1,381 @@
+	.TITLE	TNTALK	Local device intercom
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn basic operating system - local device intercom
+;
+; External symbols
+;
+	.GLOBL	WRTCHR
+	.GLOBL	FLAGS,ESCAPE,SFLFCB,TIME
+	.GLOBL	TNLSI
+;
+; Entry symbols
+;
+	.GLOBL	TNTALK		;device intercom
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.PSA,.CLP,.FLG,.IOD,.CHN,.TTD ;dcnlib definitions
+	.MCALL	.TTINR,.SNCA,.TTYOU,.MSG,.DSTAT ;macros
+	.MCALL	.MRKT,.CMKT,.READW,.PURGE
+	.MCALL	CALL,DFFCB,FORMAT ;netlib definitions
+	.COM			;common definitions
+	.CHR			;ascii character codes
+	.PSA			;supervisor psa and par definitions
+	.CLP			;rt-11 monitor area definitions
+	.FLG			;flag bit definitions
+	.IOD			;emulator monitor area extension
+	.CHN			;define argument area
+	.TTD			;define tt parameter area
+	DFFCB			;define file control block
+;
+; Module definitions
+;
+; Status bits (flags)
+;
+SFLBIT	=	100000		;send file open bit
+CHRBIT	=	040000		;character-mode bit
+FILBIT	=	020000		;script file open bit
+ECHBIT	=	010000		;echo bit
+IACBIT	=	004000		;telnet iac bit
+REMBIT	=	002000		;session echo bit
+TRMBIT	=	001000		;terminal enabled bit
+SCRBIT	=	000400		;file enabled bit
+VCGBIT	=	000200		;display enabled bit
+BINBIT	=	000100		;image mode bit
+URGBIT	=	000040		;disable output bit
+QUOBIT	=	000020		;quote-mode bit
+NONBIT	=	000010		;local-echo bit
+TELBIT	=	000004		;disable telnet negotiation
+	.PAGE
+;
+; Procedure segment
+;
+; This little jewel juggles obscure pointers to provide two-way communication
+; between the user and another process on the same machine. For reference, the
+; process in which this program is running is called the "user" process, while
+; the one to which it is connected is called the "link" process.
+;
+; There are three kinds of link processes: stream dte, steam dce and special.
+; A stream dte process is connected to a dce on another host as a "downline"
+; device, while a stream dce process is connected to a terminal as a
+; "intercom" device. A special process is another user process (server) on
+; the same host.
+;
+; R3 = link proc par pointer, r5 = user proc mon ptr
+;
+	.PSECT	$BOSI,RO,I
+;
+TNTALK:	MOV	R0,TLKDEV	;save logical device name (rad50)
+	BNE	1$		;branch if non-default
+	MOV	#^RTLK,TLKDEV	;default system operator
+1$:	MOV	@#SYSPTR,R5	;rebuild addressability
+	MOV	IOHPAR(R5),R1	;save user process name
+	MOVB	PARIDX(R1),R1
+	BIC	#^C377,R1
+	ADD	R5,R1
+	ADD	PNPTR(R5),R1
+	MOV	@R1,USENAM
+;
+; Find link process and attach
+;
+	.DSTAT	#ARGBLK,#TLKDEV	;find link terminal
+	BCS	2$		;branch if not assigned
+	MOV	ARGBLK+4,R3	;save par pointer
+	MOV	R3,TLKPAR
+	MOVB	PARPID(R3),R0	;save pid
+	MOV	R0,TLKPID
+	MOV	PAROPT(R3),TLKOPT ;save options
+	MOVB	PARLDN+2(R3),TLKOFS ;save index
+	MOVB	PARIDX(R3),R1	;save name
+	BIC	#^C377,R1
+	ADD	R5,R1
+	ADD	PNPTR(R5),R1
+	MOV	@R1,DEVNAM
+	TSTB	PARLNG(R3)	;does this process have ports
+	BNE	3$		;branch if yes
+2$:	FORMAT	#COM11,#TLKDEV	;no. unassigned or invalid device [device]
+	BR	20$
+;
+3$:	CMPB	PARTPE(R3),#27	;is this link process
+	BNE	44$		;branch if no
+	SUB	#2,TLKPID	;yes. assume pid of input process
+	BR	4$
+;
+44$:	CMPB	PARTPE(R3),#4	;is this stream device
+	BNE	4$		;branch if no
+	SUB	#2,TLKPID	;yes. assume pid of input process
+	MOVB	PAROUT(R3),TLKSEL ;save channel select
+	MOVB	#'0,PAROUT(R3)	;set device as in dle-0
+	BIT	#BINBIT,FLAGS	;is this image mode
+	BEQ	4$		;branch if no
+	BIS	#2,PAROPT(R3)	;yes. set device image mode
+4$:	BIS	#100000,PAROPT(R3) ;mark busy
+	MOV	IOHPAR(R5),R0	;set new index
+	MOVB	PARIDX(R0),PARLDN+2(R3)
+;
+; Initialize for two-way transfers
+;
+	CMPB	PARTPE(R3),#4	;is this ascii-mode stream-dce device
+	BNE	7$		;branch if no
+	BIT	#3,PAROPT(R3)
+	BNE	7$		;branch if no
+	FORMAT	#COM15,#DEVNAM	;yes. send herald to user terminal
+	.MSG	TLKDEV		;switch to link process
+	FORMAT	#COM14,#USENAM	;send herald to link terminal
+	BR	8$
+;
+7$:	FORMAT	#COM16,R1	;send herald to user terminal
+	.MSG	TLKDEV		;switch to link terminal
+8$:	BIS	#TTSPC$+ESCFL$,@#JSW ;twiddle twaddle
+	.SNCA	#ARGBLK,#NCA	;specify net trap routine
+	MOV	R0,SNCSAV
+	JSR	PC,TLK7		;chat until exhausted
+	BIC	#TTSPC$+ESCFL$,@#JSW ;twaddle twiddle
+	.SNCA	#ARGBLK,SNCSAV	;restore net trap routine
+20$:	BIS	#TRMBIT,FLAGS	;switch to command mode
+	BIC	#QUOBIT+CHRBIT+REMBIT+NONBIT+ECHBIT+TELBIT+SFLBIT,FLAGS
+	.PURGE	#1
+	RTS	PC
+;
+; Read/write loop
+;
+TLK7:	.TTINR			;get next character
+	BCS	5$		;branch if suspended
+	MOVB	R0,TLKCHR
+	SWAB	R0		;is this from link terminal
+	CMPB	R0,TLKPID
+	BNE	TLK8		;branch if no
+;
+; Byte is from link terminal
+;
+	CMPB	PARTPE(R3),#4	;is it ascii-mode stream-dce device
+	BNE	1$		;branch if no
+	BIT	#3,PAROPT(R3)
+	BNE	1$		;branch if no
+	MOVB	TLKCHR,R0	;yes. echo char to link terminal
+	.TTYOU
+	CMPB	TLKCHR,#SUB	;is this goodbye
+	BEQ	4$		;branch if yes
+1$:	BIT	#TRMBIT,FLAGS	;is terminal enabled
+	BNE	36$		;branch if yes
+	MOVB	TLKCHR,R0	;no. skip the rest
+	JSR	PC,WRTCHR
+	BR	TLK7
+;
+36$:	CMP	TLKPTR,#BUFFER	;is buffer empty
+	BHI	2$		;branch if no
+	TST	TIME+2		;yes. is timer enabled
+	BEQ	2$		;branch if no
+	.MRKT	#ARGBLK,#TIME,#CHAT,#1 ;yes. start char timer
+2$:	MOVB	TLKCHR,@TLKPTR	;save char
+	INC	TLKPTR
+	TST	TIME+2		;is timer enabled
+	BEQ	3$		;branch if no
+	CMP	TLKPTR,#BUFFER+80. ;yes. is buffer full
+	BLO	TLK7		;branch if no
+3$:	JSR	PC,CHAT		;yes. transmit buffer
+	BR	TLK7
+;
+4$:	JMP	TLK6
+;
+5$:	JMP	TLK9
+;
+; Byte is from user terminal
+;
+TLK8:	CMPB	LSTCHR,ESCAPE	;user terminal. was last char escape
+	BNE	4$		;branch if no
+	CLRB	LSTCHR		;yes. interpret this char
+	MOVB	TLKCHR,R0
+	BIC	#^C177,R0
+	CMPB	R0,ESCAPE	;is char escape
+	BEQ	5$		;branch if yes
+	CMP	R0,#140		;no. fold to upper case
+	BLO	1$
+	SUB	#040,R0
+1$:	CMPB	R0,#'C		;is this close
+	BEQ	7$		;branch if yes
+	CMPB	R0,#'S		;no. is this stop file
+	BNE	2$		;branch if no
+	BIC	#SFLBIT,FLAGS	;yes. woah
+	.MSG	<#^RTT >
+	FORMAT	#COM41X		;transfer suspended
+	.MSG	TLKDEV
+	BR	6$
+;
+2$:	CMPB	R0,#'Q		;is this start file
+	BNE	3$		;branch if no
+	BIS	#SFLBIT,FLAGS	;yes. giddyap
+	.MSG	<#^RTT >
+	FORMAT	#COM41,#SFLFCB	;transfer begins [file]
+	.MSG	TLKDEV
+	BR	6$	
+;
+3$:	CMPB	R0,#'L		;is this send bootstrap
+	BNE	30$		;branch if no
+	JSR	PC,TNLSI	;yes. send bootstrap
+	BR	6$
+;
+30$:	.MSG	<#^RTT >
+	FORMAT	#COM28		;invalid command character
+	.MSG	TLKDEV
+	BR	6$
+;
+4$:	MOVB	TLKCHR,R0	;is char escape
+	BIC	#^C177,R0
+	CMPB	R0,ESCAPE
+	BNE	5$		;branch if no
+	MOVB	R0,LSTCHR	;yes. bide a wee
+	BR	6$
+;
+5$:	MOVB	TLKCHR,R0	;user terminal. send char to link terminal
+	.TTYOU
+	BIT	#BINBIT+NONBIT,FLAGS ;is image or no-echo set
+	BNE	6$		;branch if yes
+	.MSG	<#^RTT >	;no. echo char to user terminal
+	MOVB	TLKCHR,R0
+	JSR	PC,WRTCHR
+	.MSG	TLKDEV
+6$:	JMP	TLK7
+;
+7$:	JMP	TLK6
+;
+; Input suspended. Test for send file and process
+;
+TLK9:	TSTB	FLAG		;suspended. is this close
+	BNE	TLK6		;branch if yes
+	BIT	#SFLBIT,FLAGS	;no. is this send file
+	BEQ	8$		;branch if no
+	CMP	CMDPTR,CMDNET	;yes. is buffer empty
+	BLO	1$		;branch if no
+	.READW	#ARGBLK,#1,#CMDBUF,#256.,SFLFCB+FCBBLK ;yes. get next block
+	BCS	5$		;branch if error
+	MOV	#CMDBUF,CMDPTR	;reset pointers
+	MOV	#CMDBUF+512.,CMDNET
+	INC	SFLFCB+FCBBLK
+1$:	MOVB	@CMDPTR,R0	;send char to link terminal
+	BIT	#BINBIT,FLAGS	;is this image mode
+	BNE	2$		;branch if yes
+	BICB	#200,R0		;no. test ascii type
+	BEQ	4$		;branch if nul (discard)
+	CMPB	R0,#DEL
+	BEQ	4$		;branch if del (discard)
+	CMPB	R0,#SUB
+	BEQ	6$		;branch if sub (end of file)
+2$:	.TTYOU
+	BIT	#BINBIT+NONBIT,FLAGS ;is image or no-echo set
+	BNE	3$		;branch if yes
+	.MSG	<#^RTT >	;no. echo char to user terminal
+	MOVB	@CMDPTR,R0
+	JSR	PC,WRTCHR
+	.MSG	TLKDEV
+3$:	INC	CMDPTR		;index and exit
+	BR	8$
+;
+4$:	INC	CMDPTR		;index and try again
+	BR	TLK9
+;
+5$:	TSTB	@#ERRBYT	;transfer exception. is it end of file
+	BEQ	6$		;branch if yes
+	.MSG	<#^RTT >	;switch to user terminal
+	FORMAT	#COM44,#SFLFCB	;file read error [file]
+	BR	7$
+;
+6$:	.MSG	<#^RTT >	;switch to user terminal
+	FORMAT	#COM42		;transfer complete
+7$:	.MSG	TLKDEV
+	.PURGE	#1		;end operation
+	BIC	#SFLBIT,FLAGS
+8$:	JMP	TLK7
+;
+; Put things back the way they were
+;
+TLK6:	JSR	PC,CHAT		;transmit buffer
+	CMPB	PARTPE(R3),#4	;is this stream device
+	BNE	2$		;branch if no
+	MOVB	TLKSEL,PAROUT(R3) ;yes. restore channel select
+	BIT	#3,PAROPT(R3)	;is this ascii-mode dce device
+	BNE	2$		;branch if no
+	FORMAT	#COM19		;yes. send closing to link terminal
+2$:	MOV	TLKOPT,PAROPT(R3) ;restore options
+	MOVB	TLKOFS,PARLDN+2(R3) ;restore index
+	.MSG	<#^RTT >	;send closing to user terminal
+	FORMAT	#COM19
+	RTS	PC
+;
+; Net trap routine
+;
+NCA:	INCB	FLAG		;set indicator
+	RTS	PC
+;
+; Subroutine to transmit chit-chat buffer
+;
+CHAT:	TST	TIME+2		;is timer enabled
+	BEQ	1$		;branch if no
+	.CMKT	#ARGBLK,#1,#0	;yes. stop timer
+1$:	MOV	#BUFFER,R1	;is buffer empty
+	MOV	TLKPTR,R2
+	SUB	R1,R2
+	BEQ	3$		;branch if yes
+	.MSG	<#^RTT >	;no. switch to user terminal
+2$:	MOVB	(R1)+,R0	;clean buffer out
+	JSR	PC,WRTCHR
+	SOB	R2,2$
+	MOV	#BUFFER,TLKPTR
+	.MSG	TLKDEV		;switch back to link terminal
+3$:	RTS	PC
+	.PAGE
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+; Operator text strings
+;
+COM11:	.ASCIZ	'?TELNET-F-Unassigned or invalid device ^R'<0>
+COM28:	.ASCIZ	'?TALK-W-Unrecognized command character'
+COM44:	.ASCIZ	'?TALK-F-File read error ^F'<FCBNAM>
+COM41:	.ASCIZ	'?TALK-I-Transfer begins ^F'<FCBNAM>'[^I'<FCBMAX>']'
+COM41X:	.ASCIZ	'?TALK-I-Transfer suspended'
+COM42:	.ASCIZ	'?TALK-I-Transfer complete'
+COM14:	.BYTE	CR,LF,BEL,BEL,BEL
+	.ASCIZ	'?TALK-I-Link from ^R'<0>': (enter ^^Z to terminate):'
+COM15:	.ASCIZ	'?TALK-I-Link to DTE ^R'<0>':'
+COM16:	.ASCIZ	'?TALK-I-Link to DCE ^R'<0>':'
+COM19:	.ASCIZ	'?TALK-I-Link terminated'
+	.EVEN
+;
+	.PSECT	$DATA,RW,I
+;
+; Preset variables
+;
+TLKPTR:	.WORD	BUFFER		;text buffer pointer
+CMDPTR:	.WORD	CMDBUF		;file buffer pointer
+CMDNET:	.WORD	CMDBUF		;end of file buffer
+FLAG:	.WORD	0		;interrupt flag
+LSTCHR:	.BYTE	0		;escape switch
+	.EVEN
+;
+; Variables
+;
+TEMP:	.BLKW	1		;temporary
+ARGBLK:	.BLKW	5		;rt-11 argument block
+USENAM:	.BLKW	1		;user process name
+DEVNAM:	.BLKW	1		;link process name
+SNCSAV:	.BLKW	1		;saved net trap address
+TLKDEV:	.BLKW	1		;logical device name
+TLKPAR:	.BLKW	1		;par pointer
+TLKPID:	.BLKW	1		;pid
+TLKOPT:	.BLKW	1		;options
+TLKSEL:	.BLKB	1		;device channel select
+TLKOFS:	.BLKB	1		;index
+TLKCHR:	.BLKB	1		;input character
+BUFFER:	.BLKB	80.		;chit-chat buffer
+	.EVEN
+CMDBUF:	.BLKB	512.		;file buffer
+	.EVEN
+;
+	.END
+                                                                                                                                                                                                                                                

@@ -1,0 +1,427 @@
+	.TITLE	LOG	Logging process
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Logging process
+;
+; This process receives trap requests from other proceses and schedules
+; daemon processes to perform the work. It also keeps the system log in
+; the LOG.TXT file.
+;
+; External symbols
+;
+; Entry symbols
+;
+	.GLOBL	RDBYT,PRBYT	;char i/o routines
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.PSA,.SUP,.CLP,.IOD,.TRDEF ;dcnlib definitions
+	.MCALL	.SNCA,.TRPID,.ENBCR,.DSBCR,.MSG ;dcnlib macroni
+	.MCALL	.LOOKU,.READW,.WRITW ;rt-11 macroni
+	.MCALL	.PRINT,.TTYIN,.TTYOU,.QSET,.MRKT,.CMKT,.DSTAT,.GDAT,.GTIM
+	.MCALL	FORMAT		;netlib macro
+	.MCALL	$DFAH		;moslib macro
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.PSA			;define psa and par areas
+	.SUP			;define host process par areas
+	.CLP			;define rt-11 monitor area extension
+	.IOD			;emulator monitor area extension
+	.TRDEF			;define trap codes
+	$DFAH			;define ARPANET 1822 leader
+;
+; Module definitions
+;
+; Assembly parameters
+;
+QUESIZ	=	100.		;max queue elements
+HSHSIZ	=	512.		;max hash table elements
+SP.REQ	=	000001		;spool request
+SP.ACK	=	000002		;spool ack
+;
+; Status bits (paropt)
+;
+FILOPN	=	040000		;log file open
+FILWRT	=	020000		;write timer running
+FILSMP	=	010000		;mail service request
+FILSPO	=	004000		;spool service request
+FILSPC	=	002000		;spool active
+;
+; Procedure segment
+;
+	.PSECT	$BOSI,RO,I
+;
+; System logging process
+; Logs all input text on LOG.TXT
+;
+START:	BIS	#TTLC$+TTSPC$+ESCFL$,@#JSW ;set lower-case and special mode
+	MOV	@#SYSPTR,R1	;yes. find free server
+	MOV	IOHPAR(R1),R1
+	MOV	R1,PARPTR
+	ADD	#PAROPT,PARPTR
+	MOVB	PARLNG(R1),R2
+	ADD	#PARLDN,R1
+1$:	.DSTAT	#ARGBLK,R1	;get process info
+	BCS	2$		;branch if bad
+	MOV	ARGBLK+4,R3
+	CMPB	PARTPE(R3),#2	;is this user process
+	BNE	2$		;branch if no
+	BIC	#140000,PAROPT(R3) ;yes. mark not busy
+2$:	ADD	#10,R1		;advance to next entry
+	SOB	R2,1$
+	.DSTAT	#BUFFER,#HOSPTR	;set host process parameter pointer
+	MOV	BUFFER+4,COMPTR
+	.QSET	#QUEUE,#QUESIZ
+	.SNCA	#ARGBLK,#TRAP
+	.DSBCR			;disable frisky traps
+	.TRPID	#0		;set trap intercept
+	MOV	#BUFFER,BUFPTR
+	.LOOKU	#ARGBLK,#3,#FILNAM ;open log file
+	BCC	3$		;branch if okay
+	.PRINT	#COM10		;unable to open log file
+	BR	9$
+;
+3$:	MOV	R0,SIZE		;initialize block pointers
+	CLR	BLOCK
+4$:	.READW	#ARGBLK,#3,#BUFFER,#256.,BLOCK ;read next block
+	BCS	6$		;branch if error
+	MOV	#BUFFER,R1	;search for sub
+5$:	CMPB	(R1)+,#SUB
+	BEQ	8$		;branch if found
+	CMP	R1,#BUFFER+512.
+	BLO	5$
+	INC	BLOCK
+	BR	4$		;not found. try next block
+;
+6$:	TSTB	@#ERRBYT	;read error. is it eof
+	BEQ	7$		;branch if yes
+	.PRINT	#COM11		;read error on log file
+	BR	9$
+;
+7$:	.PRINT	#COM12		;invalid format on log file
+	BR	9$
+;
+8$:	TSTB	-(R1)		;set write pointer
+	MOV	R1,BUFPTR
+	BIS	#FILOPN,@PARPTR
+9$:	.GTIM	#ARGBLK,#SMPTIM	;save time-of-day
+	BIS	#FILSMP+FILSPO,@PARPTR ;scan service queues
+	BIC	#FILSPC,@PARPTR
+	JSR	PC,SMPSRV
+;
+; Read log message and insert in file
+;
+LOOP:	.ENBCR			;enable traps
+	.TTYIN			;get byte (pid in high byte)
+	.DSBCR			;disable traps
+	MOV	R0,PID		;save pid
+	JSR	PC,PRBYT	;output byte
+	BR	LOOP
+;
+; Trap processor
+;
+TRAP:	MOV	R0,R1		;output prefix
+	MOVB	@R1,PID+1
+	FORMAT	#TRP1
+	MOVB	1(R1),R0	;decode type
+	ASR	R0
+	BIC	#^C36,R0
+	FORMAT	TRPCOM(R0)	;output remainder of line
+	CMPB	1(R1),#TR.SPW	;is this tcp service request
+	BNE	1$		;branch if no
+	MOV	#TCPREQ,R0	;yes. find server process
+	JSR	PC,SERVER
+	RTS	PC
+;
+1$:	CMPB	1(R1),#TR.CLK	;is this clock monitor
+	BNE	2$		;branch if no
+	MOV	COMPTR,R1	;yes. display frequency and compliance
+	FORMAT	#TRPCK1
+	.GTIM	#ARGBLK,#SMPTIM	;yes. save time-of-day
+	RTS	PC
+;
+2$:	CMPB	1(R1),#TR.SMP	;is this spool service request
+	BNE	3$		;branch if no
+	CMP	2(R1),#<^RSMP>	;yes. is this mail
+	BNE	5$		;branch if no
+	BIS	#FILSMP,@PARPTR	;yes. set mail request
+	BR	4$
+;
+5$:	CMP	2(R1),#<^RPRT>	;is this printer
+	BNE	3$		;branch if no
+	BIT	#SP.ACK,4(R1)	;yes. is this ack
+	BEQ	10$		;branch if no
+	BIC	#FILSPC,@PARPTR	;yes. clear active
+10$:	BIT	#SP.REQ,4(R1)	;is this request
+	BEQ	4$		;branch if no
+	BIS	#FILSPO,@PARPTR	;yes. set request
+4$:	JSR	PC,SMPSRV
+3$:	RTS	PC
+;
+; Subroutine to find free server process
+; R0 = command string pointer, returns c(cc) = 1 if none available
+;
+SERVER:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	MOV	R0,R4
+	MOV	@#SYSPTR,R3	;find free server
+	MOV	IOHPAR(R3),R3
+	MOVB	PARLNG(R3),R2
+	ADD	#PARLDN,R3
+1$:	.DSTAT	#ARGBLK,R3	;get process info
+	BCS	2$		;branch if bad
+	MOV	ARGBLK+4,R1
+	CMPB	PARTPE(R1),#2	;is this user process
+	BNE	2$		;branch if no
+	TST	PAROPT(R1)	;yes. is it busy
+	BMI	2$		;branch if yes
+	BIS	#140000,PAROPT(R1) ;no. grab it
+	.MSG	@R3
+	MOV	R0,-(SP)
+	.PRINT	R4
+	.MSG	(SP)+
+	CLC
+	BR	3$
+;
+2$:	ADD	#10,R3		;advance to next entry
+	SOB	R2,1$
+	SEC			;none left. error return
+3$:	MOV	(SP)+,R4	;evas
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to test mail status
+;
+SMPSRV:	MOV	R1,-(SP)	;preserve registers
+	BIT	#FILSMP,@PARPTR	;is mail queued
+	BEQ	1$		;branch if no
+	BIT	#SMTPQ$,@PARPTR
+	BEQ	1$		;branch if no
+	.GTIM	#ARGBLK,#TMPTIM	;yes. is it too soon
+	SUB	SMPTIM+2,TMPTIM+2
+	SBC	TMPTIM
+	SUB	SMPTIM,TMPTIM
+	CMP	TMPTIM,TIME2
+	BLO	1$		;branch if yes
+	CMP	TMPTIM+2,TIME2+2
+	BLO	1$		;branch if yes
+	MOV	#SMPREQ,R0	;no. send to server process
+	JSR	PC,SERVER
+	BCS	1$		;branch if none
+	BIC	#FILSMP,@PARPTR
+	.GTIM	#ARGBLK,#SMPTIM	;reset timeout
+1$:	BIT	#FILSPO,@PARPTR	;is spool queued
+	BEQ	2$		;branch if no
+	BIT	#SPOLQ$,@PARPTR
+	BEQ	2$		;branch if no
+	BIT	#FILSPC,@PARPTR
+	BNE	2$		;branch if no
+	MOV	#SPOREQ,R0	;yes. send to server process
+	JSR	PC,SERVER
+	BCS	2$		;branch if none
+	BIC	#FILSPO,@PARPTR
+	BIS	#FILSPC,@PARPTR
+2$:	BIT	#FILWRT,@PARPTR	;is buffer timeout running
+	BNE	3$		;branch if yes
+	.MRKT	#ARGBLK,#TIME1,#SMPSRV,#1 ;no. waitabit
+3$:	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to copy byte to hash table
+; R0 = byte
+;
+PRBYT:	MOV	R1,-(SP)	;preservatives
+	MOV	R2,-(SP)
+	TST	PRBSW		;is this for hash table
+	BNE	OUTBYT		;branch if no	
+	MOVB	R0,PID		;yes. stash therein
+	MOV	PID,@HSHPTR
+	ADD	#2,HSHPTR
+	CMP	HSHPTR,#HASH+<2*HSHSIZ> ;is hash table full
+	BHIS	1$		;branch if yes
+	CMPB	PID,#LF		;is this iend of line
+	BNE	10$		;branch if yes
+1$:	COM	PRBSW		;switch output to log file
+	.GDAT			;fetch current date
+	CMP	R0,DATE		;has it changed
+	BEQ	40$		;branch if no
+	MOV	R0,DATE		;yes. insert log process herald
+	FORMAT	#HERALD,#STOBGN	;insert herald
+40$:	FORMAT	#PREFIX,#PID+1	;insert date/time/pid stamp
+	MOV	#HASH,R1	;scan for chars from same pid
+	MOV	#HASH,R2
+2$:	CMP	R1,HSHPTR	;is this end of table
+	BHIS	4$		;branch if yes
+	CMPB	PID+1,1(R1)	;no. is this same pid
+	BEQ	3$		;branch if yes
+	MOV	(R1)+,(R2)+	;no. advance and save
+	BR	2$
+;
+3$:	MOV	(R1)+,R0	;same pid. output char
+	JSR	PC,PRBYT
+	BR	2$
+;
+4$:	MOV	R2,HSHPTR	;end of line. reset pointers
+	CLR	PRBSW
+10$:	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+RDBYT:	RTS	PC
+;
+; Subroutine to output byte to terminal and/or log file
+; R0 = byte
+;
+OUTBYT:	BIT	#LGTTY$,@PARPTR	;is tty enabled
+	BEQ	2$		;branch if no
+	.TTYOU			;yes. send it to tt:
+2$:	MOVB	R0,@BUFPTR	;stash in buffer
+	INC	BUFPTR
+	CMP	BUFPTR,#BUFFER+512. ;is buffer full
+	BLO	3$		;branch if no
+	JSR	PC,UPDATE	;yes. write to disk
+	BR	4$
+
+3$:	BIT	#FILWRT,@PARPTR	;not full. is timer running
+	BNE	4$		;branch if yes
+	BIS	#FILWRT,@PARPTR	;no. set timer
+	.MRKT	#ARGBLK,#TIME,#WRITE,#1
+4$:	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to advance to next block
+;
+UPDATE:	.CMKT	#ARGBLK,#1,#0	;kill timer
+	BIT	#LGFIL$,@PARPTR	;is file enabled
+	BEQ	2$		;branch if no
+	BIT	#FILOPN,@PARPTR	;yes. is file ok
+	BEQ	2$		;branch if no	
+	.WRITW	#ARGBLK,#3,#BUFFER,#256.,BLOCK ;yes. write current block
+	BCC	1$		;branch if ok
+	.PRINT	#COM13		;write error on log file
+	BR	WRT3A
+;
+1$:	INC	BLOCK		;read next block
+	CMP	BLOCK,SIZE
+	BLO	4$
+	CLR	BLOCK
+4$:	.READW	#ARGBLK,#3,#BUFFER,#256.,BLOCK
+	BCC	2$		;branch if ok
+	TSTB	@#ERRBYT	;read error. is it eof
+	BEQ	3$		;branch if yes
+	.PRINT	#COM11		;read error on log file
+	BR	WRT3A
+;
+3$:	.PRINT	#COM14		;log file full
+	BR	WRT3A
+;
+2$:	MOV	#BUFFER,BUFPTR	;reset buffer pointer
+WRITE:	MOVB	#SUB,@BUFPTR	;fencepost
+	BIT	#LGFIL$,@PARPTR	;is file enabled
+	BEQ	WRT3		;branch if no
+	BIT	#FILOPN,@PARPTR	;yes. is file ok
+	BEQ	WRT3		;branch if no	
+	.WRITW	#ARGBLK,#3,#BUFFER,#256.,BLOCK ;write current block
+	BCC	WRT3		;branch if no error
+	.PRINT	#COM13		;write error on log file
+WRT3A:	BIC	#FILOPN,@PARPTR	;suppress further output
+WRT3:	BIC	#FILWRT,@PARPTR	;restart daemon timer
+	JSR	PC,SMPSRV
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D	;read-only data
+;
+TRPCOM:	.WORD	TRPCLK		;0 clock monitor
+	.WORD	TRPIMP		;1 icmp message
+	.WORD	TRPLUP		;2 link up
+	.WORD	TRPLDN		;3 link down
+	.WORD	TRPPMP		;4 buffer preemption
+	.WORD	TRPLDR		;5 link message
+	.WORD	TRPTCR		;6 tcp receive data segment
+	.WORD	TRPTCX		;7 tcp transmit data segment
+	.WORD	TRPBEL		;8 tcp doorbell
+	.WORD	SMPBEL		;9 spool message
+	.WORD	TRPDSK		;10 disk error
+	.WORD	TRPDMN		;11 daemon error
+	.WORD	TRPRUT		;12 route change
+	.WORD	TRPDWN		;13 route down
+	.WORD	TRPPSN		;14 PSN error message
+	.WORD	TRPERR		;15 error message
+;
+TIME:	.WORD	0,300.		;buffer scan period (5 seconds)
+TIME1:	.WORD	0,18000.	;daemon timeout (5 minutes)
+TIME2:	.WORD	3,19392.	;mail retransmission period (1 hour)
+HOSPTR:	.RAD50	'HOS'		;name of host process
+FILNAM:	.RAD50	'DK LOG   TXT'	;log file name
+;
+HERALD:	.ASCII	'^LT 000 ?LOG-I-Log Process (23-Jan-88 Version) ^LD^/'
+	.ASCII	'^LT 000 ?LOG-I-Current block ^I'<BLOCK-STOBGN>
+	.ASCIZ	' max blocks ^I'<SIZE-STOBGN>
+PREFIX:	.ASCIZ	'^LT ^BK'<0>' ^+'
+TRP1:	.ASCIZ	'?TRAP-I-^+'
+TRPCLK:	.ASCIZ	'Clock monitor ^BI'<2>' ^BI'<3>' ^I'<4>' ^+D'<6>' ^MSI'<10>'^+'
+TRPCK1:	.ASCIZ	' ^SI'<CLKDRF>' ^SBI'<PARDCC>' ^SBI'<PARDCC+1>
+TRPIMP:	.ASCIZ	'ICMP sent ^BK'<2>' ^BK'<3>' ^C'<4>' to ^C'<10>
+TRPLUP:	.ASCIZ	'Link ^P'<2>' up ^C'<4>
+TRPLDN:	.ASCIZ	'Link ^P'<2>' down'
+TRPPMP:	.ASCIZ	'Buffer preemption ^BK'<2>' ^C'<4>
+TRPLDR:	.ASCIZ	'Link message ^K'<2>' ^K'<4>' ^K'<6>' ^K'<10>' ^K'<12>
+TRPTCR:	.ASCII	'TCP rcv	^I'<2>'	^I'<4>
+	.ASCIZ	'	^SI'<6>'	^SI'<10>'	^I'<12>
+TRPTCX:	.ASCII	'TCP snd	^I'<2>'	^BI'<4>'  ^BI'<5>
+	.ASCIZ	'	^SI'<6>'	^SI'<10>'	^I'<12>
+TRPBEL:	.ASCIZ	'TCP service request ^C'<2>' ^XI'<6>
+SMPBEL:	.ASCIZ	'Spool service request ^R'<2>' ^K'<4>
+TRPDSK:	.ASCIZ	'Disk error ^P'<2>'^BI'<4>' status ^BK'<6>' ^K'<10>' block ^I'<12>
+TRPDMN:	.ASCIZ	'Daemon error ^BK'<2>' at ^K'<4>
+TRPRUT:	.ASCIZ	'Route ^C'<2>' change ^P'<6>' ^I'<10>
+TRPDWN:	.ASCIZ	'Route ^C'<2>' down'
+; NOTE: the ARPANET driver passes the class-A net number where the link
+;	number would usually be found.
+TRPPSN:	.ASCII	'Host [^BI'<AH.LNK+2>'.^BI'<AH.HID+2>'.^BI'<AH.HND+2>
+	.ASCII	'.^BI'<AH.IMP+3>'] link msg ^BI'<AH.TYP+2>' ^BI'<AH.SBL+2>
+	.ASCIZ	' flags ^BK'<AH.FLG+2>
+TRPERR:	.ASCIZ	'ICMP rcvd ^BK'<2>' ^BK'<3>' ^C'<4>' from ^C'<10>
+TCPREQ:	.ASCIZ	'TELSRV'
+SMPREQ:	.ASCIZ	'SMTP SY:UNSENT.MSG'
+SPOREQ:	.ASCIZ	'PRTQ'
+COM10:	.ASCIZ	<CR><LF>'?LOG-F-Unable to open log file DK:LOG.TXT'
+COM11:	.ASCIZ	<CR><LF>'?LOG-F-Read error on log file'
+COM12:	.ASCIZ	<CR><LF>'?LOG-F-Invalid format on log file'
+COM13:	.ASCIZ	<CR><LF>'?LOG-F-Write error on log file'
+COM14:	.ASCIZ	<CR><LF>'?LOG-F-Log file full'
+	.EVEN
+;
+	.PSECT	$DATA,RW,I	;initialized read/write data
+;
+STOBGN	=	.		;format reference
+DATE:	.WORD	0		;current date
+SIZE:	.WORD	0		;max file blocks
+BLOCK:	.WORD	0		;current file block
+HSHPTR:	.WORD	HASH		;hash table pointer
+PRBSW:	.WORD	0		;output switch
+COMPTR:	.BLKW	1		;host process par pointer
+PARPTR:	.BLKW	1		;par pointer
+BUFPTR:	.BLKW	1		;buffer pointer
+SMPTIM:	.BLKW	2		;last mail scan time
+TMPTIM:	.BLKW	2		;temp time
+ARGBLK:	.BLKW	5		;rt-11 argument block
+PID:	.BLKW	1		;input byte and pid (high byte)
+;
+; The following arrays appear past the end of the program so that the
+; loader buffer can overlap
+;
+BUFFER	==	.		;log file buffer
+HASH	==	BUFFER+512.	;hash table
+QUEUE	==	HASH+<2*HSHSIZ>	;completion queue
+STOEND	==	QUEUE+<14.*QUESIZ> ;real end of storage
+;
+	.END	START
+                                                      

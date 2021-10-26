@@ -1,0 +1,656 @@
+	.TITLE	FTPNET	DCN/FTP USER PROCESS SUBROUTINES
+	.SBTTL	SYSTEM AND MODULE DEFINITONS
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn basic operating system - dcn/ftp user process subroutines
+;
+; External symbols
+;
+	.GLOBL	RDLIN,RDASC,ERRLVL
+	.GLOBL	CTRL,RECV,SEND
+	.GLOBL	FLAGS,TTOBUF,PRTPTR,PRIDNT
+	.GLOBL	OPNBLK,TELBLK
+	.GLOBL	STATE,REPLY,FILFCB,RPYBUF
+	.GLOBL	NAMRST
+;
+; Entry symbols
+;
+	.GLOBL	NETDAT,NETSIG,NETSTR,NETRST,SNDCMD
+	.GLOBL	ABRT
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR	;dcnlib definitions
+	.MCALL	.GCLK		;dcnlib macros
+	.MCALL	.EXIT,.READW,.WRITW,.CLOSE,.PURGE,.MRKT,.CMKT ;rt-11 macros
+	.MCALL	$DFSIG		;moslib definitions
+	.MCALL	DFCON,DFFCB	;netlib definitions
+	.MCALL	CALL,ENTER,LOOK,FORMAT ;netlib macros
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	$DFSIG			;define interprocess signals
+	DFCON			;define connection block
+	DFFCB			;define file control block
+;
+; Module definitions
+;
+; Assembly parameters
+;
+TELSIZ	=	1024.		;control ccb size (multiple of 64.)
+OPNSIZ	=	8192.		;data ccb size (multiple of 64.)
+FILSIZ	=	2.		;buffer size (blocks)
+RPYSIZ	=	128.		;max reply string length
+;
+; Status flags (flags)
+;
+OPXBIT	=	100000		;control connection open
+OPDBIT	=	040000		;data connection open
+GETBIT	=	020000		;get active
+SNDBIT	=	010000		;send active
+EOFBIT	=	004000		;end of file
+TIMBIT	=	002000		;reply timer running
+BINBIT	=	000200		;image mode
+	.PAGE
+	.SBTTL	DATA TRANSFER ROUTINES
+;
+	.PSECT	$BOSI,RO,I
+;
+; Initialize overlay
+;
+NETRST:	MOV	#STOBGN,@#50	;reset storage
+	MOV	#OPNSIZ+TELSIZ+<FILSIZ*512.>+100,R0 ;allocate buffers
+	JSR	PC,NAMRST
+	ADD	#77,R0		;align on segment block boundary
+	BIC	#77,R0		;(only so can use full segment for ccb)
+	MOV	R0,OPNBLK+CONPTR
+	MOV	#OPNSIZ,OPNBLK+CONFMT
+	ADD	#OPNSIZ,R0
+	MOV	R0,TELBLK+CONPTR
+	MOV	#TELSIZ,TELBLK+CONFMT
+	ADD	#TELSIZ,R0
+	MOV	R0,FILFCB+FCBBUF
+	MOV	#RPYBUF,RPYPTR
+	CLR	STATE
+	RTS	PC
+;
+; Process net signals
+;
+NETSIG:	BIC	#^C17,R0	;decode signal
+	ASL	R0
+	ADD	R0,PC
+	BR	SIGCON		;0 open
+	BR	SIGXIT		;1 connection error (reason)
+	BR	SIGXIT		;2 host not responding (reason)
+	BR	SIGCLS		;3 closed
+	BR	SIGERR		;4 data available
+	BR	SIGERR		;5 connection refused (reason)
+	BR	SIGCOM		;6 send complete
+	BR	SIGRMD		;7 remote disconnect
+	BR	SIGERR		;10 remote interrupt
+;
+SIGCLS:	CMP	R1,#OPNBLK	;closed. is this data connection
+	BNE	1$		;branch if no
+	BIC	#OPDBIT+GETBIT+SNDBIT+EOFBIT,FLAGS ;yes. mark closed
+	BR	2$
+;
+1$:	BIC	#OPXBIT,FLAGS	;mark control connection closed
+2$:	BIT	#OPDBIT,FLAGS	;is data connection closed
+	BNE	5$		;branch if no
+	MOV	#5,REPLY	;yes. state's rights
+	JMP	SEQFSA
+;
+5$:	RTS	PC
+;
+SIGCON:	CMP	R1,#OPNBLK	;open. is this data connection
+	BNE	2$		;branch if no
+	JSR	PC,NETSNC	;yes. start transfer
+	RTS	PC
+;
+2$:	.CMKT	#ARGBLK,#1,#0	;start reply timer
+	.MRKT	#ARGBLK,#TIME,#SEQ92,#1
+	BIS	#TIMBIT,FLAGS
+	RTS	PC
+;
+SIGCOM:	CMP	R1,#OPNBLK	;send complete. is this data connection
+	BNE	1$		;branch if no
+	JSR	PC,NETSNC	;yes. resume transfer
+1$:	RTS	PC
+;
+SIGRMD:	CMP	R1,#OPNBLK	;remote disconnect. is this data connection
+	BNE	SIGERR		;branch if no
+	BIT	#GETBIT,FLAGS	;yes. is get active
+	BEQ	2$		;branch if no
+	BIS	#EOFBIT,FLAGS	;yes. close and end file
+	JSR	PC,WRTFIL
+	CALL	CTRL,#CM.CLS,#0,OPNBLK+CONPTR ;ip close
+	RTS	PC
+;
+2$:	FORMAT	#COM99		;remote abort
+SIGERR:	JSR	PC,ABRT		;network error
+SIGXIT:	RTS	PC
+;
+; Send complete received from net
+;
+NETSNC:	BIT	#SNDBIT,FLAGS	;is send active
+	BEQ	1$		;branch if no
+	BIT	#EOFBIT,FLAGS	;yes. is this eof
+	BNE	2$		;branch if yes
+	MOV	#FILSIZ*256.,R1	;request full buffer
+	.READW	#ARGBLK,#0,FILFCB+FCBBUF,R1,FILFCB+FCBBLK ;fill buffer
+	BCC	RED2		;branch in no error
+	TSTB	@#52		;is this eof
+	BEQ	2$		;branch if yes
+	FORMAT	#COM33,#FILFCB	;file read error [file]
+	JSR	PC,ABRT
+1$:	RTS	PC
+;
+2$:	.PURGE	#0		;end operation
+	BIC	#GETBIT+SNDBIT+EOFBIT,FLAGS
+	CALL	CTRL,#CM.CLS,#0,OPNBLK+CONPTR ;ip close
+	RTS	PC
+;
+RED2:	CMP	R0,R1		;is buffer full
+	BEQ	3$		;branch if yes
+	BIS	#EOFBIT,FLAGS	;no. must be eof
+3$:	MOV	R0,FILFCB+FCBCNT ;update pointers
+	MOV	R0,FILBCT
+	ASL	FILBCT
+	SWAB	R0
+	BIC	#^C377,R0
+	ADD	R0,FILFCB+FCBBLK
+RED3:	BIT	#BINBIT,FLAGS	;is binary option set
+	BNE	4$		;branch if yes
+	MOV	FILBCT,R0	;no. set up for edit scan
+	CLR	FILBCT
+	MOV	FILFCB+FCBBUF,R1
+	MOV	R1,R2
+1$:	BICB	#200,@R1	;mask and test for nul
+	BEQ	2$		;branch if yes
+	CMPB	@R1,#DEL	;no. is it del
+	BEQ	2$		;branch if yes
+	MOVB	@R1,(R2)+	;no. copy byte
+	INC	FILBCT
+2$:	CMPB	(R1)+,#SUB	;was it eof (sub)
+	BNE	3$		;branch if no
+	BIS	#EOFBIT,FLAGS	;yes. stop in tracks
+	BR	4$
+;
+3$:	DEC	R0		;continue to end of block
+	BNE	1$
+4$:	MOV	FILBCT,R0	;did anything remain
+	BEQ	NETSNC		;branch if no
+	ADD	R0,TOTCHR+2	;yes. count beans
+	ADC	TOTCHR
+	CALL	SEND,R0,FILFCB+FCBBUF,OPNBLK+CONPTR ;tcp send data
+	TST	R0		;did it take
+	BEQ	5$		;branch if yes
+	JSR	PC,PRIDNT	;no. print error comment
+	JSR	PC,ABRT
+5$:	RTS	PC
+;
+; Data received from net
+;
+NETDAT:	CMP	R1,#TELBLK	;is this control connection
+	BNE	WRITE		;branch if no
+1$:	MOV	RPYPTR,R1	;yes. go get data
+	MOV	#RPYBUF+RPYSIZ-1,R0
+	SUB	R1,R0
+	BGT	2$		;branch if room
+	MOV	#RPYBUF,RPYPTR	;no room. flush buffer
+	TST	ERRLVL		;is detail requested
+	BNE	1$		;branch if no
+	MOVB	#200,(R1)+	;yes. print it so far
+	FORMAT	#RPYBUF
+	BR	1$
+;
+2$:	CALL	RECV,R0,R1,TELBLK+CONPTR ;get next glob
+	BIC	#100000,R0
+	BEQ	9$		;branch if no data
+	ADD	R0,RPYPTR	;update pointer
+3$:	MOV	#RPYBUF,R1
+4$:	CMP	R1,RPYPTR	;is this end of data
+	BHIS	9$		;branch if yes
+	MOVB	(R1)+,R0	;no. get next byte
+	BICB	#^C177,R0
+	CMPB	R0,#CR		;is it <cr>
+	BNE	5$		;branch if no
+	CLRB	-1(R1)		;yes. plant backstop
+5$:	CMPB	R0,#LF		;is it <lf>
+	BNE	4$		;branch if no
+	MOV	R1,-(SP)	;yes. save pointer
+	CLRB	-(R1)		;plant backstop
+	TST	ERRLVL		;is detail requested
+	BNE	6$		;branch if no
+	FORMAT	#RPYBUF
+6$:	MOV	#RPYBUF,R0	;set up to parse reply
+	JSR	PC,RDLIN
+	JSR	PC,DOGOOD	;execute reply
+	MOV	(SP)+,R1
+	MOV	#RPYBUF,R0	;copy tail to beginning
+7$:	CMP	R1,RPYPTR	;is this end of data
+	BHIS	8$		;branch if yes
+	MOVB	(R1)+,(R0)+	;no. copy byte
+	BR	7$
+;
+8$:	MOV	R0,RPYPTR	;update pointer
+	BR	3$
+;
+9$:	RTS	PC
+;
+WRITE:	BIT	#GETBIT,FLAGS	;is get active
+	BEQ	2$		;branch if no
+	CMP	STATE,#17	;yes. is this data-transfer state
+	BEQ	1$		;branch if yes
+	CMP	STATE,#20
+	BNE	2$		;branch if no
+1$:	MOV	#FILSIZ*512.,R0	;yes. get data from net
+	SUB	FILBCT,R0
+	MOV	FILFCB+FCBBUF,R1
+	ADD	FILBCT,R1
+	CALL	RECV,R0,R1,OPNBLK+CONPTR ;tcp receive
+	BIC	#100000,R0
+	BEQ	2$		;branch if no data
+	ADD	R0,FILBCT	;compute new byte count
+	ADD	R0,TOTCHR+2	;count beans
+	ADC	TOTCHR
+	JSR	PC,WRTFIL
+2$:	RTS	PC
+;
+; Subroutine to write file and close if indicated
+;
+WRTFIL:	MOV	FILBCT,R1	;get current byte count
+	CMP	R1,#FILSIZ*512.	;is buffer full
+	BHIS	1$		;branch if yes
+	BIT	#EOFBIT,FLAGS	;no. is this eof
+	BEQ	4$		;branch if no
+1$:	BIT	#512.-1,R1	;yes. zero-fill to block boundary
+	BEQ	2$
+	MOV	R1,R0
+	ADD	FILFCB+FCBBUF,R0
+	CLRB	@R0
+	INC	R1
+	BR	1$
+;
+2$:	ASR	R1		;convert to word count
+	MOV	R1,FILFCB+FCBCNT
+	BEQ	3$		;branch if null
+	.WRITW	#ARGBLK,#0,FILFCB+FCBBUF,FILFCB+FCBCNT,FILFCB+FCBBLK
+	BCS	6$		;branch if error
+	MOV	FILFCB+FCBCNT,R1
+	SWAB	R1
+	BIC	#^C377,R1
+	ADD	R1,FILFCB+FCBBLK
+3$:	CLR	FILBCT
+	BIT	#EOFBIT,FLAGS	;is this eof
+	BEQ	4$		;branch if no
+	BIC	#GETBIT+SNDBIT+EOFBIT,FLAGS ;yes. end operation
+	TST	FILFCB+FCBBLK	;is file null
+	BEQ	5$		;branch if yes
+	.CLOSE	#0		;no. close file
+4$:	RTS	PC
+;
+5$:	FORMAT	#COM39,#FILFCB	;null file [file]
+	.PURGE	#0
+	RTS	PC
+;
+6$:	FORMAT	#COM34,#FILFCB	;file write error [file]
+	JSR	PC,ABRT
+	RTS	PC
+	.PAGE
+	.SBTTL	STATE MACHINE CONTROL FUNCTIONS
+;
+; Abort signal
+;
+SEQ92:	FORMAT	#COM67		;reply timeout
+	BIC	#TIMBIT,FLAGS
+ABRT:	MOV	#6,REPLY	;abort signal
+	BR	SEQFSA
+;
+; Subroutine to execute reply code
+; Reply is in rpybuf
+;
+DOGOOD:	CLR	REPLY		;decode reply code
+	JSR	PC,RDASC	;go get first digit
+	BEQ	SEQFSA		;branch if eor
+	BMI	1$		;branch if numeric
+	CMP	R0,#<' >	;is it sp
+	BNE	DOGOOD		;branch if no
+	BR	SEQFSA
+;
+1$:	BIC	#^C17,R0	;numeric. convert to binary
+	MOV	R0,R1
+	CMP	R1,#4
+	BLOS	2$
+	MOV	#4,R1
+2$:	JSR	PC,RDASC	;find break char
+	BEQ	SEQFSA		;branch if eor
+	BMI	2$		;continue if numeric
+	CMP	R0,#'-		;is it line continuation
+	BEQ	SEQFSA		;branch if yes
+	MOV	R1,REPLY	;no. save code
+SEQFSA:	MOV	STATE,R0	;establish action
+	ASL	R0
+	MOV	STAVEC(R0),R0
+	MOV	REPLY,R1
+	ASH	#2,R1
+	ADD	R1,R0
+	MOV	(R0)+,STATE
+	MOV	(R0)+,PC
+;
+FSANOP:	TST	ERRLVL		;is detail requested
+	BEQ	FSAIGN		;branch if yes
+	FORMAT	#RPYBUF		;no. display message
+FSAIGN:	RTS	PC
+;
+FSABAD:	FORMAT	#COM88		;protocol error
+	BR	FSAEND
+;
+FSAMSG:	JSR	PC,FSANOP	;display message
+FSAEND:	.PURGE	#0		;end operation
+	.CMKT	#ARGBLK,#1,#0	;stop reply timer
+	BIC	#GETBIT+SNDBIT+EOFBIT+TIMBIT,FLAGS
+	FORMAT	#PROMPT		;print prompt
+	RTS	PC
+;
+FSADON:	.GCLK			;compute transfer time
+	SUB	FILTIM+2,R1
+	SBC	R0
+	SUB	FILTIM,R0
+	DIV	#1000.,R0
+	MOV	R0,FILTIM
+	MOV	TOTCHR,R0	;compute transfer rate
+	MOV	TOTCHR+2,R1
+	DIV	FILTIM,R0
+	MOV	R0,ARGBLK
+	FORMAT	#COM42,#FMTBAS	;transfer complete [time]
+	BR	FSAEND
+;
+FSASND:	FORMAT	#COM05,#RPYBUF	;transfer begins [file] from local [file]
+	FORMAT	#COM05B,#FILFCB
+	.CMKT	#ARGBLK,#1,#0	;stop reply timer
+	BIC	#TIMBIT,FLAGS
+	RTS	PC
+;
+FSAGET:	FORMAT	#COM05,#RPYBUF	;transfer begins [file] to local [file]
+	FORMAT	#COM05A,#FILFCB
+	.CMKT	#ARGBLK,#1,#0	;stop reply timer
+	BIC	#TIMBIT,FLAGS
+	JSR	PC,WRITE	;start transfer
+	RTS	PC
+;
+FSACLS:	CALL	CTRL,#CM.CLS,#0,TELBLK+CONPTR ;close control connection
+	BR	FSAERX
+;
+FSAERR:	JSR	PC,FSANOP	;error. display message
+FSAERX:	.PURGE	#0		;end operation
+	BIC	#GETBIT+SNDBIT+EOFBIT,FLAGS
+	CALL	CTRL,#CM.CLS,#0,OPNBLK+CONPTR ;close data connection
+FSARTX:	.CMKT	#ARGBLK,#1,#0	;restart reply timer
+	.MRKT	#ARGBLK,#TIME,#SEQ92,#1
+	BIS	#TIMBIT,FLAGS
+	RTS	PC
+;
+; Subroutine to send command string to server
+; R0 = string length, r1 = string pointer
+;
+NETSTR:	MOV	R0,-(SP)	;save for later
+	MOV	R1,ARGPTR
+	CLR	FILFCB+FCBBLK	;initialize for transfer
+	CLR	FILBCT
+	.GCLK			;reset transfer timer
+	MOV	R0,FILTIM
+	MOV	R1,FILTIM+2
+	CLR	TOTCHR
+	CLR	TOTCHR+2
+	MOV	(SP)+,R0
+	BR	SNDCTL
+;
+FSABRT:	MOV	#ABR01,R0	;send "abor"
+	BR	SND10
+;
+FSARNT:	MOV	#REN02,R0	;send "rnto [file]"
+	BR	SNDCTL
+;
+FSAPAS:	MOV	#LOG02,R0	;send "pass [passwd]"
+	BR	SNDCTL
+;
+FSATYP:	JSR	PC,FSANOP	;print login info
+	MOV	#LOG03,R0	;send "type a"
+	BR	SNDCTL
+;
+FSAMOD:	MOV	#LOG04,R0	;send "mode s"
+	BR	SNDCTL
+;
+FSASTR:	MOV	#LOG05,R0	;send "stru f"
+SNDCTL:	MOV	R0,-(SP)	;start reply timer
+	.CMKT	#ARGBLK,#1,#0
+	.MRKT	#ARGBLK,#TIME,#SEQ92,#1
+	BIS	#TIMBIT,FLAGS
+	MOV	(SP)+,R0
+SND10:	MOV	#TTOBUF,PRTPTR	;send control string
+SNDCMD:	MOV	ARGPTR,R1
+	JSR	PC,FORMAT
+	MOV	PRTPTR,R0	;send to net
+	CLR	PRTPTR
+	MOV	#TTOBUF,R1
+	SUB	R1,R0
+	BIS	#100000,R0
+	CALL	SEND,R0,R1,TELBLK+CONPTR
+	TST	R0		;was it successful
+	BEQ	1$		;branch if yes
+	JSR	PC,PRIDNT	;no. display error comment
+1$:	RTS	PC
+;
+; Farewell
+;
+FSAXIT:	.EXIT			;body shop
+	.PAGE
+	.SBTTL	TABLES, TEXT STRINGS AND VARIABLES
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+TIME:	.WORD	0,60.*60.	;reply timeout (1 minute)
+;
+; State tables
+;
+STAVEC:	.WORD	STA00		;0 idle
+	.WORD	STA01		;1 connext
+	.WORD	STA02		;2 quit
+	.WORD	STA03		;3 discconnect
+	.WORD	STA04		;4 wait
+	.WORD	STA05		;5 get
+	.WORD	STA06		;6 send
+	.WORD	STA07		;7 user
+	.WORD	STA10		;10 password
+	.WORD	STA11		;11 type
+	.WORD	STA12		;12 mode
+	.WORD	STA13		;13 structure
+	.WORD	STA14		;14 delete/rename to
+	.WORD	STA15		;15 rename from
+	.WORD	0		;16 (not used)
+	.WORD	STA17		;17 get intermediate
+	.WORD	STA20		;20 get complete
+	.WORD	STA21		;21 get close	
+;
+STA00:	.WORD	0,FSANOP	;0 unspecified. idle
+	.WORD	0,FSANOP	;1 preliminary reply 1xx
+	.WORD	0,FSANOP	;2 completion reply 2xx
+	.WORD	0,FSANOP	;3 intermediate reply 3xx
+	.WORD	0,FSANOP	;4 error reply 4xx/5xx
+	.WORD	0,FSAIGN	;5 connection close
+	.WORD	0,FSABRT	;6 abort
+;
+STA01:	.WORD	1,FSANOP	;0 unspecified. connect
+	.WORD	1,FSANOP	;1 preliminary reply 1xx
+	.WORD	0,FSAMSG	;2 completion reply 2xx
+	.WORD	1,FSANOP	;3 intermediate reply 3xx
+	.WORD	1,FSANOP	;4 error reply 4xx/5xx
+	.WORD	0,FSAEND	;5 connection close
+	.WORD	1,FSACLS	;6 abort
+;
+STA02:	.WORD	2,FSANOP	;0 unspecified. quit
+	.WORD	2,FSANOP	;1 preliminary reply 1xx
+	.WORD	2,FSANOP	;2 completion reply 2xx
+	.WORD	2,FSANOP	;3 intermediate reply 3xx
+	.WORD	2,FSANOP	;4 error reply 4xx/5xx
+	.WORD	0,FSAXIT	;5 connection close
+	.WORD	2,FSACLS	;6 abort
+;
+STA03:	.WORD	3,FSANOP	;0 unspecified. disconnect
+	.WORD	3,FSANOP	;1 preliminary reply 1xx
+	.WORD	3,FSANOP	;2 completion reply 2xx
+	.WORD	3,FSANOP	;3 intermediate reply 3xx
+	.WORD	3,FSANOP	;4 error reply 4xx/5xx
+	.WORD	0,FSAEND	;5 connection close
+	.WORD	3,FSACLS	;6 abort
+;
+STA04:	.WORD	4,FSANOP	;0 unspecified. wait
+	.WORD	4,FSANOP	;1 preliminary reply 1xx
+	.WORD	4,FSANOP	;2 completion reply 2xx
+	.WORD	4,FSANOP	;3 intermediate reply 3xx
+	.WORD	4,FSANOP	;4 error reply 4xx/5xx
+	.WORD	0,FSAEND	;5 connection close
+	.WORD	4,FSAERX	;6 abort
+;
+STA05:	.WORD	5,FSANOP	;0 unspecified. get
+	.WORD	17,FSAGET	;1 preliminary reply 1xx
+	.WORD	4,FSAERR	;2 completion reply 2xx
+	.WORD	4,FSAERR	;3 intermediate reply 3xx
+	.WORD	4,FSAERR	;4 error reply 4xx/5xx
+	.WORD	0,FSABAD	;5 connection close
+	.WORD	4,FSAERX	;6 abort
+;
+STA06:	.WORD	6,FSANOP	;0 unspecified. send
+	.WORD	17,FSASND	;1 preliminary reply 1xx
+	.WORD	4,FSAERR	;2 completion reply 2xx
+	.WORD	4,FSAERR	;3 intermediate reply 3xx
+	.WORD	4,FSAERR	;4 error reply 4xx/5xx
+	.WORD	0,FSABAD	;5 connection close
+	.WORD	4,FSAERX	;6 abort
+;
+STA17:	.WORD	17,FSANOP	;0 unspecified. get intermediate
+	.WORD	4,FSAERR	;1 preliminary reply 1xx
+	.WORD	20,FSARTX	;2 completion reply 2xx
+	.WORD	4,FSAERR	;3 intermediate reply 3xx
+	.WORD	4,FSAERR	;4 error reply 4xx/5xx
+	.WORD	21,FSARTX	;5 connection close
+	.WORD	4,FSAERX	;6 abort
+;
+STA20:	.WORD	20,FSANOP	;0 unspecified. get complete
+	.WORD	4,FSAERR	;1 preliminary reply 1xx
+	.WORD	4,FSAERR	;2 completion reply 2xx
+	.WORD	4,FSAERR	;3 intermediate reply 3xx
+	.WORD	4,FSAERR	;4 error reply 4xx/5xx
+	.WORD	0,FSADON	;5 connection close
+	.WORD	4,FSAERX	;6 abort
+;
+STA21:	.WORD	21,FSANOP	;0 unspecified. get close
+	.WORD	0,FSAERR	;1 preliminary reply 1xx
+	.WORD	0,FSADON	;2 completion reply 2xx
+	.WORD	0,FSAERR	;3 intermediate reply 3xx
+	.WORD	0,FSAERR	;4 error reply 4xx/5xx
+	.WORD	0,FSABAD	;5 connection close
+	.WORD	0,FSAEND	;6 abort
+;
+STA07:	.WORD	7,FSANOP	;0 unspecified. user
+	.WORD	0,FSAMSG	;1 preliminary reply 1xx
+	.WORD	11,FSAMSG	;2 completion reply 2xx
+	.WORD	10,FSAPAS	;3 intermediate reply 3xx
+	.WORD	0,FSAMSG	;4 error reply 4xx/5xx
+	.WORD	7,FSAIGN	;5 connection close
+	.WORD	0,FSAEND	;6 abort
+;
+STA10:	.WORD	10,FSANOP	;0 unspecified. password
+	.WORD	0,FSAMSG	;1 preliminary reply 1xx
+	.WORD	11,FSATYP	;2 completion reply 2xx
+	.WORD	0,FSAMSG	;3 intermediate reply 3xx
+	.WORD	0,FSAMSG	;4 error reply 4xx/5xx
+	.WORD	10,FSAIGN	;5 connection close
+	.WORD	0,FSAEND	;6 abort
+;
+STA11:	.WORD	11,FSANOP	;0 unspecified. type
+	.WORD	0,FSAMSG	;1 preliminary reply 1xx
+	.WORD	12,FSAMOD	;2 completion reply 2xx
+	.WORD	0,FSAMSG	;3 intermediate reply 3xx
+	.WORD	0,FSAMSG	;4 error reply 4xx/5xx
+	.WORD	11,FSAIGN	;5 connection close
+	.WORD	0,FSAEND	;6 abort
+;
+STA12:	.WORD	12,FSANOP	;0 unspecified. mode
+	.WORD	0,FSAMSG	;1 preliminary reply 1xx
+	.WORD	13,FSASTR	;2 completion reply 2xx
+	.WORD	0,FSAMSG	;3 intermediate reply 3xx
+	.WORD	0,FSAMSG	;4 error reply 4xx/5xx
+	.WORD	12,FSAIGN	;5 connection close
+	.WORD	0,FSAEND	;6 abort
+;
+STA13:	.WORD	13,FSANOP	;0 unspecified. structure
+	.WORD	0,FSAMSG	;1 preliminary reply 1xx
+	.WORD	0,FSAEND	;2 completion reply 2xx
+	.WORD	0,FSAMSG	;3 intermediate reply 3xx
+	.WORD	0,FSAMSG	;4 error reply 4xx/5xx
+	.WORD	13,FSAIGN	;5 connection close
+	.WORD	0,FSAEND	;6 abort
+;
+STA15:	.WORD	15,FSANOP	;0 unspecified. rename from
+	.WORD	0,FSAMSG	;1 preliminary reply 1xx
+	.WORD	0,FSAMSG	;2 completion reply 2xx
+	.WORD	14,FSARNT	;3 intermediate reply 3xx
+	.WORD	0,FSAMSG	;4 error reply 4xx/5xx
+	.WORD	15,FSAIGN	;5 connection close
+	.WORD	0,FSAEND	;6 abort
+;
+STA14:	.WORD	14,FSANOP	;0 unspecified. delete
+	.WORD	0,FSAMSG	;1 preliminary reply 1xx
+	.WORD	0,FSAMSG	;2 completion reply 2xx
+	.WORD	0,FSAMSG	;3 intermediate reply 3xx
+	.WORD	0,FSAMSG	;4 error reply 4xx/5xx
+	.WORD	14,FSAIGN	;5 connection close
+	.WORD	0,FSAEND	;6 abort
+;
+; Text strings for ftp user protocol
+;
+COM05:	.ASCIZ	'?FTP-I-^A'<4>'^+'
+COM05A:	.ASCIZ	' to local ^F'<FCBNAM>'[^I'<FCBMAX>']'
+COM05B:	.ASCIZ	' from local ^F'<FCBNAM>'[^I'<FCBMAX>']'
+COM42:	.ASCII	'?FTP-I-Transfer complete ^MI'<TOTCHR-FMTBAS>
+	.ASCIZ	' bytes, ^I'<FILTIM-FMTBAS>' sec (^I'<ARGBLK-FMTBAS>' bytes/sec)'
+LOG02:	.ASCIZ	'PASS ^A'<0>
+LOG03:	.ASCIZ	'TYPE A'
+LOG04:	.ASCIZ	'MODE S'
+LOG05:	.ASCIZ	'STRU F'
+REN02:	.ASCIZ	'RNTO ^A'<0>
+ABR01:	.ASCIZ	'ABOR'
+PROMPT:	.ASCIZ	'*^+'
+;
+; Text strings for error conditions
+;
+COM33:	.ASCIZ	'?FTP-F-File read error ^F'<FCBNAM>
+COM34:	.ASCIZ	'?FTP-F-File write error ^F'<FCBNAM>
+COM39:	.ASCIZ	'?FTP-F-Null file ^F'<FCBNAM>
+COM99:	.ASCIZ	'?FTP-F-Remote abort'
+COM67:	.ASCIZ	'?FTP-F-Reply timeout'
+COM88:	.ASCIZ	'?FTP-F-Protocol error'
+;
+	.PSECT	$ERAS,RW,I
+;
+; Variables
+;
+FMTBAS	=	.		;format base
+REPLY:	.BLKW	1		;fsa signal
+FILBCT:	.BLKW	1		;buffer byte count
+FILTIM:	.BLKW	2		;transfer time
+TOTCHR:	.BLKW	2		;transfer byte count
+RPYPTR:	.BLKW	1		;reply buffer pointer
+ARGPTR:	.BLKW	1		;argument pointer
+ARGBLK:	.BLKW	5		;rt-11 argument block
+;
+	.PSECT	$STOR,RW,I
+STOBGN	=	.		;beginning of allocatable storage
+;
+	.END
+                                                                                                                                          

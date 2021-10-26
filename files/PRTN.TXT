@@ -1,0 +1,2894 @@
+17-Jun-85 21:54:46,42443;000000000000 
+Return-path: <SRNSETA@SRI-KL.ARPA>
+Received: from SRI-KL.ARPA by DCN6.ARPA ; 17-Jun-85 21:51:36-UT
+Date: Mon 17 Jun 85 14:50:44-PDT
+From: SRNSETA@SRI-KL.ARPA
+Subject: COPIES OF SRNTN/PRTN INDEXES
+To: mills@DCN6.ARPA
+cc: tornow@SRI-KL.ARPA
+
+
+Here is requested copies of indexes for PRTN and SRNTN listings.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+               PACKET RADIO TEMPORARY NOTE INDEX
+
+
+               March 1984
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                    Requests for copies of PRTNs should be made to the
+
+               authoring company with a carbon copy sent to DARPA
+
+               stating the desired PRTN number(s).  After DARPA
+
+               approval, the authoring company holds the final approval
+
+               for the distribution of their PRTN.
+
+
+
+
+                    Each PRTN entry is followed by the acronym for the
+
+               authoring company.  Complete U.S. Mail and, when
+
+               available, ARPANET addresses for each company can be
+
+               found in the appendix.  Entries without a date had not
+
+               been published at the time of this printing.
+
+
+
+
+
+
+
+PRTN              Title                    Author        Date    Company____              _____                    ______        ____    _______
+
+
+
+
+
+326     User's Guide for Data Reduction    DesMarais     11/83    SRI
+
+           and Analysis
+
+
+
+325     Minilogger Version 3.0             Lee and       10/83    SRI
+
+           User's Guide                    Lunzer
+
+
+
+324     VAX Loader Server                  Knight        09/83    SRI
+
+
+
+323     PRONET Dispatcher                  Knight        09/83    SRI
+
+
+
+322     Specifications for the             Knight and             SRI
+
+           ICMP Process                    Lewis
+
+
+
+321     The Packet Radio Measurement       Tornow        09/83    SRI
+
+           Host Plan
+
+
+
+320     The Measurement Agent              Lee, Lewis    09/83    SRI
+
+           Specification                   Tornow
+
+
+
+319     Setting the Address of A           Beeler        07/83    BBN
+
+           Ministation
+
+
+
+318     Anti-Multipath Techniques for      Turin         07/83    SRI
+
+           PR V: CDMA Systems - Some
+
+           Preliminary Results
+
+
+
+317     On the Organization of Large       Klemba and    07/83    SRI
+
+           Packet Radio Networks           Shacham
+
+
+
+316     Magnetic Bubble Storage Issues     Cone          04/83    SRI
+
+
+
+315     Computing Resource Requirements    Burchfiel              BBN
+
+           for SRN                         and Denny
+
+
+
+314     Protocol for Simultaneous          Gower         11/82    RI
+
+           Multi-Station/Stationless       and Jubin
+
+           Operation
+
+
+
+313R    A Distributed Routing Scheme       Belghith      06/82    UCLA
+
+           Mobility Handling in                          07/83R
+
+           Stationless Multi-Hop
+
+           Packet Radio Networks
+
+
+
+312     Issues in Distributed Routing      Westcott      07/82    BBN
+
+           for Mobile Packet Radio
+
+           Networks
+
+
+
+
+
+
+
+
+                                   1
+
+
+
+
+
+
+
+311     Network Monitor Design             Swernofsky    07/82    BBN
+
+           Specifications
+
+
+
+310     Degradable Performance in          Beeler        07/82    BBN
+
+           Packet Switching Networks
+
+
+
+309     Congestion Control Using Pacing    Gower,        07/82    RI
+
+           in a Packet Radio Network       Jubin
+
+
+
+308     Signal Strength Uphill Alt-        Young         07/82    RI
+
+           Routing and the Very
+
+           Mobile Packet Radio
+
+
+
+307     Real-Time Data Transport in        Belghith               UCLA
+
+           Packet Radio Networks
+
+
+
+306     Tier-Based Routing Scheme in       Belghith               UCLA
+
+           Stationless Packet Radio
+
+           Networks
+
+
+
+305     Proposal for Operation of a        Gower,        05/82    RI
+
+           Merged Network-CAP 8            Jubin
+
+
+
+304     The Multistation Implementation    MacGregor              BBN
+
+
+
+303     Flooding in Multistation           MacGregor     06/81    BBN
+
+           Routing
+
+
+
+302     Alternative Routes  in Semi-       Craighill,    07/81    SRI
+
+           Broadcast Channels              Shacham
+
+
+
+301    Measurement Facility Specif-        Su                     SRI
+
+          cation
+
+
+
+300   CAP 7:  Station to Stationless       Westcott      06/81    BBN
+
+       Network Interface
+
+
+
+299   Antimultipath Techniques for         Turin,        03/81    SRI
+
+       Packet Radio, IV:  Feasibility      Wei
+
+
+
+298   Regenerative Hop Transport           Caferella     12/80    MIT
+
+      Protocols for Large Networks
+
+
+
+297   IPR Protocol Performance             Gower,        01/81    RI
+
+       Improvement Report                  Perry, Jubin
+
+
+
+296   Antimultipath Techniques for         Turin         11/80    SRI
+
+       Packet Radio, III:  M-ary Cases
+
+
+
+
+
+
+
+
+
+
+                                   2
+
+
+
+
+
+
+
+295   Delivering IPR Software to           Beeler        10/80    BBN
+
+       Station Disk
+
+
+
+294   Performance Measurements of CAP      Klemba,       11/80    SRI
+
+       5.3 Protocol Using EPRs             Spilling
+
+
+
+292   Flying Packet Radios and Network     Perlman       06/80    BBN
+
+       Partitions
+
+
+
+291    On a General Rule for Access        Yemini,       06/80    UCLA
+
+         Control or, Silence is Golden     Kleinrock
+
+
+
+290    Utilizing Internet Routes as        Perlman       06/80    BBN
+
+         Expressways Through Slow Nets
+
+
+
+289    Multistation and CAP 6 Routing      Perlman       10/80    BBN
+
+         Implementation Specification
+
+         (Revision 1)
+
+
+
+288    Congestion at the PR Hop Level      Westcott      04/80    BBN
+
+
+
+287    Initial Comparison of EPRs and      Shoch,        04/80    XEROX
+
+         IPRs In the PUP Internet          Stewart
+
+         Environment
+
+
+
+286    Digital Voice Communication in a    Spilling,     02/80    SRI
+
+         Packet Radio Network              Craighill
+
+
+
+285    Configuration of a PDP-11/34        Beeler        12/79    BBN
+
+         Station for Auto-Restart
+
+
+
+284    Measurement Plan                    Spilling,     pending  SRI
+
+                                           Klemba, Cone
+
+
+
+283    Activity Signalling and             Spilling,     01/80    SRI
+
+         Improved Hop Acknowledgment       Tobagi
+
+         in Packet Radio System
+
+
+
+282    Antimultipath Techniques for        Turin         12/79    SRI
+
+         PR, II: Summary of the Work
+
+         of M. A. Kamil and K. F. Wei
+
+
+
+281    Multistation Design                 Perlman       11/79    BBN
+
+         Specification
+
+
+
+280    Transfer Points                     Perlman       11/79    BBN
+
+
+
+279    Internet Routing and the            Perlman       10/79    BBN
+
+        Network Partition Problem
+
+
+
+
+
+
+
+
+                                   3
+
+
+
+
+
+
+
+278    New PRN Device ID Policy            Beeler        10/79    BBN
+
+
+
+277    A Simple Fairness Algorithm         Beeler        08/79    BBN
+
+
+
+276    Specifications of New PR Down-      Beeler,       08/79    BBN
+
+         Line Loader                       Cohen
+
+
+
+275    Measurement Results for the         Su            09/79    UCLA
+
+         Exported Gateway Study
+
+
+
+274    SPP2:  A Simplex End-to-End         Quilici       07/79    RI
+
+         Protocol
+
+
+
+273    Results on a Simulation Study       Su            07/79    UCLA
+
+         of CAP 4.9 Transmission Scheme
+
+
+
+272    SPP Oscillation                     Beeler        06/79    BBN
+
+
+
+271    SPP Hetero State Diagram            Beeler        06/79    BBN
+
+         (replaces 171)
+
+
+
+270    Optimum Transmission Radii          Kleinrock,    06/79    UCLA
+
+         for PR Networks                   Silvest
+
+
+
+268    A Proposed Methodology for          Su            03/79    UCLA
+
+         Achieving a Unified Characteri-
+
+         zation of Packet Radio Networks
+
+
+
+267    Internetwork Communications via     Shoch,        02/79    XEROX
+
+         Packet Radio                      Stewart
+
+
+
+265    Issues in Congestion Control:       Westcott      01/79    BBN
+
+         Design Detection and Current
+
+         Routing Design
+
+
+
+264    Changes Necessary for Rudiment-     Perlman       01/79    BBN
+
+         ary Multistation Capability
+
+
+
+263    Local Traffic, Congestion, and      Poggio        11/78    SRI
+
+         PRNET Routing
+
+
+
+262    Antimultipath Techniques for        Turin         11/78    SRI
+
+         Packet Radio  Systems
+
+
+
+261    Resolution of LROP, etc. Issues     Beeler        10/78    BBN
+
+
+
+260    Specification of a Rudimentary      Perlman       10/78    BBN
+
+         Multistation Capability
+
+
+
+
+
+
+
+
+
+
+                                   4
+
+
+
+
+
+
+
+259    Thoughts Involving LROP Things      Beeler        09/78    BBN
+
+
+
+258    Remaining Issues in Stationless     Perlman       09/78    BBN
+
+         Compatible Routing
+
+
+
+257    EPR Down-Line Loading               Sunlin        08/78    RI
+
+
+
+256    Stationless Compatible PRNET        Perlman       06/78    BBN
+
+         Routing
+
+
+
+255    LROPs and Neighbor Tables           Beeler        06/78    BBN
+
+
+
+254    L-Band Forest Experiments           Frankel       05/78    SRI
+
+
+
+253    Current PR Measurement Plan         Lieberson     03/78    UCLA
+
+
+
+252    PRNET Local Area Demonstrations     Nielson       03/78    SRI
+
+
+
+251    Local ROPs and Performance Data     Sunlin        03/78    RI
+
+         Packets
+
+
+
+250    Multistation Design Alternatives    Perlman       03/78    BBN
+
+
+
+       On the Performance Analysis of      Tobagi        01/78    SU
+
+         Multihop Packet Radio Systems:
+
+
+
+249         Part IV   Fully Connected Configurations
+
+                      Employing CSMA
+
+248         Part III  Fully Connected Configurations
+
+                      Employing Slotted Aloha
+
+247         Part II   Star Configuration Employing
+
+                      Slotted Aloha
+
+246         Part I    Design Problem
+
+
+
+245    Symmetrical 1822 Interface          Beeler        03/78    BBN
+
+         Specification
+
+
+
+242    Gateway Routing                     Perlman       01/78    BBN
+
+
+
+241    Gateway Dynamic Routing             Strazisar     01/78    BBN
+
+
+
+240    Use and Abuse of the ARQ Bit in     Beeler        01/78    BBN
+
+         SPP
+
+
+
+239    Use of IDs in Routes                Sussman       01/78    BBN
+
+
+
+238    Transfer Points in Point-to-Point   Sussman       12/78    BBN
+
+         Routing
+
+
+
+
+
+
+
+
+
+
+                                   5
+
+
+
+
+
+
+
+237    Pickup Packet Contents and Format   Lieberson     09/77    UCLA
+
+
+
+236    Packet Printer--Use During PRNET    McClurg       12/77    SRI
+
+         Operations
+
+
+
+235    Proposed Modification to Point-to-  Sussman       11/77    BBN
+
+         Point Routing
+
+
+
+234    Performance Analysis of Packet      Tobagi        02/77    SU
+
+         Radio Communication Systems
+
+
+
+233    Specification of TIU Measurement    McClurg       09/77    SRI
+
+         Process
+
+
+
+232    SPP Retransmission Count Field      Beeler        08/77    BBN
+
+
+
+231    A Simulation Study of Packet Radio  Walters       08/77    NAC
+
+         Protocol Issues
+
+
+
+230    Diagnostic Capabilities for         Gronemeyer    02/78    RI
+
+         Packet Radio Units
+
+
+
+229    EPR-RU Time Capture and Post        Marston       06/77    RI
+
+         Detection Integration Description
+
+
+
+227    Throughput Improvement of Code-     Leung         06/77    SRI
+
+         Division Multiple Access (CDMA)
+
+         Channels with 1) Error-Correction
+
+         Coding, and 2) Block-Orthogonal Signaling
+
+
+
+226    M/G/1 Queue with Rest Period        Scholl,       06/77    UCLA
+
+         and Various Orders of Services    Kleinrock
+
+
+
+225    Packet Switching in Radio Channels  Kleinrock,    06/77    UCLA
+
+         New Conflict-Free Multiple        Scholl
+
+         Access Schemes
+
+
+
+224    Code Rate vs. Bit Error Rate                      06/77    NAC
+
+         - A Simulation Study
+
+
+
+223    Alternate Routing Reconsidered      Beeler,       05/77    BBN
+
+                                           Perlman
+
+
+
+222    Analytical Models in Monitoring                   04/77    NAC
+
+         Packet Radio Devices
+
+
+
+220    A Taxonomy of Gateways              Cerf          04/77    DARPA
+
+
+
+221    Capacity Improvement in the Packet                03/77    NAC
+
+         Radio System by Code Division
+
+         Multiplexing
+
+
+
+
+                                   6
+
+
+
+
+
+
+
+219    Gateways and Internet Interfaces    Cerf          04/77    DARPA
+
+
+
+218    Station Control Module Specification              04/77    BBN
+
+
+
+217    Measurement of Station ROP-         Sussman       03/77    BBN
+
+         Processing Capacity
+
+
+
+216    Specification for an ELF System     Strazisar     03/77    BBN
+
+         with Disk and Net Loading Facilities
+
+
+
+215    Measurement File Delivery           Beeler,       02/77    BBN
+
+         Specification                     Tomlinson
+
+
+
+214    On A Mixed-Mode Multiple Access     Scholl,       03/77    UCLA
+
+         Scheme for a Packet-Switched      Kleinrock
+
+         Radio Net
+
+
+
+213    Internetting, or Beyond NCP         Cohen         02/77    UCLA
+
+
+
+212    Specification of Measurement File   Sussman       02/77    BBN
+
+         Entries
+
+
+
+211    Some Calculated Upper Bounds on     Kunzelman,    05/77    SRI
+
+         Throughput in the PRNET           Leung
+
+
+
+210    Packet Switching in Radio           Kleinrock,    01/77    UCLA
+
+         Channels: New Conflict-Free       Scholl
+
+         Multiple Access Schemes for a
+
+         Small Number of Data Users
+
+
+
+209    Terminal Interface Unit (TIU)       Retz          04/77    SRI
+
+         System Architecture
+
+
+
+208    Disc Loading Station                Mathis        01/77    SRI
+
+
+
+207    Station File System Primitives      Retz          12/76    SRI
+
+
+
+205    Bay Area PRNET Deployment Plan      Kunzelman     01/77    SRI
+
+
+
+204    NETCAP:  II - Derivation of         Tobagi,       12/76    SU
+
+         Confidence Intervals for Various  Yemini
+
+         Performance Measures
+
+
+
+203    NETCAP:  A Simulator for PRNET      Tobagi        12/76    SU
+
+         Channel Access Protocol
+
+
+
+202    Cumulative Statistics:              Quilici       11/76    RI
+
+         Definitions and Implementation
+
+
+
+
+
+
+
+
+
+
+                                   7
+
+
+
+
+
+
+
+201    Packet Switching in Radio           Tobagi,       11/76    SU
+
+         Channels: Effect of Error Control Kleinrock
+
+         Traffic on ALOHA and CSMA Channel
+
+         Performance
+
+
+
+200    Capabilities and Use of the Packet                11/76    NAC
+
+         Radio Simulator Program
+
+
+
+199    Some Station Developmemnt Issues    Beeler        10/76    BBN
+
+
+
+198    Abstract of Dissertation: Multi-    Scholl        10/76
+
+         plexing Techniques for Data
+
+         Transmission Over Packet-Switched
+
+         Radio Systems
+
+
+
+196    Status Information on SPP            Strazisar    09/76    BBN
+
+         Connections
+
+
+
+195    Software Execution Times for PR                   09/76    RI
+
+         CAP/SPP Protocol Operations
+
+
+
+194    Point-to-Point Routing Proposal      Sussman      09/76    BBN
+
+
+
+192    Route Assignment Proposal            Sussman      08/76    BBN
+
+
+
+191    Terminal-On Packet Proposal          Sussman      09/76    BBN
+
+       (Revision 1)
+
+
+
+190    An Adaptive Algorithm for Determining             08/76    NAC
+
+         Connectivity in Mobile Packet Radio
+
+         Networks
+
+
+
+189    Markov Chain Initialization Model                 08/76    NAC
+
+
+
+188    Markov Chain Integration Model with               09/76    NAC
+
+         Fifo Label Queue Management at the
+
+         Station
+
+
+
+187    LADs 2 and 3                         Kunzelman    07/76    SRI
+
+
+
+186    Station Integration and Design       Retz         10/76    SRI
+
+         Tasks
+
+
+
+185    Report of Station Software Delivery  SRI/BBN      07/76    SRI
+
+         Delivery
+
+
+
+184    Preliminary Functional Specification Tomlinson    07/76    BBN
+
+         of the Station Measurement Process
+
+
+
+
+
+
+
+
+
+
+                                   8
+
+
+
+
+
+
+
+183    Neighbor Table Measurements for      Tomlinson    07/76    BBN
+
+         Control of the Packet Radio Network
+
+
+
+182    Packet Radio Information Service      Beeler      07/76    BBN
+
+
+
+181    Packet Switching in Radio Channels:   Tobagi      06/76    SU
+
+         Part IV--Stability Considerations
+
+         and Dynamic Control in Carrier Sense
+
+         Multiple Access
+
+
+
+180    Cross-Radio Debugger                  Beeler      06/76    BBN
+
+
+
+179    New Capabilities of the PR            Gitman      05/76    NAC
+
+         Simulation Program
+
+
+
+178    An Approximate Analytical Model for   Gitman      05/76    NAC
+
+         Initialization of Single Hop PRNETs
+
+
+
+177    SPP Definition                        Beeler      04/76    BBN
+
+
+
+176    PR Protocol Program                               03/76    RI
+
+
+
+175    Measurements in Packet Radio          Tobagi      03/76    SU
+
+         Systems: Methods for Collection
+
+         of Cumstat Data
+
+
+
+174    Packet Radio Network Station          Sussman     03/79    BBN
+
+         Labeling Process (Revision 7)
+
+
+
+173    Interfacing Terminals to the PRN      Fralick     04/76    BBN
+
+
+
+172    Connectivity Issues in Mobile PR      Gitman      03/76    NAC
+
+
+
+171    SPP Heterostate Diagram               Beeler      03/76    BBN
+
+         (replaced by 271)
+
+
+
+170    Considerations in the Design of a     Jones       03/76    SRI
+
+         Packet Radio Network with Distributed
+
+         Routing Control
+
+
+
+169    Packet Radio Communication Protocols  Gitman      02/76    NAC
+
+
+
+168    Stability Considerations in PRNs      Gitman      01/76    NAC
+
+
+
+167    On the Calculation of Optimum         Jones       01/76    SRI
+
+         Routes in the PR Network
+
+
+
+166    On Measurement Facilities in PR       Tobagi      01/76    SU
+
+         Systems
+
+
+
+
+
+
+
+
+                                   9
+
+
+
+
+
+
+
+165    Will the Real SPP Please Stand Up     Beeler      01/76    BBN
+
+
+
+164    Performance Evaluation of Packet Radio            01/76    NAC
+
+
+
+163    A Local Distribution Network Using    Gitman      01/76    NAC
+
+         the Packet...
+
+
+
+162    Routing in the Initial PRNET          Sussman     01/76    BBN
+
+
+
+161    Analysis and Simulation of            Tobagi      12/75    SU
+
+         Buffered PR Systems
+
+
+
+160    Station-PR Protocol (SPP)             Retz        12/75    SRI
+
+
+
+159    A Proposal for Incremental Routing    Sussman     12/75    BBN
+
+
+
+158    TIU Functional Specifications         Fralick     11/75    SRI
+
+
+
+157    Reliability Considerations in                     11/75    NAC
+
+         Packet Radio Networks
+
+
+
+156    Gateway Design for Computer           Beeler      10/75    BBN
+
+         Network Interconnection
+
+
+
+155    Packet Radio Terminology and                      08/75    SRI
+
+         Definitions
+
+
+
+154    Comparison of PR Systems with Zero                10/75    NAC
+
+         Capture and Perfect Capture Receivers
+
+
+
+153    Maximum Number of Transmissions for               08/75    NAC
+
+         Packet Radio Repeaters and Stations
+
+
+
+152    Local Area Demonstration-1            Cone        08/75    SRI
+
+
+
+151    Routing in Packet Switching Broadcast             07/75    NAC
+
+         Radio Networks
+
+
+
+150    Monitoring, Control and Measurement               07/75    NAC
+
+         Procedures in PRNET
+
+
+
+149    Traffic Source Software Functional    Sifford     07/75    SRI
+
+         Specs.
+
+
+
+148    Packet Radio Network:  Station                    05/75    NAC
+
+         Algorithms for Initialization Connectivity
+
+         Monitoring and Stability Control
+
+
+
+147    Modifications to Virtual ELF          Beeler      05/75    BBN
+
+
+
+
+
+
+
+
+                                   10
+
+
+
+
+
+
+
+145    Cross-Radio Debugging of PRUs         Beeler      10/75    BBN
+
+
+
+144    PRU Protocol (Revision 1)             Sunlin      10/75    RI
+
+
+
+143    Specification of Basic PRN            Beeler      06/75    BBN
+
+         Station Modules
+
+
+
+142    Response Time in Cross-Network        Beeler      04/75    BBN
+
+         Debugging
+
+
+
+141    Cross-Network Debugger User's         Beeler      04/75    BBN
+
+         Manual
+
+
+
+140    PR Measurements Revisited                         05/75    UCLA
+
+
+
+139    Revision of PR Measurement Specs.                 04/75    UCLA
+
+
+
+138    Packet Radio Station Hardware         Burchfiel   04/75    BBN
+
+         Operating System and Applications
+
+
+
+136    On Giant Stepping in PR Networks      Kleinock    03/75    UCLA
+
+
+
+135    On a Property of Random Nets          Abramson    03/75    UH
+
+
+
+132    An Improved Packet Radio Demodulator  Fralick     03/75    SRI
+
+
+
+131    An Analysis of Variable Length        Ferguson    02/75    UH
+
+         Packets in Unslotted Aloha
+
+
+
+130    Aloha Packet Broadcasting--A          Binder      01/75    UH
+
+         Retrospect
+
+
+
+129    Description of the Next Six PRU's     Garrett     02/75    RI
+
+
+
+128    Packet Radio Station Interface                    01/75    RI
+
+
+
+127    Code Selection for the Packet Radio   Jain        11/74    RI
+
+        Experimental System
+
+
+
+126    Point-to-Point Routing in the PRNET   Tomlinson   01/75    BBN
+
+
+
+125    Functions and Structure of a Packet   Burchfiel   12/74    BBN
+
+        Radio Station
+
+
+
+124    Proposed PRN Protocols                Tomlinson   10/74    BBN
+
+
+
+123    Packet Radio System Capabilities      Burchfiel   09/74    BBN
+
+
+
+122    Packet Radio System Design Issues     Tomlinson   08/74    BBN
+
+
+
+
+
+
+
+
+                                   11
+
+
+
+
+
+
+
+       (118 to 121 are unallocated numbers)
+
+
+
+117    Who is Counting Packets Lost During   Metcalf     11/74    XEROX
+
+         Turnaround
+
+
+
+116    Optimal Control of 2 Station Polling  Ferguson    01/75    UH
+
+         System
+
+
+
+115    On the Control, Stability, and        Ferguson    12/74    UH
+
+         Waiting Time in a Slotted ALOHA
+
+         Random Access
+
+
+
+114    Minimum Cross Interference Power in   Fralick     08/74    SRI
+
+         Asynchronous Multiple Access
+
+         Schemes
+
+
+
+113    Bistable Behavior of Aloha-Type       Carleial    07/74    SU
+
+         Systems
+
+
+
+112    PRN Topics for Discussion             Fralick     11/74    SRI
+
+
+
+111    PR Link-Related  Measurements Test    Kunzelman   11/74    SRI
+
+         Plan
+
+
+
+110    Capacity of Slotted ALOHA Networks    Gitman       05/74   NAC
+
+
+
+109    A Simulation of the PRNET                          05/74   NAC
+
+
+
+108    Interactive/Batch Packet Radio                     05/74   NAC
+
+         Simulator
+
+
+
+107    Area Coverage by Line-of-Sight Radio               05/74   NAC
+
+
+
+105    Packet Radio Station Design           Brandin      05/74   SRI
+
+         Specification  1
+
+
+
+104    Specification of a Standard Packet    Brandin      05/74   SRI
+
+         Interface
+
+
+
+103    Portable Channel Test Facilities      Brandin      05/74   SRI
+
+
+
+102    Multiple Channel Packet Radio         Sinko        05/74   SRI
+
+         Networks
+
+
+
+101    Preliminary Design for an ALOHA       Okinaka      05/74   UH
+
+         Repeater
+
+
+
+ 99    Carrier Sense Multiple Access with    Kleinrock    03/74   UCLA
+
+         a Busy Tone (BTMA)
+
+
+
+
+
+
+
+
+                                   12
+
+
+
+
+
+
+
+ 98    Modulation Waveform Types             Kaiser       03/74   RI
+
+
+
+ 97    Synchronization Preambles                          03/74   RI
+
+
+
+ 96    Power Sources for Repeaters and       Herrick      02/74   RI
+
+
+
+ 95    Packet Radio Simulation Results - I                03/74   NAC
+
+
+
+ 93    Criteria of Code Selection in MSK     Jain         02/74   RI
+
+         Sense
+
+
+
+ 92    Microprocessor Components             Padgett      02/74   RI
+
+
+
+
+
+ 91    Carrier Sense Multiple Access for     Kleinrock    04/74   UCLA
+
+         Packet Switched Radio Channels
+
+
+
+ 90    Power Budget Analysis                 Garrett      01/74   RI
+
+
+
+ 89    Impact of Channel Options on          Garrett      02/74   RI
+
+         Repeater Design
+
+
+
+ 88    Proposed System Features and          Dickson      02/74
+
+         Equipment Design Plan...
+
+
+
+ 87    A Dynamic Analysis of ALOHA Systems   Ibaraki      01/74   UH
+
+         With Blocking and Carrier Sense
+
+
+
+ 86    Tests of the Effects of a Spread      Fralick      01/74   SRI
+
+         Spectrum Signal on Radars
+
+
+
+ 85    Design Suggestions                    Burchfiel    01/74   BBN
+
+
+
+ 84    Use of a Multi-Processor Minicomputer Binder       11/73   UH
+
+
+
+ 82    The DAMN (-FINE) Concept              Fralick      11/73   SRI
+
+
+
+ 81    Packet Radio Model for System         Richardson   10/73   SRI
+
+         Security
+
+
+
+ 79    Equalizers for PRN                    Murthy       05/74   UH
+
+
+
+ 78    ALOHA Noise and Propagation Loss      Chen         01/73   UH
+
+         Measurements
+
+
+
+ 77    Portable Channel Test Facilities      Brandin      11/73   SRI
+
+
+
+ 76    Authorization in the Presence of      Jain         11/73   RI
+
+         Deterministic
+
+
+
+
+
+
+
+
+                                   13
+
+
+
+
+
+
+
+ 75    Performance of Carrier Sense with     Kleinrock    10/73   UCLA
+
+         Hidden Terminals
+
+
+
+ 74    Interference Levels Produced by       Hertel       10/73   RI
+
+         Spread Spectrum
+
+
+
+ 73    Selection of 127 Chip Maximal Length  Jain         10/73   RI
+
+
+
+ 70    Loss Measurements of Field Strength   Chen         07/70   UH
+
+         for ALOHA Channel
+
+
+
+ 69    Packet Formats for Measurement        Brandin      07/73   SRI
+
+         Experiments
+
+
+
+ 68    Throughput Delay Tradeoffs for        Tobagi       07/73   SU
+
+         Reservation Access Modes in
+
+         Packet Radio Systems
+
+
+
+ 67    Simulation of Various Channel         Tobagi       06/73   SU
+
+         Access Schemes
+
+
+
+ 66    Is Prometheus Really Bound?           Fralick      07/73   SRI
+
+
+
+ 65    PRG Meeting, July 23-24, 1973         Kleinrock    06/73   UCLA
+
+
+
+ 62    Packet Radio Issues-II                Kahn         05/73   DARPA
+
+
+
+ 60    Some Notes on ALOHA Channels with     Gaarder      06/73   UH
+
+         Capture
+
+
+
+ 59    Performance of Some Spread Spectrum   Fralick      06/73   SRI
+
+         Modes
+
+
+
+ 58    A Comparison of Spread Spectrum with  Murthy       05/73   UH
+
+         ALOHA
+
+
+
+ 57    Effect of Acknowledgement Traffic     Kleinrock    05/73   UCLA
+
+         on Channel Throughput in Packet
+
+         Radio Systems
+
+
+
+ 56    A Measurement Program for Packet      Nielson      06/73   SRI
+
+         Radio Channel
+
+
+
+ 55    Combinatorial Aspects of Message      Tainiter     05/73   NAC
+
+        Flow in Packet Radio Nets
+
+
+
+ 54    Time and Space Capture in Spread      Van Slyke    05/73   NAC
+
+         Spectrum Random Access
+
+
+
+
+
+
+
+
+
+
+                                   14
+
+
+
+
+
+
+
+ 53    Channel Configuration-K Station Model Gitman       06/73   NAC
+
+
+
+ 52    Packet Radio Broadcast Network        Gitman       06/73   NAC
+
+         System Operation
+
+
+
+ 51    Preliminary Comparison of Different   Fralick      06/73   SRI
+
+         Access Modes
+
+
+
+ 50    ALOHA Impulse Noise Measurements      Wax          05/73   UH
+
+
+
+ 49    The Spatial Capacity of an ALOHA      Abramson     04/73   UH
+
+         Channel
+
+
+
+ 48    In-Building Distribution of Packet    Vandament    04/73   RI
+
+         Radio Signals
+
+
+
+ 47    Combinatorial Aspects of Message Flow              03/73   NAC
+
+         in Packet Radio
+
+
+
+ 46    Data Options for Packet Communications             04/73   NAC
+
+         on CATV Systems
+
+
+
+ 45    Channel Configuration for Packet                   04/73   NAC
+
+         Radio System
+
+
+
+ 44    Acknowledgement Schemes in an ALOHA   Binder       04/73   UH
+
+         Channel
+
+
+
+ 43    Throughput for Time-Capture Spread    Fralick      04/73   SRI
+
+         Spectrum
+
+
+
+ 42    Propagation Measurements in Support   Nielson      04/73   SRI
+
+         of Packet Radio
+
+
+
+ 41    Preliminary Notes on Man-Made Noise   Shepard      04/73   SRI
+
+         and Packet Radio
+
+
+
+ 40    Some Thoughts on Techniques for Bit   Hertel       03/73   RI
+
+         Synchronization
+
+
+
+ 38    Analysis of Some Packet Radio         Siddigee     04/73   SRI
+
+         Networks
+
+
+
+ 37    Carrier-Sense with Initial Random     Kleinrock    03/73   UCLA
+
+         Transmission Delay
+
+
+
+ 36    Packet Radio Comunications            Hardman      03/73   SRI
+
+         Requirements of a Typical
+
+         Amphibious Task Force
+
+
+
+
+
+
+
+
+                                   15
+
+
+
+
+
+
+
+ 35    ALOHA System with Capture in          Leung        03/73   SRI
+
+         Multipath Environment
+
+
+
+ 34    Packet Radio Meeting, Mar 1-2, 1973   McGuire      03/73   RI
+
+
+
+ 33    Processing Spread-Spectrum Signals    McGuire      03/73   RI
+
+
+
+ 31    Channel Utilization of a Scout/       Wong         02/73   SRI
+
+         Follower Broadcast System
+
+
+
+ 30    Information Capacity of Multirepeater Yu           02/73   SRI
+
+         Packet Radio Systems
+
+
+
+ 29    Facsimile Data Format                 Schaefer     02/73   SRI
+
+
+
+ 28    R.F. Channel Capacity Considerations  Fralick      02/73   SRI
+
+
+
+ 27    Note on the Implications of the       Cory         02/73   RI
+
+         Poisson Possibility
+
+
+
+ 26    Solid State RF Sources                Nixon        03/73   RI
+
+
+
+ 25    Antennas, Reflectors and Net Path     Hertel       02/73   RI
+
+         Loss Considerations and Their
+
+         Effect on Choice of Operating
+
+         Frequency, Transmit Power ...
+
+
+
+ 24    Throughput in Carrier-Sense           Kleinrock    02/73   UCLA
+
+         (Autoslot) Packet Radio Systems
+
+
+
+ 23    Channel Utilization of a Slotted      Wong         02/73   SRI
+
+         Ripple System
+
+
+
+ 22    Packet Radio Communications           Hardman      02/73   SRI
+
+         Requirements
+
+
+
+ 20    Packet Radio Issues - I               Kahn         02/73   DARPA
+
+
+
+ 19    Spread-Spectrum Considerations        Kaiser       01/73   RI
+
+
+
+ 18    General Description of the University Binder       01/73   UH
+
+         of Hawaii ALOHA
+
+
+
+ 17    The ALOHA Radio Modulation Scheme     Wax          01/73   UH
+
+
+
+ 16    Notes on Digital Modulation           Hertel       01/73   RI
+
+         Techniques
+
+
+
+ 15    Solid State RF Sources                Thomas       01/73   RI
+
+
+
+
+
+
+
+
+                                   16
+
+
+
+
+
+
+
+ 14    Packet Radio Propagation              Vandament    01/73   RI
+
+         Characteristics
+
+
+
+ 13    Antenna Considerations for Packet     Griffee      01/73   RI
+
+         Radio Communications
+
+
+
+ 12    Safety Standards-Microwave Exposure   Weigl        01/73   RI
+
+
+
+ 11    Routing in Packet Radio Systems       Kleinrock    01/73   UCLA
+
+
+
+ 10    Some Advances in Radio                Kuo         undated  UH
+
+         Communications for Computers
+
+
+
+  8    Packet Data Communication on CATV                  01/73   NAC
+
+         Systems
+
+
+
+  7    Comparison of Hop-by-Hop and End-to-               01/73   NAC
+
+         End Ackknowledgment Schemes
+
+
+
+  6    Combinatorial Aspects of Message Flow              01/73   NAC
+
+
+
+  5    Packet Radio-Systems Considerations                01/73   NAC
+
+
+
+  4    Power Budget Considerations-LOS       Cory         01/73   RI
+
+         Paths
+
+
+
+  1    Packet Radio Meeting of December      Kahn         12/72   DARPA
+
+         12-13, 1972
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                   17
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                               Appendix A
+
+
+                         ADDRESSES OF CONTACTS
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                               Appendix A
+
+
+                         ADDRESSES OF CONTACTS
+
+
+
+
+DARPA - Dr. Barry M. Leiner
+
+        Defense Advanced Research
+
+           Projects Agency/IPTO
+
+        1400 Wilson Boulevard
+
+        Arlington, Virginia  22209
+
+        LEINER@ISI
+
+
+
+BBN   - Ms. Jil Westcott
+
+        Bolt Beranek and Newman Inc.
+
+        50 Moulton Street
+
+        Cambridge, Massachusettes  02238
+
+        WESTCOTT@BBNF
+
+
+
+NAC   - Mr. Howard Frank
+
+        Network Analysis Corporation
+
+        130 Steamboat Road
+
+        Great Neck, New York  11024
+
+        NAC@ISIE
+
+
+
+RI    - Dr. Steven Gronemeyer
+
+        Rockwell International
+
+        Collins Communications Systems Division
+
+        Mail Stop 401-125
+
+        3200 East Renner Road
+
+        Richardson, Texas  75081
+
+        GRONEMEYER@ISID
+
+
+
+SRI  -  Ms. Robin Roy
+
+        SRI International
+
+        EJ125
+
+        333 Ravenswood Avenue
+
+        Menlo Park, California  94025
+
+        PRSETD@SRI-KL
+
+
+
+SU   -  Dr. Fouad A. Tobagi
+
+        Stanford University
+
+        Computer Systems Laboratory
+
+        ERL-233B
+
+        Stanford, California  94305
+
+        TOBAGI@ISID
+
+
+
+
+
+
+
+
+
+
+
+                                   19
+
+
+
+
+
+
+
+UCLA  - Prof. Wesley Chu
+
+        UCLA Computer Science Department
+
+        3731K Boelter Hall
+
+        405 Hilgard Avenue
+
+        Los Angeles, California  90024
+
+
+
+UH    - University of Hawaii
+
+        Department of Electrical Engineering
+
+        Honolulu, Hawaii  96822
+
+
+
+XEROX - Dr. Larry Stewart
+
+        Xerox Palo Alto Research Center
+
+        333 Coyote Hill Road
+
+        Palo Alto, California  94304
+
+        STEWART.PA@PARC-MAXC
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                   20
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+               SURVIVABLE RADIO NETWORKS TEMPORARY NOTE INDEX
+
+
+               June 1985
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                    Requests for copies of SRNTNs should be made to
+
+               the authoring company with a carbon copy sent to DARPA
+
+               stating the desired SRNTN number(s).  After DARPA
+
+               approval, the authoring company holds the final approval
+
+               for the distribution of their SRNTN.
+
+
+
+
+                    Each SRNTN entry is followed by the acronym for the
+
+               authoring company.  Complete U.S. Mail and, when
+
+               available, ARPANET addresses for each compnay can be
+
+               found in the appendix.  Entries without a date had not
+
+               been published at the time of this printing.
+
+
+
+
+
+
+
+SRNTN            Title                  Author           Date  Company_____            _____                  ______           ____  _______
+
+
+
+
+
+1       Thoughts on Nameserving and       Gower            09/83   RI
+
+         Routing in a Large Net
+
+2       Uphill Tier Routing, Less         Jubin            09/83   RI
+
+         Frequent Tier Data Updating
+
+         and Larger Networks
+
+
+
+3       CSMA and Randomization Delay      Jubin                    RI
+
+         Parameters in the LPR
+
+
+
+4       Distributed Routing Techniques    Burchfiel,       10/83   BBN
+
+         for Closely Coupled Networks     Lauer, Westcott
+
+
+
+5       Clustering Algorithms for         Burchfiel,       10/83   BBN
+
+         Adaptive Hierarchical Organ-     Lauer, Westcott
+
+         ization of Large Networks
+
+
+
+6       Virtual Micro Operating System    Knight                   SRI
+
+
+
+7       An Algorithm For the Shortest     Kung, Shacham    11/83   SRI
+
+         Path Under Multiple Constraints
+
+
+
+8       A Distributed Search Protocol     Shacham          11/83   SRI
+
+         For Large Networks
+
+
+
+9       A Distributed Network Protocol    Goldberg,        11/83   SRI
+
+         With Limited Span                Shacham
+
+
+
+10      The Design of the SURAN           Cote, Gunshenan,         BBN
+
+         Network Monitor                  Phillips, Schudy,
+
+                                          Tappan
+
+
+
+11      An Architecture For Large         Klemba, Shacham  10/83   SRI
+
+         Packet Radio Networks
+
+
+
+12      Monitoring Requirements for       Cote                     BBN
+
+         SURAP 1.0
+
+
+
+13      Naming and Routing in             Lauer, Westcott          BBN
+
+         Overlapping Clusters
+
+
+
+14      Analysis of Routing for           Garcia-Luna,     11/84   SRI
+
+         Packet Radio Networks            Shacham
+
+
+
+15      The Packet Radio Measurement      Phillips          5/84   SRI
+
+         System Enhancements
+
+
+
+
+
+
+
+
+
+
+                                   1
+
+
+
+
+
+
+
+16      Packet Radio Network Test         Tornow                   SRI
+
+         and Evaluation
+
+
+
+17      Organization of Dynamic Radio     Shacham           4/84   SRI
+
+         Network by Overlapping Clusters:
+
+         Architecture Considerations and
+
+         Optimization
+
+
+
+18      Hierarchical Routing in Large     Shacham           6/84   SRI
+
+        Dynamic Packet Radio Networks
+
+
+
+19      Future NIUs                       Klemba                   SRI
+
+
+
+20      Improvement in Throughput of      Storey,          11/84   SU
+
+         CDMA Packet Radio Networks       Tobagi
+
+         Due to Carrier Sensing
+
+         Access Protocol
+
+
+
+21      Spreading Connectivity            Stevens                  RI
+
+         Information Out Over
+
+         Multiple PROP Periods, and
+
+         Timeliness of Information
+
+
+
+22      Inter-Cluster Routing             Stevens                  RI
+
+         Simplified by Combining
+
+         Cluster Routing and Device
+
+         Correspondence Data Within
+
+         A Single Packet
+
+
+
+23      Analysis of Routing Table Update  Garcia-Luna              SRI
+
+         Activity in Multi-hop PRNETs     Shacham
+
+
+
+24      Responsive Routing Algorithms     Garcia-Luna              SRI
+
+         for Multi-hop PRNETs
+
+
+
+25      An Adaptive Hybrid ARQ Algorithm  Shacham                  SRI
+
+         for Radio Channels
+
+
+
+26      Requirements for SURAN Network    Seo                      BBN
+
+         Monitor
+
+
+
+27      CAP8 Network                      Gunshenan                BBN
+
+         Monitor User Guide
+
+
+
+28      Conditions for Product Form       J.M. Brazio              SU
+
+         Solutions In Multihop            F.A. Tobagi
+
+         Packet Radio Network Models
+
+
+
+29      SURAP Network Time                C.D. Young      5/28/85  RI
+
+         Synchronization                   J. Jubin
+
+
+
+
+
+
+                                   2
+
+
+
+
+
+
+
+30      Performance Analysis of           Garcia-Luna     6/7/85   SRI
+
+         Hierarchical Routing Schemes     Shacham
+
+         for Large Multihop Packet
+
+         Radio Networks
+
+
+
+31      Hierarchical Routing for          Ralph Callon    6/l3/85  BBN
+
+         Packet Radio Networks            Gregory Lauer
+
+
+
+32      Dynamic Selection of Error-       Nachum Shacham  6/14/85  SRI
+
+         Correcting Codes In Hybrid
+
+         ARQ Protocols
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                   3
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                               Appendix A
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                               Appendix A
+
+
+
+
+
+
+     Addresses of Contacts
+
+
+
+DARPA - Dr. Barry M. Leiner
+
+        Defense Advanced Research
+
+          Projects Agency/IPTO
+
+        1400 Wilson Boulevard
+
+        Arlington, Virginia 22209
+
+        LEINER@ISI
+
+
+
+BBN   - Ms. Jil Westcott
+
+        Bolt Beranek and Newman, Inc.
+
+        50 Moulton Street
+
+        Cambridge, Massachusettes 02238        WESTCOTT@BBNF
+
+
+
+RI    - Mr. John Jubin
+
+        Rockwell International
+
+        Collins Communications Systems Division
+
+        Mail Stop 460-215
+
+        3200 East Renner Road
+
+        Richardson, Texas 75081
+
+        CAPLES@ISID
+
+
+
+SRI   - Janet Tornow
+
+        SRI International EJ131
+
+        333 Ravenswood Avenue
+
+        Menlo Park, California 94025
+
+        SRNSETA@SRI-KL
+
+
+
+SU    - Dr. Fouad Tobagi
+
+        Stanford University
+
+        Computer Systems Laboratory
+
+        Stanford, CA 94305-2192
+
+        TOBAGI@ISID
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                   5
+
+-------
+
+           

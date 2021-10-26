@@ -1,0 +1,704 @@
+	.TITLE	GATNET	Local net interface
+	.SBTTL	System and module definitions
+	.ENABL	LC
+;
+; Pdp11/dcn local net interface
+;
+; This module processes routing updates (hello messages) received from other
+; dcnet hosts and gateways. it also generates these messages and sends them
+; over each neighbor link. As part of this procedure the physical host logical
+; clock is corrected for drift relative to a selected virtual host in the
+; network.
+;
+; Option bits:
+; hlobit	send (active mode) hello messages (1)
+; gatbit	dcnet clone (0), foreign network (1)
+; dwnbit	disable routing (1)
+; bstbit	point-to-point (0), broadcast (1)
+; dlxbit	measured delay (0), configured delay (1)
+; sbnbit	subnet hello
+;
+; External symbols
+;
+	.GLOBL	DATSUM		;checksum routine
+	.GLOBL	ADRMAP,NETMAP	;routing functions
+	.GLOBL	$NETID,$HOSAD,GATVPT ;routing tables
+	.GLOBL	$CKHID,$ONLIN,$CKCNT,$ROUTE ;state variables
+	.GLOBL	$TRNET,$RTCHG	;trace variables
+;
+; Entry symbols
+;
+	.GLOBL	NTIHLO		;local-net control input
+	.GLOBL	NTOHLO		;local-net control output
+	.GLOBL	ADRPTR		;determine ip address mask
+	.GLOBL	NETEST		;test neighbor net
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.PSA,.GAT,.TRDEF,.SMF ;dcnlib definitions
+	.MCALL	.PPKT,.GCLK,.GDAT,.TRAP,.PSEM,.VSEM ;dcnlib macros
+	.MCALL	$DFIH,$DFTIM,$DFTBL ;moslib definitions
+	.COM			;define common data
+	.PSA			;define process storage areas
+	.GAT			;define gateway/bridge storage areas
+	.TRDEF			;define trap codes
+	.SMF			;define semaphore ids
+	$DFIH			;define internet header
+	$DFTIM			;define timer values
+	$DFTBL			;define host/gateway table formats
+;
+; Module definitions
+;
+TX.HLO	=	600.		;hello cache timeout (sec)
+ETHDLY	=	12.		;delay estimate for broadcast nets (ms)
+;
+; Hello packet format
+;
+.	=	IH.LEN
+LH.CHK:	.BLKW	1		;checksum
+LH.DAT:	.BLKW	1		;current date
+LH.TIM:	.BLKW	2		;current time of day
+LH.TSP:	.BLKW	1		;timestamp of last hello msg
+LH.TBL	=	.		;beginning of routing tables
+LH.LEN:	.BLKB	1		;number of entries
+LH.FMT:	.BLKB	1		;format identifier
+LF.LCL	=	0		;local subnet
+LF.FGN	=	1		;foreign subnet
+	.PAGE
+	.SBTTL	Hello message input processing
+;
+; Procedure segment
+; Dsects: R3 = par, R5 = psa
+;
+; Process-state procedure
+;
+	.PSECT	$SUPI,RO,I
+;
+; Hello message input processing
+;
+; This section is called by the network-input process to update the host
+; (routing) table. it uses the computed hello message roundtrip delay,
+; together with the copy of the routing table transmitted by the other host,
+; to determine the values of the delay, offset and pid entries.
+;
+; R3 = par pointer, R4 = packet pointer, R5 = psa pointer
+;
+NTIHLO:	CMP	PH.LNG(R4),#LH.TBL-IH.LEN ;verify format
+	BHIS	1$		;branch if ok
+	INC	PARFMT(R3)	;bad format
+	RTS	PC
+;
+1$:	MOV	R4,R1		;verify checksum
+	JSR	PC,DATSUM
+	BEQ	2$		;branch if ok
+	INC	PARCKS(R3)	;bad checksum
+	RTS	PC
+;
+2$:	TSTB	PARSTX(R3)	;is link down
+	BNE	3$		;branch if no
+	BISB	PARSLB(R3),$ONLIN ;yes. declare up
+	MOVB	PARIDX(R3),R0
+	.TRAP	#TR.LUP,R0,IH.SRC(R4),IH.SRC+2(R4) ;link up
+3$:	BISB	#1,PARSTX(R3)	;flag link up
+	SWAB	LH.DAT(R4)	;swap byte fields
+	SWAB	LH.TIM(R4)
+	SWAB	LH.TIM+2(R4)
+	SWAB	LH.TSP(R4)
+	SUB	PH.TIM+2(R4),LH.TIM+2(R4) ;compute raw offset
+	SBC	LH.TIM(R4)
+	SUB	PH.TIM(R4),LH.TIM(R4)
+	MOV	LH.TIM+2(R4),PARTSP(R3) ;save for timestamp
+	MOV	PH.TIM+2(R4),R2	;compute delay
+	SUB	LH.TSP(R4),R2
+	BIT	#BSTBIT,PAROPT(R3) ;is this broadcast
+	BEQ	4$		;branch if no
+	MOV	#ETHDLY,R2	;yes. assume fixed (empirical) delay
+	MOV	PH.LNG(R4),PARTFL(R3)
+4$:	ADD	PARBIA(R3),R2	;correct for bias
+	MOV	R2,R1		;correct offset
+	SXT	R0
+	ASR	R0
+	ROR	R1
+	SUB	PARBIA(R3),R1	;correct for bias
+	SBC	R0
+	ADD	R1,LH.TIM+2(R4)
+	ADC	LH.TIM(R4)
+	ADD	R0,LH.TIM(R4)
+	MOV	IH.SRC(R4),R0	;copy source address to convenient place
+	MOV	IH.SRC+2(R4),R1
+	BIT	#DLXBIT,PAROPT(R3) ;is this tinkered delay
+	BEQ	5$		;branch if no
+	MOV	PARTRY(R3),R2	;yes. assume output timeout
+5$:	CMP	R0,$NETID	;is this looped
+	BNE	7$		;branch if no
+	CMP	R1,$NETID+2
+	BNE	7$		;branch if no
+	ASR	R2		;yes. correct delay
+	BIT	#GATBIT,PAROPT(R3) ;is this internal hello
+	BNE	8$		;branch if yes
+6$:	INC	PARMIS(R3)	;dropped (looped)
+	RTS	PC
+;
+7$:	CMP	R0,PARADR(R3)	;is this a new neighbor
+	BNE	10$		;branch if yes
+	CMP	R1,PARADR+2(R3)
+	BNE	10$		;branch if yes
+8$:	BIT	#BSTBIT,PAROPT(R3) ;no. is this broadcast
+	BNE	12$		;branch if yes
+	TST	LH.TSP(R4)	;no. is delay valid
+	BEQ	9$		;branch if no
+	BITB	PARSLB(R3),$CKCNT
+	BEQ	12$		;branch if yes
+9$:	BISB	PARSLB(R3),$ROUTE ;no. encourage speed
+	BR	6$
+;
+10$:	BIT	#GATBIT+BSTBIT,PAROPT(R3) ;new neighbor. is it a bogon
+	BEQ	11$		;branch if no
+	CMP	IH.DST(R4),PARADR(R3)
+	BNE	6$		;branch if yes
+	CMP	IH.DST+2(R4),PARADR+2(R3)
+	BNE	6$		;branch if yes
+	BR	12$		;no. cancel bogon alert
+;
+11$:	MOV	#TM.TTL,R2	;no bogon. assume infinite delay
+	MOV	R0,PARADR(R3)	;save new address
+	MOV	R1,PARADR+2(R3)
+12$:	CMP	R2,#TM.MIN	;clip delay at lower limit
+	BGE	13$
+	MOV	#TM.MIN,R2
+13$:	MOV	R2,LH.TSP(R4)
+	BIT	#DWNBIT,PAROPT(R3) ;is routing disabled
+	BNE	6$		;branch if yes
+	ADD	#1,PARHLO+2(R3)	;tally hello messages received
+	ADC	PARHLO(R3)
+;
+; Update routing table
+;
+; Note: lh.tsp(r4) = roundtrip delay
+;	Lh.dat(r4) = date sent
+;	Lh.tim(r4) = local clock offset (two words)
+;	Ph.tim(r4) = time received (two words)
+;	Lh.tbl(r4) = beginning of routing tables (also temp)
+;
+NTI20:	MOV	R4,R2		;point somewhere useful
+	ADD	#LH.TBL,R2
+	BIT	#GATBIT,PAROPT(R3) ;is this internal hello
+	BEQ	1$		;branch if no
+	CLR	(R2)+		;(lh.len,lh.fmt) yes. update destination
+	MOV	#IH.DST,R1
+	BR	9$
+;
+1$:	MOV	R4,R0		;external hello. is this end of update
+	ADD	PH.OFS(R4),R0
+	ADD	PH.LNG(R4),R0
+	CMP	R2,R0
+	BHIS	8$		;branch if yes
+	MOV	(R2)+,LH.TBL(R4) ;(lh.len,lh.fmt)
+	BEQ	8$		;branch if yes (pad)
+	CMPB	LH.FMT(R4),#LF.FGN ;is this type-1 format
+	BNE	4$		;branch if no
+2$:	DECB	LH.LEN(R4)	;process next entry
+	BMI	1$		;branch if done
+	MOV	R2,R1
+	CMP	(R2)+,(R2)+
+	JSR	PC,ADRHLO	;update tables
+3$:	CMP	(R2)+,(R2)+	;advance to next entry
+	BR	2$
+;
+4$:	CMPB	LH.FMT(R4),#LF.LCL ;is this type-0 format
+	BNE	8$		;branch if no (error)
+	MOV	R4,R1		;yes. is source on same subnet
+	ADD	#IH.SRC,R1
+	JSR	PC,NETMAP
+	BEQ	5$		;branch if yes
+	MOVB	LH.LEN(R4),R0	;no. skip this table
+	ASH	#2,R0
+	ADD	R0,R2
+	BR	1$
+;
+5$:	CLRB	LH.FMT(R4)	;type-0 format. update routing table
+	MOV	#$HOSAD,R1
+6$:	DECB	LH.LEN(R4)	;process next entry
+	BMI	1$		;branch if done
+	CMPB	LH.FMT(R4),$HOSAD-1
+	BHIS	7$		;branch if out of range
+	SWAB	@R2		;update routing table
+	SWAB	2(R2)
+	JSR	PC,UPDATE
+7$:	ADD	#HOSLEN,R1	;advance to next entry
+	CMP	(R2)+,(R2)+
+	INCB	LH.FMT(R4)
+	BR	6$
+;
+8$:	BIT	#SBNBIT,PAROPT(R3) ;is this subnet
+	BEQ	10$		;branch if no
+	MOV	#IH.SRC,R1	;yes. update source
+9$:	ADD	R4,R1		;zero delay/offset (may use 32-bit trailer)
+	CLR	@R2
+	CLR	2(R2)
+	JSR	PC,ADRHLO	;update tables
+10$:	RTS	PC
+	.PAGE
+	.SBTTL	Hello message output processing
+;
+; Hello message output processing
+;
+; This section constructs and sends hello message to the host at the other end
+; of this link including date, system clock, timestamp and host (routing)
+; table.
+;
+; R3 = par pointer, R5 = psa pointer, returns c(cc) = 1 if no message needed
+;
+NTOHLO:	TSTB	PARSTX(R3)	;are hello messages enabled
+	BNE	1$		;branch if yes
+	BIT	#HLOBIT+GATBIT,PAROPT(R3)
+	BEQ	5$		;branch if no
+1$:	SUB	PARTRY(R3),HLOTIM(R5) ;yes. crank hello timeout
+	BGT	2$		;branch if still running
+	MOVB	PARMIN(R3),R0	;complete. reset timeout
+	ASH	#10.-POLCON,R0	;(hello*1024.)
+	MOV	R0,HLOTIM(R5)	
+	BISB	PARSLB(R3),$ROUTE ;force hello
+	CLC			;update link status
+	ROLB	PARSTX(R3)
+	BNE	2$		;branch if alive
+	BCC	2$		;branch if dead
+	BICB	PARSLB(R3),$ONLIN ;dying. declare down
+	BICB	PARSLB(R3),$CKCNT
+	BICB	PARSLB(R3),$ROUTE
+	MOVB	PARIDX(R3),R0
+	.TRAP	#TR.LDN,R0	;link down
+2$:	TST	GATPTR(R5)	;is this first fragment
+	BNE	4$		;branch if no
+	BITB	PARSLB(R3),$CKCNT ;yes. has clock recently been reset
+	BEQ	3$		;branch if no
+	INC	HLDOFF(R5)	;yes. bump holdoff counter
+	CMP	HLDOFF(R5),#2
+	BLO	4$		;branch if still upright
+	CLR	HLDOFF(R5)	;reset holdoff
+	BICB	PARSLB(R3),$CKCNT
+3$:	BITB	PARSLB(R3),$ROUTE
+	BEQ	5$		;branch if no
+	BICB	PARSLB(R3),$ROUTE
+4$:	MOV	PARMAX(R3),R0	;allocate packet buffer
+	.PPKT
+	BNE	6$		;branch if ok
+5$:	SEC			;no message needed
+	RTS	PC
+;
+6$:	MOV	R0,R4		;save pointers
+	MOV	R4,MSGDAT(R5)
+	CLR	MSGIDN(R5)
+	CLR	MSGIDM(R5)
+	MOV	R4,R2		;initialize internet header
+	ADD	#BUFLDR,R2
+	MOV	#<P.IP*20+5>,(R2)+ ;(ih.ver, ih.tos)
+	CLR	(R2)+		;(ih.fl)
+	CLR	(R2)+		;(ih.id)
+	MOV	#IH.DF,(R2)+	;(ih.frg) (don't fragment)
+	MOV	#P.LNP*400+2+1,(R2)+ ;(ih.ttl, ih.pro) (ttl = 2 for bums)
+	CLR	(R2)+		;(ih.chk)
+	MOV	$NETID,(R2)+	;(ih.src)
+	MOV	$NETID+2,(R2)+
+	MOV	PARADR(R3),(R2)+ ;(ih.dst)
+	MOV	PARADR+2(R3),(R2)+
+	MOV	R2,PH.OFS(R4)	;save data offset
+	SUB	R4,PH.OFS(R4)
+	MOV	R4,R0		;construct default leader
+	ADD	#PH.LDR,R0
+	MOV	#377*400,(R0)+	;(ph.ldr)
+	MOV	R0,R1
+	MOV	PARADR(R3),(R0)+
+	MOV	PARADR+2(R3),(R0)+
+NTO17:	ADD	#LH.TBL-IH.LEN,R2 ;point to table area
+	MOV	GATPTR(R5),R0	;is this later fragment
+	BNE	NTO11		;branch if yes
+	JSR	PC,NETMAP	;no. is this local subnet
+	BNE	3$		;branch if no
+	MOV	#$HOSAD-1,R1	;yes. construct type-0 table
+	MOVB	(R1)+,R0
+	MOVB	R0,(R2)+	;(lh.len)
+	MOVB	#LF.LCL,(R2)+	;(lh.fmt)
+1$:	DECB	R0		;is this end of table
+	BMI	3$		;branch if yes
+	MOV	HOSDLY(R1),@R2	;no. insert delay
+	CMPB	PARPID(R3),HOSPID(R1) ;is this potential loop
+	BNE	2$		;branch if no
+	MOV	#TM.TTL,@R2	;yes. force max delay
+2$:	SWAB	(R2)+
+	MOV	HOSOFS(R1),@R2	;insert clock offset
+	SWAB	(R2)+
+	ADD	#HOSLEN,R1	;advance to next entry
+	BR	1$
+;
+3$:	MOV	GATVPT,R0	;construct type-1 table
+NTO11:	MOV	R2,R1
+	MOV	#LF.FGN*400,(R2)+ ;(lh.len,lh.fmt)
+	MOV	PARMAX(R3),-(SP) ;establish mtu bound
+	ADD	#BUFLDR,@SP
+	ADD	R4,@SP
+1$:	BITB	#GT.HLO,GATFLG(R0) ;is net marked to send
+	BEQ	8$		;branch if no
+	BITB	#GT.CAC,GATFLG(R0) ;yes. is it alive
+	BEQ	2$		;branch if yes
+	TSTB	GATTTL(R0)
+	BEQ	8$		;branch if no
+2$:	ADD	#8.,R2		;is packet full
+	CMP	R2,@SP
+	BLOS	3$		;branch if no
+	SUB	#8.,R2		;yes. resume sanity
+	BR	10$
+;
+3$:	SUB	#8.,R2		;insert entry
+	INCB	@R1		;(lh.len)
+	MOV	R1,-(SP)	;juggle pointers
+	MOV	GATNET(R0),(R2)+ ;insert net
+	MOV	GATNET+2(R0),(R2)+
+	CLR	R1		;is route wired
+	BISB	GATHID(R0),R1
+	BEQ	4$		;branch if yes
+	CMPB	R1,$HOSAD-2
+	BLO	5$		;branch if no
+4$:	CLR	(R2)+		;yes. assume delay/offset zero
+	CLR	(R2)+
+	BR	7$
+;
+5$:	MUL	#HOSLEN,R1	;not wired. set pointer
+	ADD	#$HOSAD,R1
+	MOV	HOSDLY(R1),@R2	;insert delay
+	CMPB	PARPID(R3),HOSPID(R1) ;is this potential loop
+	BNE	6$		;branch if no
+	TSTB	GATHOP(R0)
+	BEQ	6$		;branch if no
+	MOV	#TM.TTL,@R2	;yes. force max delay
+6$:	SWAB	(R2)+
+	MOV	HOSOFS(R1),@R2	;insert clock offset
+	SWAB	(R2)+
+7$:	MOV	(SP)+,R1
+8$:	BITB	#GT.END,GATFLG(R0) ;is this end of table
+	BNE	9$		;branch if yes
+	ADD	#GATLEN,R0	;no. advance to next entry
+	BR	1$
+;
+9$:	CLR	R0		;remember table pointer
+	TST	GATPTR(R5)	;is this first fragment
+	BEQ	11$		;branch if yes
+10$:	CMP	R2,@SP		;no. pad to mtu bound
+	BHIS	11$		;branch if done
+	CLR	(R2)+		;paderewski
+	BR	10$
+;
+11$:	MOV	R0,GATPTR(R5)	;save table pointer for later
+	TST	(SP)+
+	TSTB	@R1		;are there any entries
+	BNE	12$		;branch if yes
+	TST	-(R2)		;no. delete header
+12$:	SUB	R4,R2		;save length for later
+	SUB	PH.OFS(R4),R2
+	MOV	R2,PARTFL(R3)
+	MOV	R2,PH.LNG(R4)
+NTO18:	.GDAT			;(lh.dat) insert date
+	SWAB	R0
+	MOV	R0,LH.DAT(R4)
+	.GCLK			;(lh.tim) insert system clock
+	MOV	R0,PH.TIM(R4)
+	MOV	R1,PH.TIM+2(R4)
+	SUB	PARBIA(R3),R1	;correct for bias
+	SBC	R0
+	SWAB	R0
+	MOV	R0,LH.TIM(R4)
+	MOV	R1,LH.TIM+2(R4)
+	SWAB	LH.TIM+2(R4)
+	ADD	PARTSP(R3),R1	;compute timestamp
+	SUB	PARBIA(R3),R1	;correct for bias
+	BITB	PARSLB(R3),$CKCNT ;is delay valid
+	BNE	2$		;branch if no
+	TSTB	PARSTX(R3)
+	BNE	3$		;branch if yes
+2$:	CLR	R1		;no. indicate that
+3$:	SWAB	R1		;(lh.tsp)
+	MOV	R1,LH.TSP(R4)
+	CLR	LH.CHK(R4)	;compute checksum
+	MOV	R4,R1
+	JSR	PC,DATSUM
+	MOV	R0,LH.CHK(R4)
+	ADD	#1,PARHLX+2(R3)	;tally hello messages sent
+	ADC	PARHLX(R3)
+	CLC			;transmit packet
+	RTS	PC
+;
+; Subroutine to update routing tables
+; R1 = address pointer, r2 = update pointer, r4 = packet pointer
+;
+ADRHLO:	SWAB	@R2		;swap things
+	SWAB	2(R2)
+	JSR	PC,ADRPTR	;determine ip address mask
+	MOV	2(R0),-(SP)	;save mask
+	MOV	@R0,-(SP)
+	MOV	2(R1),-(SP)	;save address
+	MOV	@R1,-(SP)
+	BIC	@R0,@SP		;mask address
+	BIC	2(R0),2(SP)
+	.PSEM	#SF.RUT		;lock routing tables
+	MOV	SP,R1		;find entry
+	JSR	PC,ADRMAP
+	BCS	2$		;branch if not found
+	BITB	#1,HOSLNA(R1)
+	BNE	7$		;branch if multicast
+	BITB	#GT.END,GATFLG(R0)
+	BEQ	1$		;branch if not last
+	TSTB	@SP
+	BNE	2$		;branch if not default
+1$:	BITB	#GT.ERR,GATFLG(R0)
+	BNE	7$		;branch if egp default
+	BITB	#GT.EGP,GATFLG(R0)
+	BNE	4$		;branch if egp
+	ADD	#10,SP		;update existing entry
+	BR	9$
+;
+2$:	CMP	@R2,#TM.TTL	;not found. is host up
+	BHIS	7$		;branch if no
+	TSTB	@SP		;yes. is this default host
+	BEQ	4$		;branch if yes
+3$:	SUB	#GATLEN,R0	;no. back to previous entry
+	BITB	#GT.CAC,GATFLG(R0) ;is this cache entry
+	BEQ	7$		;branch if no
+	TSTB	GATTTL(R0)	;yes. is it free
+	BNE	3$		;branch if no
+4$:	CLR	R1		;yes. find free hid
+	BISB	$HOSAD-1,R1
+	MOVB	R1,-(SP)
+	MUL	#HOSLEN,R1
+	ADD	#$HOSAD,R1
+5$:	CMPB	@SP,$HOSAD-2	;is hid available
+	BHIS	6$		;branch if no
+	TSTB	HOSPID(R1)	;yes. is it free
+	BEQ	8$		;branch if yes
+	ADD	#HOSLEN,R1	;no. advance to next one
+	INCB	@SP
+	BR	5$
+;
+6$:	TSTB	(SP)+		;no hid available
+7$:	ADD	#10,SP		;discard junk
+	BR	11$
+;
+8$:	MOVB	(SP)+,GATHID(R0) ;found free hid. initialize net entry
+	MOV	(SP)+,GATNET(R0)
+	MOV	(SP)+,GATNET+2(R0)
+	MOV	(SP)+,GATMSK(R0)
+	MOV	(SP)+,GATMSK+2(R0)
+	MOVB	#1,GATHOP(R0)	;*** primary route
+	CLRB	HOSTTL(R1)
+	MOV	#TM.TTL,HOSDLY(R1)
+9$:	CMPB	GATHID(R0),$HOSAD-1 ;is this fixed area
+	BLO	10$		;branch if yes
+	BICB	#^C<GT.END>,GATFLG(R0) ;(take over from egp)
+	BISB	#GT.HLO+GT.CAC,GATFLG(R0)
+10$:	MOVB	GATHID(R0),LH.FMT(R4) ;(save for clock track) is entry wired
+	BEQ	11$		;branch if yes
+	CMPB	GATHID(R0),$HOSAD-2
+	BHIS	11$		;branch if yes
+	JSR	PC,UPDATE	;no. update routing table
+11$:	.VSEM	#SF.RUT		;unlock routing tables
+	RTS	PC
+;
+; Subroutine to update routing table entry
+; lh.fmt = hid, r0 = net table pointer (type 1), r1 = routing table ptr,
+; r2 = update ptr, r4 = packet ptr
+;
+UPDATE:	CMPB	LH.FMT(R4),$HOSAD-2 ;is this bogon
+	BHIS	11$		;branch if yes
+	BIT	#BSTBIT,PAROPT(R3) ;maybe not. is this tinkered delay
+	BEQ	1$		;branch if no
+	BIT	#DLXBIT,PAROPT(R3)
+	BEQ	1$		;branch if no
+	CLR	@R2		;yes. onward the zip
+1$:	ADD	LH.TSP(R4),@R2	;compute delay/offset
+	BVC	2$
+	MOV	#100000+TM.TTL,@R2 ;clamp for overflow
+2$:	CMPB	PARPID(R3),HOSPID(R1) ;is this the old way
+	BNE	12$		;branch if no
+	BIT	#GATBIT,PAROPT(R3)
+	BNE	3$		;branch if yes
+	CMPB	LH.FMT(R4),$HOSAD-1
+	BLO	3$		;branch if yes
+	CMP	IH.SRC(R4),GATLDR(R0)
+	BNE	12$		;branch if no
+	CMP	IH.SRC+2(R4),GATLDR+2(R0)
+	BNE	12$		;branch if no
+3$:	MOV	@R2,-(SP)	;yes. unsign delay
+	BIC	#100000,@SP
+	MOV	HOSDLY(R1),LH.CHK(R4) ;is new delay increasing too fast
+	ASL	LH.CHK(R4)
+	CMP	@R2,LH.CHK(R4)
+	BHI	6$		;branch if yes
+	ASR	LH.CHK(R4)	;no. is new delay decreasing too fast
+	ASR	LH.CHK(R4)
+	BIC	#140000,LH.CHK(R4)
+	CMP	@R2,LH.CHK(R4)
+	BHI	4$		;branch if no
+	BISB	$ONLIN,$ROUTE	;yes. unlatch hold-down and flag for update
+	BR	5$
+;
+4$:	CMP	HOSDLY(R1),#TM.TTL ;determine status
+	BHIS	8$		;branch if hold-down or down
+	BIT	#BSTBIT,PAROPT(R3) ;up. is this special hello
+	BEQ	5$		;branch if no
+	CMPB	LH.FMT(R4),$HOSAD-1
+	BHIS	5$		;branch if no
+	CMP	@SP,HOSDLY(R1)	;yes. keep min delay
+	BLOS	5$
+	MOV	HOSDLY(R1),@SP
+5$:	MOV	(SP)+,@R2
+	BR	15$
+;
+6$:	TSTB	HOSTTL(R1)	;increasing delay. determine status
+	BEQ	10$		;branch if down
+	CMP	HOSDLY(R1),#TM.TTL
+	BHIS	8$		;branch if hold-down
+	BIT	#BSTBIT,PAROPT(R3) ;up. is this special hello
+	BEQ	7$		;branch if no
+	CMPB	LH.FMT(R4),$HOSAD-1
+	BLO	10$		;branch if yes
+7$:	MOVB	#TS.LNK,HOSTTL(R1) ;no. latch hold-down and flag for update
+	BISB	$ONLIN,$ROUTE
+8$:	MOV	HOSDLY(R1),LH.CHK(R4) ;keep max delay
+	BIC	#100000,LH.CHK(R4)
+	CMP	@SP,LH.CHK(R4)
+	BHIS	9$
+	MOV	LH.CHK(R4),@SP
+9$:	BIS	#100000,@SP	;flag hold-down
+	MOV	(SP)+,HOSDLY(R1)
+	RTS	PC
+;
+10$:	TST	(SP)+		;down. do not reset route
+11$:	RTS	PC
+;
+12$:	CMP	@R2,#TM.TTL	;new way. is host reachable
+	BHIS	11$		;branch if no
+	TSTB	HOSTTL(R1)	;yes. determine status
+	BEQ	13$		;branch if down
+	CMP	HOSDLY(R1),#TM.TTL
+	BHIS	11$		;branch if hold-down
+13$:	MOV	HOSDLY(R1),-(SP) ;host up or down. is new way shorter
+	ASR	@SP		;(constant 0.75)
+	ASR	@SP
+	NEG	@SP
+	ADD	HOSDLY(R1),@SP
+	CMP	@R2,(SP)+
+	BHI	11$		;branch if no
+	CMPB	LH.FMT(R4),$HOSAD-1
+	BLO	14$		;branch if not type-1
+	INC	$RTCHG		;log route change
+	CMP	GATNET(R0),$TRNET ;is this traced net
+	BNE	14$		;branch if no
+	CMP	GATNET+2(R0),$TRNET+2
+	BNE	14$		;branch if no
+	INC	$RTCHG+2	;yes. log traced route change
+	MOV	R0,-(SP)
+	MOV	R1,-(SP)
+	MOVB	PARIDX(R3),R1
+	.TRAP	#TR.RUT,GATNET(R0),GATNET+2(R0),R1,@R2
+	MOV	(SP)+,R1
+	MOV	(SP)+,R0
+14$:	MOVB	PARPID(R3),HOSPID(R1) ;reset route
+	CLR	HOSOFS(R1)
+	CLR	HOSLNA(R1)
+	CLR	HOSLNA+2(R1)
+	CLR	HOSLNA+4(R1)
+	BISB	$ONLIN,$ROUTE	;flag for update
+15$:	CMPB	LH.FMT(R4),$HOSAD-1 ;is this type 1
+	BLO	16$		;branch if no
+	MOVB	#TX.HLO/30.,GATTTL(R0) ;yes. tickle ttl
+	CLR	GATLDR(R0)	;is this internal hello
+	CLR	GATLDR+2(R0)
+	BIT	#GATBIT,PAROPT(R3)
+	BNE	16$		;branch if yes
+	MOV	IH.SRC(R4),GATLDR(R0) ;no. stash ip source address
+	MOV	IH.SRC+2(R4),GATLDR+2(R0)
+16$:	MOV	LH.DAT(R4),R0	;is clock synchronized
+	COM	R0
+	BIT	#140000,R0
+	BEQ	17$		;branch if no
+	ADD	LH.TIM+2(R4),2(R2) ;yes. update offset
+	CMPB	LH.FMT(R4),$CKHID ;is clock primed to this host
+	BNE	17$		;branch if no
+	CMP	PH.LNG(R4),PARTFL(R3)
+	BNE	17$		;branch if no
+	CLR	PARTFL(R3)	;yes. update local clock
+	.TRAP	#TR.CLK,#0*400+CK.DCN,@R2,LH.DAT(R4),LH.TIM(R4),LH.TIM+2(R4)
+17$:	MOV	@R2,HOSDLY(R1)	;update routing table
+	MOV	2(R2),HOSOFS(R1)
+	MOVB	PARMIN(R3),R0
+	ASH	#2,R0
+	MOVB	R0,HOSTTL(R1) 
+	MOV	PH.TIM(R4),HOSTIM(R1)
+	MOV	PH.TIM+2(R4),HOSTIM+2(R1)
+	RTS	PC
+;
+; Netest (rut) test neighbor net
+; R1 = internet address (word) pointer, returns cc(z) = 1 if neighbor net
+;
+NETEST:	JSR	PC,ADRPTR	;get address mask
+	BNE	1$		;branch if different subnet
+	MOV	#$NETID+4,R0	;same subnet. use subnet mask
+1$:	MOV	@R1,-(SP)	;is address on same neighbor net
+	BIC	@R0,@SP
+	MOV	PARADR(R3),-(SP)
+	BIC	(R0)+,@SP
+	CMP	(SP)+,(SP)+
+	BNE	2$		;branch if no
+	MOV	2(R1),-(SP)
+	BIC	@R0,@SP
+	MOV	PARADR+2(R3),-(SP)
+	BIC	(R0)+,@SP
+	CMP	(SP)+,(SP)+
+2$:	RTS	PC		;return cc(z) = 1 if neighbor net
+;
+; Subroutine to determine ip address mask
+; R1 = internet address pointer, returns r0 = mask pointer,
+; cc(z) = 1 if home subnet
+;	
+ADRPTR:	MOV	#MSKTAB,R0	;determine address class
+	TSTB	@R1
+	BEQ	2$		;branch if default
+	CMP	(R0)+,(R0)+
+	JSR	PC,NETMAP
+	BEQ	3$		;branch if same subnet
+	CMP	(R0)+,(R0)+
+	CMPB	@R1,#128.	
+	BLO	1$		;branch if class a
+	CMP	(R0)+,(R0)+
+	CMPB	@R1,#192.
+	BLO	1$		;branch if class b
+	CMP	(R0)+,(R0)+	;class c
+1$:	MOV	@R1,-(SP)	;is address on same ip net
+	BIC	@R0,@SP
+	MOV	$NETID,-(SP)
+	BIC	@R0,@SP
+	CMP	(SP)+,(SP)+
+	BNE	3$		;branch if no
+	MOV	2(R1),-(SP)
+	BIC	2(R0),@SP
+	MOV	$NETID+2,-(SP)
+	BIC	2(R0),@SP
+	CMP	(SP)+,(SP)+
+	BNE	3$		;branch if no
+	MOV	#$NETID+4,R0	;yes. use subnet mask
+2$:	CLZ
+3$:	RTS	PC		;cc(z) = 1 if home subnet
+;
+	.PSECT	$SUPD,RO,D	;supervisor d-space
+;
+; IP mask table
+;
+MSKTAB:	.BYTE	377,377,377,377	;default
+	.BYTE	000,000,000,000	;same subnet
+	.BYTE	000,377,377,377	;class a
+	.BYTE	000,000,377,377	;class b
+	.BYTE	000,000,000,377	;class c
+	.EVEN
+;
+	.END
+                                                                                                                                                         

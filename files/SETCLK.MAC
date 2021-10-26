@@ -1,0 +1,776 @@
+	.TITLE	SETCLK	Set time and date
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Set time and date
+;
+; This program sets the system date and time from either the Digital
+; Pathways TCU-50 digital clock or one of several radio timecode
+; receivers, including:
+;
+; Spectracom 8170 and Netclock/II WWVB receivers (two formats)
+; Kinemetrics TrueTime receivers (all models)
+; Heath GC-1000 WWV/WWVH receiver
+; Precision Standard Time/Traconex 1020 WWV/WWVH reciever
+;
+; Calling sequence from command line: setclk [name] [address]
+;
+; name =	clock
+; sp0		spectracom format 0
+; sp2		spectracom format 2
+; tru		truetime
+; hea		heath
+; pst		pst/traconex
+; tra		pst/traconex
+; tcu		tcu digital clock
+; man		eyeball-and-wristwatch
+;
+; address = device address
+;
+; The digital clock uses three device registers in the following
+; format:
+;
+;	           1                   0
+;	 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
+;	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;	|     month     |      day      |
+;	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;	|    minute     |     hour      |
+;	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;	|            second             |
+;	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;
+; The radio clocks are attached via a serial asynchronous line interface
+; which is used to send poll messages and receive responses in the
+; following format:
+;
+; Spectracom format 0:	<cr><lf>q  ddd hh:mm:ss  tz=zz<cr><lf> (26 char)
+; Spectracom format 2:	<cr><lf>iqyy ddd hh:mm:ss.xxx ld (26 char)
+; Truetime format:	<cr><lf><ctrl-a>ddd:hh:mm:ssq<cr> (16 char)
+; Heath format:		<cr>hh:mm:ss.x     dd/mm/yr<cr>	(25 char)
+; PST/Traconex format:	hh:mm:ss.fff  yy/dd/mm/ddd status<cr> (50 char)
+;
+; When polled the Spectracom and PST clocks return the timecode string
+; shown. The other clocks run continuously. In the TrueTime clock the
+; start bit of the last <cr> represents on-time, while in the other
+; clocks the first <cr> represents on-time. In the formats yy is
+; year, ddd is day of year, hh:mm:ss is time of day, x is fractions of
+; seconds, and dd/mm/yr is conventional (US) date. Additional
+; information in some formats includes i status indicator, q quality
+; indicator, l leap-warning and d summer-time flag. In the Heath clock
+; the hh:mm:ss.f field is displayed as 0?:??:??.? before synch is first
+; established and hh:mm:ss.? once synch is established and then lost
+; again.
+;
+.IIF NDF,LINFRQ LINFRQ == 60.	;cpu clock interrupt frequency (Hz)
+.IIF NDF,TCUREG TCUREG == 170770 ;default tcu device address
+.IIF NDF,SLUREG SLUREG == 176560 ;default slu device address
+.IIF NDF,CLKTYP CLKTYP == ^RPST ;default clock type
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.EXIT,.TRPSET,.MRKT,.CMKT,.QSET ;rt-11 macros
+	.MCALL	.GTLIN,.PRINT,.DATE,.GTIM,.SDTTM,.TTYIN
+;
+; Assembly parameters
+;
+CHNPTR	=	510		;argument pointer (rt-11 chain area)
+QUESIZ	=	20		;max elements on completion queue
+BEL	=	007		;ascii bell
+LF	=	012		;ascii line feed
+CR	=	015		;ascii carriage return
+;
+; Clock descriptor block
+;
+.	=	0
+NB.TIM:	.BLKB	1		;time offset
+NB.DAT:	.BLKB	1		;date offset
+NB.OFS:	.BLKB	1		;status offset
+NB.STA:	.BLKB	1		;initial state
+NB.CNB:	.BLKB	1		;timecode length
+NB.FMT:	.BLKB	1		;timecode format
+NB.POL	=	.		;beginning of poll string
+;
+; Dlv11/dl11 device register block
+;
+.	=	0
+INPCSR:	.BLKW	1		;input status register
+INPBUF:	.BLKW	1		;input buffer register
+OUTCSR:	.BLKW	1		;output status register
+OUTBUF:	.BLKW	1		;output buffer register
+;
+; Procedure segment
+;
+	.PSECT	$SUPI,RO,I
+;
+; Main routine
+;
+; Read clock information in rt-11 chain area and determine clock type
+; and device address
+;
+START:	.QSET	#QUEUE,#QUESIZ	;allocate space for completion queue
+	CLR	FLAG		;reset error flag
+	.TRPSET	#ARGBLK,#TCU11	;arm trapcatcher
+	.DATE			;set reference timestamp
+	MOV	R0,DATE
+	.GTIM	#ARGBLK,#REFTIM
+	MOV	#COM33,ERRPTR	;unknown clock
+	MOV	#CHNPTR+2,ARGPTR
+	JSR	PC,HASH		;get clock name
+	BEQ	1$		;branch if default
+	MOV	R0,CLKNAM
+1$:	JSR	PC,RDOCT	;get device address
+	BEQ	2$		;branch if default
+	MOV	R0,DEVREG
+2$:	MOV	#CLKTAB,R0	;search name table
+3$:	MOV	(R0)+,R5
+	BEQ	4$		;branch if not found
+	CMP	(R0)+,CLKNAM	;is this the clock
+	BNE	3$		;branch if no
+	MOV	#COM30,ERRPTR	;device error
+	BIT	#1,R5
+	BEQ	RADCLK		;branch if radio
+	BIC	#1,R5		;must be mundane thing
+	JMP	@R5
+;
+4$:	JMP	CNVERR		;unknown clock
+;
+; Digital clock
+; (note usual device address is )
+;
+TCUCLK:	MOV	DEVREG,R2	;get register base
+	BNE	2$		;branch if given
+	MOV	#TCUREG,R2	;use default
+2$:	MOV	(R2)+,R0	;get date
+	TST	FLAG
+	BNE	1$		;branch if dead tcu
+	MOV	(R2)+,R3	;yes. get hours and minutes
+	MOV	(R2)+,R1	;get seconds
+	CMP	-(R2),R1	;has clock stepped
+	BNE	TCUCLK		;branch if yes
+	CMP	-(R2),R3
+	BNE	TCUCLK		;branch if yes
+	CMP	-(R2),R0
+	BNE	RADCLK		;branch if yes
+	ASLB	R0		;no. muscle date around to rt-11 format
+	ASLB	R0
+	ASLB	R0
+	ASL	R0
+	ASL	R0
+	BIC	#^C37,DATE	;keep current year
+	BIS	R0,DATE
+	BIC	#^C77,R1	;extract seconds
+	MOV	R1,-(SP)
+	MOV	R3,-(SP)
+	BIC	#^C77,@SP
+	CLR	R2		;extract hours
+	SWAB	R3
+	BIC	#^C37,R3
+	MOV	#60.,R0		;convert to minutes
+	JSR	PC,DMUL
+	ADD	(SP)+,R3
+	MOV	#60.,R0		;convert to seconds
+	JSR	PC,DMUL
+	ADD	(SP)+,R3
+	ADC	R2
+	MOV	#LINFRQ,R0	;convert to ticks
+	JSR	PC,DMUL
+	MOV	R2,TIME
+	MOV	R3,TIME+2
+	.SDTTM	#ARGBLK,#DATE	;set system date and time
+	JMP	EXIT
+;
+1$:	JMP	CNVERR
+;
+; Radio clock
+;
+RADCLK:	.MRKT	#ARGBLK,#DELAY,#TCU10,#1 ;set poll timeout
+	MOV	DEVREG,R2	;get register base
+	BNE	4$		;branch if given
+	MOV	#SLUREG,R2	;use default
+	TSTB	OUTCSR(R2)	;test live slu
+4$:	MOVB	#NB.POL,R1	;send poll sequence
+	ADD	R5,R1
+1$:	MOVB	(R1)+,R0
+	BEQ	3$		;branch if done
+2$:	TST	FLAG
+	BNE	NBS99		;branch if timeout or dead slu register
+	TSTB	OUTCSR(R2)
+	BPL	2$		;branch if not ready
+	MOVB	R0,OUTBUF(R2)	;send char
+	BR	1$
+;
+3$:	MOV	#TIMCOD,R1	;point to timecode
+	MOVB	NB.STA(R5),NBSFLG ;set initial state
+	MOVB	NB.CNB(R5),NBSCNB
+	MOV	#COM31,ERRPTR	;no reply
+;
+; Receive timecode
+;
+CLKREC:	TST	FLAG		;get char
+	BNE	NBS99		;branch if timeout
+	TSTB	INPCSR(R2)	
+	BPL	CLKREC		;branch if not ready
+	MOVB	INPBUF(R2),R4
+	BIC	#^C177,R4
+	MOVB	NBSFLG,R0	;branch to state segment
+	ASL	R0
+	MOV	CLKJMP(R0),PC
+;
+NBS99:	JMP	CNVERR		;handrail
+;
+; Truetime clock
+;
+NBS30:	CMPB	R4,#CR		;state 4. is this first char
+	BNE	CLKREC		;branch if no
+	INCB	NBSFLG		;yes. bump state
+	MOV	#COM32,ERRPTR	;bad format
+	BR	CLKREC
+;
+NBS31:	CMPB	R4,#CR		;state 5. is this on-time char
+	BNE	NBS34		;branch if no
+	.GTIM	#ARGBLK,#REFTIM	;yes. update reference timestamp
+	BR	NBS33
+;
+; Spectracom/heath/pst clock
+;
+NBS01:	CMPB	R4,#CR		;state 1. is this on-time char
+	BNE	CLKREC		;branch if no
+NBS20:	.GTIM	#ARGBLK,#REFTIM	;yes. update reference timestamp
+	INCB	NBSFLG		;bump state
+	MOV	#COM32,ERRPTR	;bad format
+NBS34:	CMP	R4,#040		;strip control chars
+	BLO	CLKREC
+	MOVB	R4,(R1)+	;stash char
+	DECB	NBSCNB
+	TSTB	NBSCNB
+	BEQ	NBS33		;branch if buffer full
+	BR	CLKREC
+;
+NBS21:	CMPB	R4,#CR		;state 7/8. date/time strings
+	BNE	NBS34
+	MOV	#<' >,R4
+	INCB	NBSFLG
+	BR	NBS34
+;
+NBS25:	CMPB	R4,#CR		;state 9. end string
+	BNE	NBS34
+	CMPB	TIMCOD+37.,#'8	;last char. is status okay
+	BEQ	NBS22		;branch if yes
+	MOVB	#'?,TIMCOD	;no. overbum first char
+	BR	NBS33
+;
+NBS22:	CMPB	R4,#CR		;state 2. end string
+	BNE	NBS34
+NBS33:	CLRB	@R1		;last char. plant backstop
+	SUB	#TIMCOD,R1
+	CMPB	R1,NB.CNB(R5)
+	BNE	CNVERR		;branch if invalid length
+;
+; Convert time code to internal format.
+;
+CNVCLK:	.CMKT	#ARGBLK,#0	;stop the bubble machine
+	MOV	#COM34,ERRPTR	;not synchronized
+	MOVB	NB.OFS(R5),R1	;is status okay
+	CMPB	TIMCOD(R1),#'?
+	BEQ	CNVERR		;branch if no	
+	MOV	#COM35,ERRPTR	;bad date
+	MOVB	NB.DAT(R5),R1	;yes. convert date to internal format
+	ADD	#TIMCOD,R1
+	MOVB	NB.FMT(R5),R0
+	JSR	PC,NBSDAT
+	BCS	CNVERR		;branch if error
+	MOV	R0,DATE
+	MOV	#COM36,ERRPTR	;bad time
+	.GTIM	#ARGBLK,#TIME	;compute offset since reference tick
+	SUB	REFTIM+2,TIME+2
+	SBC	TIME
+	SUB	REFTIM,TIME
+	MOVB	NB.TIM(R5),R1	;convert time-of-day to internal format
+	ADD	#TIMCOD,R1
+	JSR	PC,NBSTIM
+	BCS	CNVERR		;branch if error
+	ADD	R1,TIME+2	;compute update time
+	ADC	TIME
+	ADD	R0,TIME
+	.PRINT	#TIMCOD		;print timecode
+	.SDTTM	#ARGBLK,#DATE	;set system date and time
+	JMP	EXIT
+;
+CNVERR:	.CMKT	#ARGBLK,#0	;stop the bubble machine
+	.PRINT	#TIMCOD		;print timecode
+	.PRINT	ERRPTR		;timecode failed
+	JMP	EXIT
+;
+; Manual entry
+;
+MANCLK:	.GTLIN	#TIMCOD,#COM12,#1 ;get date
+	MOV	#TIMCOD,R1
+	TSTB	@R1
+	BEQ	2$		;branch if not present
+	CLR	R0		;convert to standard format
+	JSR	PC,NBSDAT
+	BCC	1$		;branch if ok
+	.PRINT	#COM35		;bad date
+	BR	MANCLK
+;
+1$:	MOV	R0,DATE		;save date
+2$:	.GTLIN	#TIMCOD,#COM13,#1 ;get time
+	MOV	#TIMCOD,R1
+	TSTB	@R1
+	BEQ	4$		;branch if not present
+	JSR	PC,NBSTIM
+	BCC	3$		;branch if ok
+	.PRINT	#COM36		;bad time
+	BR	2$
+;
+3$:	MOV	R1,TIME+2	;save time
+	MOV	R0,TIME
+4$:	.SDTTM	#ARGBLK,#DATE	;set system date and time
+EXIT:	.EXIT
+;
+; Trapcatcher routines
+;
+TCU10:	INC	FLAG		;timeout. leave tracks
+	RTS	PC
+;
+TCU11:	INC	FLAG		;bus error. leave tracks
+	RTI
+;
+; Subroutines
+;
+; NBSDAT (nbs) convert date in ddd or mm/dd/yr format
+; r0 = format code, r1 = field pointer; returns r0 = date (rt-11
+; format), cc = c if error
+;
+NBSDAT:	MOV	R2,-(SP)	;save
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	MOV	DATE,R3		;get current year
+	BIC	#^C37,R3
+	TST	R0		;is this yy ddd format
+	BEQ	20$		;branch if no
+	JSR	PC,NBSDIG	;yes convert year field
+	SUB	#72.,R0
+	BMI	7$		;branch if range error
+	MOV	R0,R3
+	CMPB	(R1)+,#<' >
+	BNE	7$		;branch if syntax error
+20$:	JSR	PC,NBSDIG	;get next field (mm or ddd)
+	BCS	7$		;branch if error
+	CMPB	(R1)+,#<'/>	;is this mm/dd/yr format
+	BEQ	3$		;branch if yes
+	MOV	R0,R2		;ddd format. save day of year
+	BEQ	7$		;branch if range error
+	MOV	PC,R1		;assume standard-year table
+	ADD	#STDYER-.,R1
+	BIT	#3,R3		;is it leap year
+	BNE	1$		;branch if no
+	ADD	#LEPYER-STDYER,R1 ;yes. use leap-year table
+1$:	CLR	R0		;decode month
+2$:	ADD	#2000,R0
+	TST	@R1
+	BEQ	7$		;branch if range error
+	SUB	(R1)+,R2
+	BGT	2$
+	BIS	R3,R0
+	ADD	-(R1),R2	;decode day
+	ASH	#5,R2
+	BIS	R2,R0
+	BR	6$
+;
+3$:	CMP	R0,#12.		;mm/dd/yy format. save month mm 1-12
+	BHI	7$		;branch if range error
+	MOV	R0,R2
+	BEQ	7$		;branch if range error
+	JSR	PC,NBSDIG	;get day dd
+	BCS	7$		;branch if error
+	MOV	R0,R4
+	BEQ	7$		;branch if range error
+	MOV	R3,R0		;restore default year
+	CMPB	(R1)+,#<'/>
+	BNE	21$		;branch if no year
+	JSR	PC,NBSDIG	;get year yy
+	BCS	7$		;branch if error
+	TSTB	(R1)+		;skip terminator
+21$:	CMP	R0,#99.		;save year 72-99
+	BHI	7$		;branch if range error
+	SUB	#72.,R0
+	BLT	7$		;branch if range error
+	ASL	R2		;check day range
+	BIT	#3,R0
+	BEQ	4$		;branch if leap year
+	CMP	R4,STDYER-2(R2)	;standard year
+	BHI	7$		;branch if range error
+	BR	5$
+;
+4$:	CMP	R4,LEPYER-2(R2)	;standard year
+	BHI	7$		;branch if range error	
+5$:	ASH	#5.,R4		;assemble day
+	BIS	R4,R0
+	ASH	#9.,R2		;assemble month
+	BIS	R2,R0
+6$:	CLC			;normal return
+	BR	8$
+;
+7$:	SEC			;error return
+8$:	MOV	(SP)+,R4	;evas
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	RTS	PC
+;
+; NBSTIM (nbs) convert time in hh:mm:ss.f format (.f is optional)
+; R1 = field pointer, returns r0-r1 = time (milliseconds), cc = c if error
+;
+NBSTIM:	MOV	R2,-(SP)	;save
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	CLR	R2		;initialize accumulator
+	CLR	R3
+	MOV	#24.,R0		;get hours
+	JSR	PC,CLK71
+	BCS	2$		;branch if error
+	CMPB	(R1)+,#<':>
+	BNE	2$		;branch if syntax error
+	MOV	#60.,R0		;get minutes
+	JSR	PC,CLK71
+	BCS	2$		;branch if error
+	CMPB	(R1)+,#<':>
+	BNE	2$		;branch if syntax error
+	MOV	#60.,R0		;get seconds
+	JSR	PC,CLK71
+	BCS	2$		;branch if error
+	MOV	#LINFRQ,R0	;scale to ticks
+	JSR	PC,DMUL
+	CMPB	(R1)+,#<'.>	;is fraction present
+	BNE	1$		;branch if no
+	MOV	R1,-(SP)	;yes. convert fraction
+	JSR	PC,NBSDIG
+	BCS	2$		;branch if syntax error
+	SUB	(SP)+,R1	;compute fraction size
+	CMP	R1,#3
+	BHI	2$		;branch if too high
+	ASL	R1
+	MUL	RADIX(R1),R0	;scale to (approx) ticks
+	DIV	#1000./LINFRQ,R0
+	ADD	R0,R3
+	ADC	R2
+1$:	MOV	R2,R0		;get result
+	MOV	R3,R1
+	CLC			;normal return
+	BR	3$
+;
+2$:	SEC			;error return
+3$:	MOV	(SP)+,R4	;evas
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	RTS	PC
+;
+; Subroutine to perform double-precision multiplication
+; R0 = multiplier, r2-r3 = multiplicand, returns r2-r3 = product (lsb)
+;
+DMUL:	MOV	R1,-(SP)	;save
+	MOV	R4,-(SP)
+	CLR	R1		;initialize
+	MOV	#33.,R4
+1$:	ASR	R1		;shift partial product right
+	ROR	R2
+	ROR	R3
+	BCC	2$		;branch if lsb = 0
+	ADD	R0,R1		;lsb <> 0. add multiplier
+2$:	SOB	R4,1$
+	MOV	(SP)+,R4	;evas
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to accumulate next decimal field
+; R0 = radix, r1 = field pointer, updates accumulator r2-r3, cc = c if error
+;
+CLK71:	MOV	R0,-(SP)	;multiply by radix
+	JSR	PC,DMUL
+	JSR	PC,NBSDIG	;convert next field
+	BCS	1$		;branch if error
+	CMP	R0,(SP)+
+	BHIS	2$		;branch if radix exceeded
+	ADD	R0,R3		;add to product
+	ADC	R2
+	RTS	PC		;normal return
+;
+1$:	TST	(SP)+		;error return
+2$:	SEC
+	RTS	PC
+;
+; Subroutine to convert next decimal field to integer
+; R1 = field pointer, returns r0 = integer, cc = c if error
+;
+NBSDIG:	MOV	R3,-(SP)	;save
+	CLR	R3		;initialize
+	MOVB	(R1)+,R0	;get next digit
+	CMPB	R0,#'0
+	BLO	3$		;branch if not
+	CMPB	R0,#'9
+	BHI	3$		;branch if not
+1$:	MUL	#10.,R3		;convert to binary
+	BIC	#^C17,R0
+	ADD	R0,R3
+	MOVB	(R1)+,R0	;get next digit
+	CMPB	R0,#'0
+	BLO	2$		;branch if not
+	CMPB	R0,#'9
+	BHI	2$		;branch if not
+	BR	1$
+;
+2$:	CLC			;normal return
+	BR	4$
+;
+3$:	SEC			;error return
+4$:	DEC	R1		;restore terminator
+	MOV	R3,R0
+	MOV	(SP)+,R3	;evas
+	RTS	PC
+;
+; Hash (rdo) read rad50 string
+; Rddec (rdo) read decimal string
+; Rdoct (rdo) read octal string
+; Returns r0 = number/hashed name, cc =
+; Z eor
+; N number
+; V hashed name
+;
+HASH	=	.		;(we don't tell the natives)
+RDDEC:	MOV	#10.,-(SP)	;set radix
+	BR	RDO1
+;
+RDOCT:	MOV	#8.,-(SP)	;4(sp). set radix
+RDO1:	CLR	-(SP)		;2(sp). set sign switch
+	MOV	R1,-(SP)	;0(sp). save register
+	CLR	R1		;clear accumulator
+1$:	JSR	PC,RDASC	;read next char and type
+	BEQ	11$		;branch if eor
+	BMI	8$		;branch if digit
+	BCC	2$		;branch if letter
+	CMP	R0,#'-		;special. is it minus
+	BNE	1$		;branch if no
+	COM	2(SP)		;yes. complement sign switch
+	BR	1$
+;
+2$:	ADD	#1-'A,R0	;letter. convert to rad50
+3$:	ADD	R0,R1	
+4$:	JSR	PC,RDASC	;read next char
+	BEQ	6$		;branch if eor
+	BCS	6$		;branch if special
+	BPL	5$		;branch if letter
+	ADD	#36-'0-1+'A,R0	;digit
+5$:	ADD	#1-'A,R0	;convert to rad50
+	CMP	R1,#50*50	;any more significant chars
+	BHI	4$		;branch if no
+	MUL	#50,R1		;multiply by 50
+	BR	3$
+;
+6$:	CMP	R1,#50*50	;is value left justified
+	BHIS	7$		;branch if yes
+	MUL	#50,R1		;no. multiply by 50
+	BR	6$
+;
+7$:	MOV	R1,R0		;get assembled value
+	MOV	(SP)+,R1	;restore conditions
+	CMP	(SP)+,(SP)+
+	CCC
+	SEV
+	RTS	PC
+;
+8$:	ADD	#0-'0,R0	;convert to numeric
+	ADD	R0,R1
+	JSR	PC,RDASC	;read next char and type
+	BPL	9$		;branch if not digit
+	MUL	4(SP),R1	;multiply accumulator by radix
+	BR	8$
+;
+9$:	MOV	R1,R0		;get assembled value
+	MOV	(SP)+,R1	;restore register
+	TST	(SP)+		;test sign switch
+	BEQ	10$		;branch if positive
+	NEG	R0		;negative. complement
+10$:	TST	(SP)+		;pop off radix
+	CCC
+	SEN
+	RTS	PC
+;
+11$:	MOV	(SP)+,R1	;eor. restore conditions
+	CMP	(SP)+,(SP)+
+	CLR	R0		;return zero
+	RTS	PC
+;
+; Rdasc (rda) read ascii char and determine type
+; Returns r0 = trimmed char, cc =
+; Z eor
+; C special
+; N digit
+; V letter
+;
+RDASC:	MOVB	@ARGPTR,R0	;more input data
+	BEQ	1$		;branch if no
+	INC	ARGPTR		;yes. process char
+	JSR	PC,TYPE
+	BEQ	RDASC		;branch if special char
+1$:	RTS	PC
+;
+; Type (rda) determine char type
+; Returns r0 = trimmed char, cc =
+; Z control
+; C special
+; N digit
+; V letter
+;
+TYPE:	BIC	#^C177,R0	;trim char
+	MOV	PC,-(SP)	;set up for sidewinder
+	ADD	#RDA4-.,@SP
+	MOV	R0,-(SP)	;save char
+	MOV	PC,R0
+	ADD	#RDATAB-.,R0	;search table
+RDA2:	CMPB	@SP,(R0)+
+	BLOS	RDA3
+	TSTB	(R0)+
+	BR	RDA2
+;
+RDA3:	MOVB	@R0,R0		;park code
+	ADD	R0,2(SP)
+RDA1:	MOV	(SP)+,R0	;restore char
+	CCC			;clear noisy bits in cc
+	RTS	PC		;complicated branch
+RDA4	=	.		;handrail for swingers
+;
+RDA6:	BIC	#040,R0		;lower-case char. convert to upper case
+RDA7:	SEV			;alphabetic char. set v bit
+	RTS	PC
+;
+RDN6:	TST	(SP)+		;reset sp
+RDA5:	SEZ			;control char. set z bit
+	RTS	PC
+;
+RDA8:	SEN			;numeric char. set n bit
+	RTS	PC
+;
+RDA9:	SEC			;special char. set c bit
+	RTS	PC
+;
+; Data segment
+;
+; Clock dispatch table
+;
+CLKJMP:	.WORD	CLKREC		;0 idle
+	.WORD	NBS01		;1 spectracom/heath first char
+	.WORD	NBS22		;2 spectracom/heath time/date string
+	.WORD	CLKREC		;3 wait for process decode
+	.WORD	NBS30		;4 truetime first char
+	.WORD	NBS31		;5 truetime time/date string
+	.WORD	NBS20		;6 pst first char
+	.WORD	NBS21		;7 pst time string
+	.WORD	NBS21		;8 pst date string
+	.WORD	NBS25		;9 status string
+;
+; Clock table
+;
+CLKTAB:	.WORD	SP0CHR		;spectracom format 0
+	.RAD50	'SP0'
+	.WORD	SP2CHR		;spectracom format 2
+	.RAD50	'SP2'
+	.WORD	TRUCHR		;truetime
+	.RAD50	'TRU'
+	.WORD	HEACHR		;heath
+	.RAD50	'HEA'
+	.WORD	PSTCHR		;pst/traconex (default)
+	.RAD50	'PST'
+	.WORD	SP2CHR		;pst/traconex
+	.RAD50	'TRA'
+	.WORD	TCUCLK+1	;digital clock
+	.RAD50	'TCU'
+	.WORD	MANCLK+1	;manual
+	.RAD50	'MAN'
+	.WORD	0		;end of table
+;
+;		xx0  xx1  xx2  xx3
+YEAR:	.WORD	366.,365.,365.,365.
+;		jan  feb  mar  apr  may  jun  jul  aug  sep  oct  nov  dec
+STDYER:	.WORD	031.,028.,031.,030.,031.,030.,031.,031.,030.,031.,030.,031.
+LEPYER:	.WORD	031.,029.,031.,030.,031.,030.,031.,031.,030.,031.,030.,031.
+RADIX:	.WORD	1000.,100.,10.,1
+DELAY:	.WORD	0,5*LINFRQ	;poll timeout
+RESP:	.WORD	0,15.*LINFRQ	;response timeout
+;
+; Clock poll sequences
+;
+SP0CHR:	.BYTE	7.,3.,0. 	;spectracom timecode 0
+	.BYTE	1,22.,0		;initial state, timecode length, format
+	.ASCIZ	'T'		;poll string
+;
+SP2CHR:	.BYTE	9.,2.,0. 	;spectracom timecode 2
+	.BYTE	1,24.,1		;initial state, timecode length, format
+	.ASCIZ	'T'		;poll string
+;
+TRUCHR:	.BYTE	4.,0.,12.	;truetime timecode 
+	.BYTE	4,14.,0		;initial state, timecode length+1, format
+	.ASCIZ	'C'		;poll string
+;
+HEACHR:	.BYTE	0.,15.,9.	;heath timecode 
+	.BYTE	1,23.,0		;initial state, timecode length, format
+	.ASCIZ	<CR>		;poll string
+;
+PSTCHR:	.BYTE	1.,24.,0.	;pst timecode 
+	.BYTE	6,49.,0		;initial state, timecode length, format
+	.ASCIZ	'QTQDQM'	;poll string
+;
+; Ascii decoding table
+;
+RDATAB:	.BYTE	037,RDA5-RDA4	;000 <= char < 040 (control)
+	.BYTE	057,RDA9-RDA4	;040 <= char < 060 (special)
+	.BYTE	071,RDA8-RDA4	;060 <= char < 072 (digit)
+	.BYTE	100,RDA9-RDA4	;072 <= char < 101 (special)
+	.BYTE	132,RDA7-RDA4	;101 <= char < 133 (uc letter)
+	.BYTE	140,RDA9-RDA4	;133 <= char < 141 (special)
+	.BYTE	172,RDA6-RDA4	;141 <= char < 173 (lc letter)
+	.BYTE	176,RDA9-RDA4	;173 <= char < 177 (special)
+	.BYTE	177,RDA5-RDA4	;177 <= char < 200 (control)
+	.EVEN
+;
+; Comment strings
+;
+COM33:	.ASCIZ	'?SETCLK-F-Unknown clock'
+COM30:	.ASCIZ	'?SETCLK-W-Device error'
+COM31:	.ASCIZ	'?SETCLK-W-No reply'
+COM32:	.ASCIZ	'?SETCLK-W-Bad format'
+COM34:	.ASCIZ	'?SETCLK-W-Not synchronized'
+COM35:	.ASCIZ	'?SETCLK-W-Bad date'
+COM36:	.ASCIZ	'?SETCLK-W-Bad time'
+COM10:	.ASCIZ	'?SETCLK-F-Invalid syntax or value'
+COM15:	.ASCIZ	'... no response'
+COM12:	.ASCIZ	'Enter date (mm/dd/yy): '<200>
+COM13:	.ASCIZ	'Enter time (hh:mm:ss): '<200>
+COM14:	.ASCIZ	'?SETCLK-F-Clock not set'<BEL>
+	.EVEN
+;
+; Initialized variables
+;
+DEVREG:	.WORD	0		;dlv11/dl11 device address
+CLKNAM:	.WORD	CLKTYP		;clock name
+TIMCOD:	.ASCIZ	'<nothing received>' ;timecode
+.	=	TIMCOD+64.	;timecode buffer
+;
+; Program variables
+;
+FLAG:	.BLKW	1		;error flag
+DATE:	.BLKW	1		;0 date
+TIME:	.BLKW	2		;2 time of day
+REFTIM:	.BLKW	2		;reference time
+ARGPTR:	.BLKW	1		;argument pointer
+ARGBLK:	.BLKW	5		;rt-11 argument block
+ERRPTR:	.BLKW	1		;error message pointer
+NBSFLG:	.BLKB	1		;nbs state
+NBSCNB:	.BLKB	1		;nbs timecode count
+DAYEND	=	.		;end of timecode
+	.EVEN
+QUEUE:	.BLKW	QUESIZ.*7.	;space for completion queue
+;
+	.END	START
+                                                                                                                                                                                                                                                                                                                                                                                                

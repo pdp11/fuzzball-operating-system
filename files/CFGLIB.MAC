@@ -1,0 +1,535 @@
+.MACRO	.HOST	LHID,BGD,CONGS,HLIM ;define hostel
+	.RADIX	10
+	.IF	NB,LHID
+HID	==	LHID		;local host id
+	.ENDC
+.IIF NDF,PKTSIZ PKTSIZ == 576	;max packet size
+	.RADIX	8
+BITSEL	=	1		;net process select bit (updated)
+	.GLOBL	PGMBGN,PGMEND,USEBGN,USEADR,ERSBGN,STOBGN,CFGTAB
+	.GLOBL	CFGEND,$NETID,$CLKID,$CKHID,$IPHID,$CONGS,$TRNET,$RTCHG
+	.GLOBL	GATVPT,$LOCAD,$GATAD,$HOSAD,$LOCPT,$GATPT,$HOSPT
+	.GLOBL	$PDREG,$PNAME,$OFSET,ISPACE,DSPACE,ALTBGN,ALTEND
+	.MCALL	.PARAM,.INPAR,.GTPAR,.PORT,.TTPAR,.DKPAR,.SQPAR,.IPADR
+;
+; Background job segment (bos only)
+;
+	.IF	NB,BGD
+	.PSECT	$BKGN,RW,I	;rt-11 background storage (i/d space)
+	.BLKW	BGD/2		;reserve storage for absolute user proc
+	.ENDC
+;
+; I-space segments
+;
+	.PSECT	$BOOT,RO,I	;boot/reset
+PGMBGN	=	.		;beginning of read-only storage
+	.PSECT	$KERI,RO,I	;kernel i-space
+ISPACE	=	.		;beginning of i space
+	.PSECT	$SUPI,RO,I	;supervisor i-space
+	.PSECT	$USEI,RO,I	;user i-space
+USEBGN	=	.		;beginning of user procedure segment
+	.IF	NB,BGD
+USEADR	=	.		;virtual address of user procedure segment
+	.IFF
+USEADR	=	120000		;virtual address of user procedure segment
+	.ENDC
+	.IF	NB,HLIM
+KLIM	=	HLIM		;end of kernel space
+	.IFF
+KLIM	=	0		;end of kernel space
+	.ENDC
+	.PSECT	$BOSI,RO,I	;resident cli i-space
+	.PSECT	$USED,RO,D	;user d-space
+DSPACE	=	.		;beginning of d space
+	.PSECT	$BOSD,RO,D	;resident cli d-space
+	.PSECT	$PNAM,RO,D	;process name table
+	.WORD	$OFSET-$PNAME
+$PNAME	=	.		;beginning of process name table
+	.PSECT	$POFS,RO,D	;process pointer table
+$OFSET	=	.		;beginning of process pointer table
+	.PSECT	$PARM,RW,D	;parameter regions
+PGMEND	=	.		;end of read-only storage
+	.PSECT	$DATA,RW,D	;usr buffer and private storage
+	.PSECT	$TABL,RW,D	;host/gateway tables
+;
+; Kernel data segments
+;
+	.PSECT	$KERD,RO,D	;kernel d-space (begin not less than 40000)
+CFGTAB	=	.		;beginning of configuration table
+	.PSECT	$SUPD,RO,D	;supervisor d-space
+	.PSECT	$ERAS,RW,I	;erasable storage
+ERSBGN	=	.		;beginning of erasable storage
+	.PSECT	$STOR,RW,I	;dynamic storage
+STOBGN	=	.		;beginning of dynamic storage
+	.PSECT	$GABL,RW,D	;(optional) host/gateway tables
+ALTBGN	=	.		;beginning of table segment
+	.PSECT	$END,RW,D	;end of everything
+ALTEND	=	.		;end of table segment
+;
+; Host process
+;
+	.PARAM	HOS,,30,KLIM,0,0,0,0 ;define process header
+	.WORD	0		;processes
+	.WORD	0		;interrupt vectors
+	.WORD	0		;nibbles
+	.WORD	0		;packets
+	.WORD	0,0		;free storage
+	.REPT	6		;(SD.END/2) last clock update
+	.WORD	0
+	.ENDR
+	.WORD	0		;precision of local clock
+	.WORD	0		;estimated drift rate
+	.WORD	0,0		;last clock update increment
+	.WORD	0,0		;uptime
+	.WORD	0		;drift conpensation coefficient
+	.IF	NB,CONGS
+$CONGS:	.WORD	CONGS		;congestion threshold
+	.IFF
+$CONGS:	.WORD	1500.		;congestion threshold (default)
+	.ENDC
+$RTCHG:	.WORD	0,0		;routing changes
+$TRNET:	.WORD	0,0		;routing-trace address
+	.REPT	6		;(SD.END/2) last trap
+	.WORD	0
+	.ENDR
+	.WORD	0		;lost traps
+$CKHID:	.BYTE	255.		;master clock hid
+$IPHID:	.BYTE	0		;scanner process hid
+$TRPID:	.BYTE	0		;trap process pid
+	.EVEN
+	.WORD	$NETID-.	;internet address relative pointer
+GATVPT:	.WORD	0		;foreign host table virtual pointer
+$LOCPT:	.WORD	0,$LOCAD	;local host table physical pointer
+$GATPT:	.WORD	0,$GATAD	;foreign host table physical pointer
+$HOSPT:	.WORD	0,$HOSAD	;routing table physical pointer
+$PDREG:	.WORD	0,0,0,0		;sequence number, pc, code, active proc
+	.WORD	0,0,0,0,0,0,0,0	;registers r0-r5,sp,pc
+	.WORD	0,0,0,0,0,0,0,0	;stack contents
+	.WORD	0,0,0,0,0,0,0,0	;psa contents
+	.WORD	0,0,0,0,0,0,0,0
+	.WORD	0,0,0,0,0,0,0,0
+.ENDM	.HOST
+.MACRO	.IPADR	A1,A2,A3,A4	;define ip address
+	.IF	NB,A1
+	.IRP	X,<A1,A2,A3,A4>
+	.BYTE	X
+	.ENDR
+	.IFF
+	.BYTE	0,0,0,0
+	.ENDC
+.ENDM	.IPADR
+.MACRO	.INPAR	NAM,LHID,OPT,CNT,VEC,REG ;internet process
+	.PARAM	NAM,INP,26,PKTSIZ,VEC,REG,OPT,0 ;define process header
+	.WORD	0,0		;input packets
+	.WORD	0		;timeouts
+	.WORD	0		;net signals
+	.WORD	0		;bad format
+	.WORD	0		;bad checksum
+	.WORD	0		;returned
+	.WORD	0		;dropped
+	.WORD	0		;control messages
+	.WORD	0,0		;output packets
+	.RADIX	10
+	.IF	NB,VEC		;generate nbs clock logging
+	.IF	NB,LHID
+	.BYTE	0,LHID		;connection table size, host id
+	.IFF
+	.BYTE	0,HID
+	.ENDC
+	.WORD	0,0		;poll messages
+	.WORD	0		;no reply
+	.WORD	0		;bad format
+	.WORD	0		;bad data
+	.WORD	0		;last set
+	.BYTE	0		;valid data flag
+	.REPT	64.		;timecode buffer
+	.BYTE	0
+	.ENDR
+	.EVEN
+	.IFF
+	.IF	NB,CNT
+	.IF	NB,LHID
+	.BYTE	CNT,LHID	;connection table size, host id
+	.IFF
+	.BYTE	CNT,HID
+	.ENDC
+	.REPT	CNT		;generate connection table
+	.WORD	0,0
+	.ENDR
+	.IFF
+	.IF	NB,LHID
+	.BYTE	16,LHID		;connection table size, host id
+	.IFF
+	.BYTE	16,HID
+	.ENDC
+	.REPT	16		;generate connection table
+	.WORD	0,0
+	.ENDR
+	.ENDC
+	.ENDC
+	.RADIX	8
+.ENDM	.INPAR
+.MACRO	.PARAM	NAM,PRO,TYP,BLK,VEC,REG,OPT,LNG ;define par region header
+	.PSECT	$KERD,RO,D
+	.IF	NB,<PRO>
+	.IRP	X,<PRO>		;iterate on processes
+	.GLOBL	X'PAT
+	.WORD	NAM'PAR,X'PAT	;configuration table entry
+CFGEND	=	.		;end of table
+	.ENDR
+	.ENDC
+	.PSECT	$PNAM,RO,D
+NAM'OFS:.RAD50	/NAM/		;process name
+	.PSECT	$POFS,RO,D
+	.WORD	NAM'PAR-.	;process pointer
+	.PSECT	$PARM,RW,D
+	.EVEN
+	.GLOBL	NAM'PAR
+NAM'PAR: .BYTE	0		;pid
+	.BYTE	NAM'OFS-$PNAME	;index
+	.WORD	TYP		;type
+	.IF	NB,BLK
+	.WORD	BLK		;max blocks
+	.IFF
+	.WORD	PKTSIZ
+	.ENDC
+	.WORD	VEC		;interrupt vector pointer
+	.WORD	REG		;device register pointer
+	.WORD	OPT		;option bits
+	.WORD	LNG		;port table length
+.ENDM	.PARAM
+.MACRO	.PORT	NAM,PID,UNI	;define port table entry
+	.IF	B,NAM
+	.WORD	0
+	.IFF
+	.RAD50	/NAM/		;logical name
+	.ENDC
+	.IF	B,PID
+	.BYTE	0
+	.IFF
+	.BYTE	PID'OFS-$PNAME	;process name table offset
+	.ENDC
+	.IF	B,UNI
+	.BYTE	0
+	.IFF
+	.BYTE	UNI		;unit number
+	.ENDC
+	.WORD	0,0		;fun and games
+.ENDM	.PORT
+.MACRO	.TTPAR	RMAR,BMAR	;define terminal par region
+	.WORD	0		;buffer overflow
+	.WORD	0		;input error
+	.WORD	0		;aux bits
+	.BYTE	0		;destination pid
+	.BYTE	RMAR,BMAR	;right/bottom margins
+	.BYTE	0		;escape char
+	.EVEN
+.ENDM	.TTPAR
+.MACRO	.SQPAR	DEV,HOST,FLG	;define spool pseudo-device
+	.PARAM	DEV,,43,0,0,0,0,0
+	.RAD50	'SY $$$000SPQ'	;source filespec (rad50)
+	.WORD	0		;local file size (blocks)
+	.BYTE	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 ;source userid
+	.RAD50	/DEV/		;destination filespec (rad50)
+	.WORD	0,0,0
+	.RADIX	10
+	.IPADR	HOST		;destination host address
+	.RADIX	8
+	.BYTE	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 ;destination userid
+	.BYTE	0,0,0,0,0,0,0,0	;destination password (encrypted)
+	.WORD	0,0,0,0		;control filespec
+	.WORD	FLG		;flags
+	.WORD	0		;date queued
+	.WORD	0,0		;time queued
+	.BYTE	0,0		;copies, banner pages
+.ENDM	.SQPAR
+.MACRO	.GTPAR	LDR,MIN,RETRY,FORADR,BIAS,DPRT,MPRT ;define link par region
+	.PORT	OPR,DPRT	;direct-access port
+	.PORT	MON,MPRT	;monitor port
+	.RADIX	10
+	.RAD50	/LDR/		;subnet type
+	.GLOBL	SBN'LDR
+	.WORD	SBN'LDR		;pointer to subnet transfer vector
+	.WORD	RETRY		;poll interval
+	.WORD	0		;offset of last hello msg
+	.WORD	0		;length of last hello msg
+	.IPADR	FORADR		;foreign address
+	.WORD	BIAS,0		;delay bias, queue size
+	.IF	NB,MIN
+	.BYTE	0,MIN		;status, hello interval
+	.IFF
+	.BYTE	0,15.		;status, hello interval default
+	.ENDC
+	.BYTE	BITSEL		;select bit
+BITSEL	=	BITSEL*2
+	.EVEN
+	.WORD	0,0		;input packets
+	.WORD	0		;bad format
+	.WORD	0		;bad checksum
+	.WORD	0		;dropped
+	.WORD	0,0		;hello messages received
+	.WORD	0		;input errors
+	.WORD	0		;returned
+	.WORD	0		;no buffer
+	.WORD	0,0		;output packets
+	.WORD	0		;fragment error
+	.WORD	0		;time exceeded
+	.WORD	0		;preempted
+	.WORD	0,0		;hello messages sent
+	.WORD	0		;output errors
+	.WORD	0		;icmp messages
+	.WORD	0		;quench messages
+	.RADIX 8
+	.IF	IDN,<LDR>,DCN	;serial line statistics
+	.WORD	0		;receive errors
+	.WORD	0		;transmit errors
+	.WORD	0		;no buffer
+	.WORD	0		;preamble errors
+	.WORD	0		;protocol errors
+	.ENDC
+	.IF	IDN,<LDR>,ARP	;arpanet statistics
+	.WORD	0		;control msgs
+	.WORD	0		;error msgs
+	.ENDC
+	.IF	IDN,<LDR>,KHV	;KH(V)11 statistics
+	.REPT	30.		;reserve some space
+	.WORD	0		;
+	.ENDR
+	.ENDC
+	.IF	IDN,<LDR>,DMV	;dmv11 statistics
+	.WORD	0,0		;status vector, statistics cycles
+	.REPT	16.+20.
+	.WORD	0		;replay counters, statistics
+	.ENDR
+	.REPT	10.+<3*10.>	;variables, csr queue
+	.WORD	0
+	.ENDR
+	.ENDC
+	.IF	IDN,<LDR>,ETH	;ethernet statistics
+	.WORD	0,0,0		;ethernet address
+	.REPT	21.
+	.WORD	0		;arp statistics area
+	.ENDR
+	.REPT	33.
+	.WORD	0		;DMA statistics area 
+	.ENDR
+	.REPT	30.+11.
+	.WORD	0		;CMD queue + misc
+	.ENDR
+	.ENDC
+	.IF	IDN,<LDR>,DEQ	;deqna ethernet statistics
+	.WORD	0,0,0		;ethernet address
+	.REPT	21.
+	.WORD	0		;arp statistics area
+	.ENDR
+	.REPT	33.
+	.WORD	0		;DMA statistics area 
+	.ENDR
+	.REPT	30.+11.
+	.WORD	0		;CMD queue + misc
+	.ENDR
+	.ENDC
+	.IF	IDN,<LDR>,HDH	;acc hdh statistics
+	.WORD	0		;control msgs
+	.WORD	0		;error msgs
+;	.WORD	2		;line control command
+;	.BYTE	360,1,0,0,0,0,0,0 ;(1: dte, 5: dce)
+;
+;	Instead of sending a Line Control Command to ready the link,
+;	we will use a Line Status Command.   This command has the same
+;	line control functions, but also permits modifying the IF-11Q/HDH
+;	"user selectable parameters".  (PGM, 06/12/87)
+	.WORD	12.		;line status command length
+	.BYTE	102		;command code (102 = line status command)
+	.BYTE	0		;line control command (LSB)
+	.BYTE	1		;line control command (MSB) - request line up
+	.BYTE	8.		;count of parameters following
+	.BYTE	0		;loopback mode off
+	.BYTE	3		;local address (3=DTE)
+	.BYTE	1		;foreign address (1=DCE)
+	.BYTE	3.		;frame ack t1 timeout
+	.BYTE	3.		;poll ack timeout
+	.BYTE	30.		;asynchronous disconnected mode timeout
+				;note: IF-11Q/HDH default is 180
+	.BYTE	3.		;rej wait timeout
+	.BYTE	20.		;n2 counter (maximum number of timeouts)
+				;note: IF-11Q/HDH default is 5
+; Leave room to collect a few interesting statistics (PGM, 06/12/87).
+	.WORD	0		;line timeouts
+	.WORD	0		;data errors
+	.WORD	0		;imp detected hdlc sequence errors
+	.WORD	0		;if-11q detected hdlc sequence errors
+;
+	.WORD	0		;unit state
+	.WORD	0		;unit signal
+	.WORD	0		;input buffer pointer
+	.WORD	0		;input bytes remaining
+	.WORD	0		;input bytes requested
+	.WORD	0		;receive interrupt state
+	.WORD	0,0		;receive control message
+	.WORD	0		;transmit interrupt state
+	.WORD	0,0		;transmit control message
+	.WORD	0		;logical channel number (high byte)
+	.WORD	0		;logical channel pointer
+	.REPT	3		;logical channel blocks (3)
+	.WORD	0,0,0,0,0
+	.ENDR
+	.WORD	0,0,0,0		;request queue pointers
+	.REPT	2*20		;request queue (20)
+	.WORD	0
+	.ENDR
+	.ENDC
+	.IF	IDN,<LDR>,X25	;acc 5250 statistics
+	.WORD	0,0,0,0		;csr queue pointers
+	.WORD	0		;output count
+	.REPT	50.		;output command buffer
+	.BYTE	0
+	.ENDR
+	.BYTE	16.,0,0,0,0	;max dpn, flags
+	.EVEN
+	.REPT	8.		;csr queue (16)
+	.WORD	0,0,0,0
+	.ENDR
+	.REPT	16.		;channels (max dpn)
+	.WORD	0,0,0,0
+	.ENDR
+	.ENDC
+.ENDM	.GTPAR
+.MACRO	.DKPAR			;direct-access device par region
+	.WORD	0		;data checks
+	.WORD	0		;seek checks
+	.WORD	0		;total retries
+	.WORD	0		;hard errors
+.ENDM	.DKPAR
+.MACRO	.FXPAR			;dacom 450 device par region
+	.WORD	0		;hard errors
+	.WORD	0		;unreported errors
+	.WORD	0		;hardware error (overrun)
+	.WORD	0		;buffer overflow
+.ENDM	.FXPAR
+.MACRO	.SPPAR			;linear predictive codec
+	.WORD	0		;vox threshold
+	.BYTE	0		;vox attack tine constant
+	.BYTE	0		;vox release time constant
+	.BYTE	0		;ttg delay
+	.BYTE	0		;termination flags
+	.BYTE	0		;playout delay
+	.EVEN
+.ENDM	.SPPAR
+.MACRO	.BSPAR			;ibm bsc device par region
+	.WORD	0		;input records
+	.WORD	0		;output records
+.ENDM	.BSPAR
+.MACRO	.NETID	X,Y		;internet address/mask
+	.GLOBL	$NETID,$CLKID,$LOCAD,$GATAD,$HOSAD,HID
+	.MCALL	.IPADR,.CLKID,.GATBL,.HSTBL,.MARS,.MARSG
+EGP	=	^O001		;egp entry
+ALT	=	^O002		;enable alternate route
+ERR	=	^O004		;force error message
+END	=	^O010		;last entry
+HLO	=	^O020		;hello entry
+CAC	=	^O040		;cache entry
+HOL	=	^O100		;suppress error message
+TOS	=	^O200		;sepcial service
+	.PSECT	$TABL,RW,D
+	.RADIX	10
+$NETID:	.IPADR	X		;internet address
+	.IPADR	Y		;address mask
+.ENDM	.NETID
+.MACRO	.CLKID	X		;clock synchronization table entry
+	.IPADR	X
+.ENDM	.CLKID
+	.MACRO	.MARSG		;alternate table segment
+	.PSECT	$GABL,RW,D
+	.WORD	G.CAC,1
+.MACRO	.REPTG	X
+G.CAC:	.WORD	G.LST,X
+.ENDM	.REPTG
+.MACRO	.ENDRG
+G.LST:	.WORD	ALTEND,1
+.ENDM	.ENDRG
+.ENDM	.MARSG
+.MACRO	.GATBL	NET,LHID,LDR,FLG,GAT,HOP ;logical host table entry
+	.IPADR	NET		;internet address
+	.BYTE	LHID		;host id
+	.IF	NB,FLG
+	.BYTE	FLG		;flags
+	.IFF
+	.IF	NB,<NET>
+	.BYTE	0
+	.IFF
+	.BYTE	CAC
+	.ENDC
+	.ENDC
+	.IPADR	LDR		;address mask
+	.IPADR	GAT		;target address
+	.BYTE	HOP,0		;distance, ttl
+	.EVEN
+.ENDM	.GATBL
+.MACRO	.HSTBL	PID,DEL,LDR,?L1	;physical host table entry
+	.BYTE	PID,0		;port id, ttl
+	.IF	B,DEL
+	.WORD	30000.,0	;delay, offset (default)
+	.IFF
+	.WORD	DEL,0		;delay, offset
+	.ENDC
+	.WORD	0,0		;timestamp
+	.IF	B,<LDR>
+	.BYTE	0,0,0,0,0,0	;default leader (48 bits)
+	.IFF
+	.IF	IDN,<LDR>,B
+	.BYTE	255.,255.,255.,255.,255.,255. ;ether (bcst) leader
+	.IFF
+L1:	.ASCII	/LDR/		;callsign
+	.REPT	10.-<.-L1>	;zero fill
+	.BYTE	0
+	.ENDR
+	.ENDC
+	.ENDC
+	.EVEN
+.ENDM	.HSTBL
+.MACRO	.MARS			;filtered addresses
+	.GATBL	<0,0,0,0>,0,<0,255,255,255>,HOL		;A reserved
+;	.GATBL	<0,0,0,0>,0,<127,0,0,0>,HOL		;A local use
+;	.GATBL	<0,255,255,255>,0,<127,0,0,0>,HOL	;A local broadcast
+	.GATBL	<127,0,0,0>,0,<0,255,255,255>,HOL	;A reserved
+	.GATBL	<128,0,0,0>,0,<0,0,255,255>,HOL		;B reserved
+;	.GATBL	<128,0,0,0>,0,<63,255,0,0>,HOL		;B local use
+;	.GATBL	<128,0,255,255>,0,<63,255,0,0>,HOL	;B local broadcast
+	.GATBL	<191,255,0,0>,0,<0,0,255,255>,HOL	;B reserved
+	.GATBL	<192,0,0,0>,0,<0,0,0,255>,HOL		;C reserved
+;	.GATBL	<192,0,0,0>,0,<31,255,255,0>,HOL	;C local use
+;	.GATBL	<192,0,0,255>,0,<31,255,255,0>,HOL	;C local broadcast
+	.GATBL	<223,255,255,0>,0,<0,0,0,255>,HOL	;C reserved
+	.GATBL	<224,0,0,0>,0,<31,255,255,255>,HOL	;D reserved
+.ENDM	.MARS
+.MACRO	.NGBR	ADR,SOU,TYP	;neighbor table entry
+	.BYTE	ADR		;neighbor ip address
+	.BYTE	SOU		;gateway ip address
+	.WORD	0		;egp system number
+ORG	=	^O040000	;active acquisition mode
+ONL	=	^O020000	;online
+ZER	=	^O000400	;force zero receive distance
+DFT	=	^O000200	;default gateway
+	.WORD	TYP		;status flags
+	.BYTE	0,0,0		;command/protocol/reachability state
+	.EVEN
+	.WORD	0,0		;send/receive sequence number
+	.WORD	45		;minimum interval between hello commands
+	.WORD	120		;minimum interval between poll commands
+	.WORD	45		;timer t1 preset
+	.WORD	120		;timer t2 preset
+	.WORD	0		;timer t1
+	.WORD	0		;timer t2
+	.IF	B,TYP
+	.WORD	0		;timer t3 (default)
+	.IFF
+	.WORD	60		;timer t3 (wakeup)
+	.ENDC
+	.WORD	0,0		;last timestamp
+	.BYTE	0,0		;send/receive status
+	.WORD	0,0,0,0,0	;packet error tallies
+	.WORD	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 ;event log
+	.WORD	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 ;action log
+.ENDM	.NGBR
+                                                                                                                                                                                                                                                                                                                                                                                                                                      

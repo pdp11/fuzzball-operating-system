@@ -1,0 +1,1095 @@
+	.TITLE	INPTCP	TCP protocol module
+	.SBTTL	System and module definitions
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn tcp protocol module
+;
+; This module implements the transmission control protocol (tcp) as
+; defined by the september 1981 specification. it is based on jim mathis'
+; Original software for the packet radio tiu, but has been almost
+; Completely rebuilt.
+;
+; External symbols
+;
+	.GLOBL	$SGUSE		;routine to signal user process
+	.GLOBL	NETPKT,NETIN,NETOT ;network interface routines
+	.GLOBL	TCPSUM		;checksum routine
+;
+; Entry symbols
+;
+	.GLOBL	$TCP		;tcp protocol module
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.TRDEF	;dcnlib definitions
+	.MCALL	.GCLK,.WIND,.TRAP ;dcnlib macros
+	.MCALL	$DFTCB,$DFIH,$DFTH,$DFTIM,$DFSIG ;moslib definitions
+	.MCALL	$PUSH,$POP,$LOOP,$SGUSE ;moslib macros
+	.COM			;define common data
+	.TRDEF			;define trace codes
+	.LIST	ME
+	.PAGE
+	$DFTCB			;define format of transmission ctl blk
+	.PAGE
+	$DFIH			;define internet header
+	$DFTH			;define tcp header
+	.PAGE
+	$DFTIM			;define timer values
+	$DFSIG			;define interprocess signals
+;
+; Module definitions
+;
+	.MACRO	$LOG	X	;tinker with measurement area
+	INC	X(TCB)
+	.ENDM	$LOG
+;
+; Register definitions
+;
+TCB	=	%5		;tcb (r5)  - pointer to active tcb
+TCBFLG	=	%4		;tcbflg (r4) - connection state flags
+WRKFLG	=	%3		;wrkflg (r3) - tcp work-to-do flags
+PKT	=	%2		;pkt (r2) - pointer to packet buffer
+;
+; Assembly parameters
+;
+P1103	=	1		;specify cpu for $loop
+P1120	=	0
+P1140	=	0
+MAXEST	=	10		;max estimation buffer entries
+	.NLIST	ME
+	.PAGE
+	.SBTTL	TCP process dispatching loop
+;
+; Procedure segment
+;
+; Process-state procedure
+;
+; Tcp subroutine (entry from internet process)
+; R0 = code, r1 = mdata, r2 = tcb pointer, returns r0 = state
+;
+	.PSECT	$SUPI,RO,I		;supervisor i space
+;
+$TCP:	$PUSH	R1,R2,R3,R4,R5		;keep cleanly habits
+	MOV	R2,TCB			;get addressability
+	MOV	FLAGS(TCB),WRKFLG	;get work-to-do flags
+	MOV	STATE(TCB),TCBFLG	;get connection state flags
+	BIC	#^C7,R0			;zap pid, leaving only opcode
+	ASL	R0			;convert to word index
+	JSR	PC,@OPCTBL(R0)		;call signal processing routine
+	BIT	#FL.CHK,WRKFLG		;has user removed stuff from rsmbuf?
+	BEQ	1$			;if not, skip
+	MOV	RSMHD(TCB),R0		;get pointer to head of reassembly buf
+	BIT	#RF.TXT,(R0)		;user data at head of buffer?
+	BEQ	3$			;if not, check for control
+	BIC	#FL.CHK,WRKFLG
+	$LOG	NU.DAT			;count number of data available signals
+	$SGUSE	#SG.DAT,#0		;data received
+	BR	1$
+;
+3$:	BIT	#RF.FIN,(R0)		;sequenced control function at head?
+	BEQ	1$			;if not, exit
+	BIS	#ST.FR!ST.FNW,TCBFLG	;set 'fin rcv' flag
+	BIS	#FL.ACK,WRKFLG		;flag output to send an ack
+	CLR	@R0			;reset flag to 'empty'
+	BIT	#ST.FS,TCBFLG		;have we sent a fin?
+	BNE	5$			;if so, don't do again
+	$SGUSE	#SG.RC			;remote disconnect
+5$:	BIT	#ST.FA,TCBFLG		;has our fin been acked?
+	BEQ	1$			;if not, skip
+	JSR	PC,DELCON		;else, delete the connection
+1$:	JSR	PC,PKTOUT		;process any outgoing stuff
+	BIT	#ST.DEL,TCBFLG		;need to delete the connection?
+	BEQ	2$			;if not, back to wait
+	BIT	#ST.FNW,TCBFLG
+	BNE	2$
+	BIT	#FL.TXT,WRKFLG		;user has a send outstanding?
+	BEQ	6$			;if not, skip
+	BIC	#FL.TXT,WRKFLG		;reset 'send text' flag
+	$SGUSE	#SG.SC			;send complete
+6$:	BIT	#FL.ACK!FL.RST,WRKFLG	;output work left?
+	BNE	2$			;if so, close after work finished
+	TSTB	SNDCNT(TCB)		;yes. anything outstanding
+	BNE	2$			;if so, can't flush connection
+	$SGUSE	#SG.CC			;close complete
+	CLR	TCBFLG			;indicate connection closed
+2$:	MOV	TCBFLG,STATE(TCB)	;update tcb connection state word
+	MOV	WRKFLG,FLAGS(TCB)	;  and work-to-do flag
+	MOV	TCBFLG,R0		;return state flags
+	$POP	R5,R4,R3,R2,R1
+	RTS	PC
+	.PAGE
+	.SBTTL	Signal processing routines
+;
+	.SBTTL	Signal 1 - output packet completion
+;
+PKTFVS:	RTS	PC
+;
+	.SBTTL	Signal 2 - catenet source quench
+;
+QUENCH:	$LOG	NR.QNC			;log source quench
+	MOVB	#1,WDWTHR(TCB)		;reduce external packet limit
+	RTS	PC
+;
+	.SBTTL	Signal 3 - catenet destination unreachable
+; R1 = reason
+;
+UNREAC:	$LOG	NR.DNR			;log destination not reachable
+	BIT	#ST.SS,TCBFLG		;is net connection open
+	BEQ	1$			;branch if no
+	BIT	#ST.DEL,TCBFLG
+	BNE	1$			;branch if no
+	BIT	#ST.SA,TCBFLG		;yes. is connection established
+	BNE	2$			;branch if yes
+	CMP	RETRY(TCB),#1000./TM.INP*TS.RFS ;open timeout expired
+	BLO	1$			;branch if no
+	$SGUSE	#SG.ERR,R1		;connection error (reason)
+	BR	PUNT
+;
+2$:	$SGUSE	#SG.ERR,R1		;connection error (reason)
+1$:	RTS	PC
+;
+	.SBTTL	Signal 4 - timer interrupt
+;
+RTXTIM:	BIT	#ST.SS,TCBFLG		;is net connection open
+	BEQ	1$			;branch if no
+	BIT	#ST.DEL,TCBFLG
+	BEQ	2$			;branch if yes
+	BIT	#ST.FNW,TCBFLG
+	BEQ	1$			;branch if no
+2$:	BIS	#FL.RTX,WRKFLG		;yes. post rtx flag
+	INC	RETRY(TCB)		;bump timers
+	ADD	#TM.INP,RTXTIK(TCB)
+	TSTB	ACKDLY(TCB)
+	BEQ	1$
+	DECB	ACKDLY(TCB)
+	BNE	1$
+	BIS	#FL.ACK,WRKFLG
+1$:	RTS	PC
+;
+	.SBTTL	Signal 5 - open connection
+; Note: CCB is initially cleared to zeros
+;
+OPNCON:	MOV	TCB,CCBRLF(TCB)		;save relocation factor for user
+	SUB	USECID(TCB),CCBRLF(TCB)
+	MOV	MAXSIZ(TCB),TCPSIZ(TCB)	;initialize max segment size
+	MOV	TCB,R2			;set up estimation buffer
+	ADD	#TCBLEN,R2
+	MOV	R2,ESTHD(TCB)
+	MOV	R2,ESTTL(TCB)
+	MOV	#MAXEST*6,R1
+	MOV	R1,ESTLEN(TCB)
+	ADD	R1,R2
+	MOV	R2,ESTEND(TCB)
+	MOV	TCB,R1			;compute receive window size
+	ADD	CCBFMT(TCB),R1
+	SUB	R2,R1
+	ASR	R1
+	ASR	R1
+	MOV	R1,RCVWS(TCB)
+	ASL	R1			;set reassembly buffer pointers
+	MOV	R2,RSMHD(TCB)
+	MOV	R2,RSMTL(TCB)
+	MOV	R1,RSMLEN(TCB)
+	ADD	R1,R2
+	MOV	R2,RSMEND(TCB)
+	MOV	R2,RTXHD(TCB)		;set retransmission buffer pointers
+	MOV	R2,RTXTL(TCB)
+	MOV	R1,RTXLEN(TCB)
+	ADD	R1,R2
+	MOV	R2,RTXEND(TCB)
+	.GCLK				;set initial sequence numbers
+	MOV	R0,SNDSEQ(TCB)
+	MOV	R1,SNDSEQ+2(TCB)
+	MOV	R0,LWESEQ(TCB)
+	MOV	R1,LWESEQ+2(TCB)
+	BITB	#OP.USP,CCBFLG(TCB)	;is unspecified flag set
+	BEQ	20$			;branch if no
+	BIS	#ST.USP,TCBFLG		;yes. listen on connection
+	RTS	PC
+;
+20$:	BITB	#OP.LSN,CCBFLG(TCB)	;if server tcp, listening connection?
+	BNE	1$			;if so, don't send a syn out
+	BIS	#FL.SYN,WRKFLG		;and send a syn
+	BIS	#ST.SS,TCBFLG		;set 'syn sent' flag
+1$:	RTS	PC			;and return to main loop
+;
+	.SBTTL	Signal 6 - close connection
+;
+CLSCON:	BIT	#ST.SA,TCBFLG		;yes. have we received a syn?
+	BEQ	PUNT			;if not, just can the connection
+	BIT	#ST.DEL!ST.FS!ST.SPN,TCBFLG ;a fin or fgn tcp not responding?
+	BNE	PUNT			;if so, user wants to can connection
+	BIS	#FL.FIN,WRKFLG		;and tell output side to send the fin
+	BIS	#ST.FS,TCBFLG		;set 'fin sent' connection state flag
+	RTS	PC
+;
+PUNT:	JSR	PC,DELCON		;delete connection
+	RTS	PC			;and return to main loop
+;
+	.SBTTL	Signal 7 - update work-to-do flags
+;
+TCPWRK:	BIS	R1,WRKFLG		;yes. merge signal data into work flags
+	RTS	PC			;and return
+	.PAGE
+	.SBTTL	PKTIN - input packet handler
+	.SBTTL	CHKFMT - verify packet format and checksum
+;
+; Pktin - input packet handler
+;
+;   called when a new packet is received from the network, this routine
+;	Determines if the packet can be accepted for processing.  if it
+;	Can be, then the appropiate subsidiary routine is called to process
+;	It.  if it isn't acceptable; then errors are generated or the packet
+;	Is just discarded.
+;
+;   a new input request is issued if the packet is accepted or if it is
+;	Discarded.  if an error is queued to be sent, then the output routine
+;	Will issue the new input request after the input buffer is vacated.
+;
+;	Called with:	r5 (tcb) - address of active tcb
+;			r4 (tcbflg) - connection state flags
+;			r3 (wrkflg) - work-to-do flags
+;			r1 - address of input iorb
+;
+;	Returns with:	r5 - unchanged
+;			r4 & r3 - updated
+;			r2, r1 & r0 - clobbered
+;
+PKTIN:	$LOG	NR.PKT			;count number of packets received
+	MOV	R1,RCVIOR(TCB)		;save buffer address
+	MOV	PH.OFS(R1),PKT		;get tcp header pointer
+	ADD	R1,PKT
+	MOV	PKT,PH.LNK+2(R1)	;save header pointer for rst pkt
+	JSR	PC,SWPBYT		;swap bytes in packet word fields
+	MOVB	TH.HLN(PKT),R0		;compute header length
+	ASR	R0
+	ASR	R0
+	BIC	#^C74,R0
+	ADD	R0,PH.OFS(R1)		;update data offsets
+	SUB	R0,PH.LNG(R1)
+	BMI	2$			;branch if too short
+	CMP	R0,#TH.LEN
+	BLO	2$			;branch if too short
+	ADD	PKT,R0			;scan for options
+	MOV	PKT,R1
+	ADD	#TH.LEN,R1
+1$:	CMP	R1,R0			;is this end of options
+	BHIS	PKTOK			;branch if yes
+	CMPB	(R1)+,#TO.NOP		;no. is this tcp no-op
+	BEQ	1$			;branch if yes
+	CMPB	-1(R1),#TO.SIZ		;no. is this tcp max-segment-size
+	BNE	2$			;branch if no
+	CMPB	(R1)+,#4		;(length 4 octets)
+	BEQ	3$			;branch if yes
+2$:	$LOG	PR.BAD			;count number of bad format pkts rcvd
+	JMP	PKTEXT			;ignore, exit and issue new request
+;
+3$:	CLR	R0			;yes. assemble max segment size
+	BISB	(R1)+,R0
+	SWAB	R0
+	BISB	(R1)+,R0
+	TST	R0			;is value unreasonable
+	BGT	4$			;branch if yes
+	MOV	#512.,R0		;no. truncate at min maximum
+4$:	ADD	PKT,R0			;convert to max datagram size
+	SUB	RCVIOR(TCB),R0
+	SUB	#BUFLDR-TH.LEN,R0
+	SUB	MAXSIZ(TCB),R0		;is remote mac < local max
+	BGE	PKTOK			;branch if no
+	ADD	R0,MAXSIZ(TCB)		;yes. believe it
+	ADD	R0,MAXSEG(TCB)
+PKTOK:	BIT	#ST.DEL,TCBFLG		;is connection alive
+	BEQ	1$			;branch if yes
+	BIT	#ST.FNW,TCBFLG
+	BEQ	PKTNOX			;branch if no
+1$:	BIT	#ST.SR,TCBFLG		;connection now synchronized?
+	BEQ	2$			;if not, accept only syn packets
+;
+; If the connection is synchronized, accept any packet that is not a syn
+;   and duplicates of the original syn
+;
+	BITB	#TC.SYN,TH.CTL(PKT)	;is this syn
+	BEQ	PKTREG			;branch if no
+	BIS	#FL.ACK,WRKFLG		;set 'need to send ack' flag
+	CMP	TH.SEQ(PKT),INISEQ(TCB)	;yes. is syn delayed duplicate
+	BNE	PKTDRP			;branch if no
+	CMP	TH.SEQ+2(PKT),INISEQ+2(TCB)
+	BNE	PKTDRP			;branch if no
+	BR	6$
+;
+; If the connection has never been synchronized, accept only a syn packet
+;   or a syn,ack that acks our syn.  return a reset error packet for all
+;   other packets (except for other resets, of course)
+;
+2$:	BIT	#ST.SS,TCBFLG		;has syn been sent
+	BEQ	4$			;branch if no
+	BITB	#TC.RST,TH.CTL(PKT)	;yes. is this reset
+	BEQ	5$			;branch if no
+	$LOG	PR.SPC			;count special ctl or error packets
+	CMP	RETRY(TCB),#1000./TM.INP*TS.RFS ;has timeout expired
+	BLO	3$			;branch if no
+	$SGUSE	#SG.RFS,#RF.RSO		;connection reset (open state)
+	JSR	PC,DELCON		;delete connection
+3$:	BR	PKTEXT
+;
+4$:	BITB	#TC.ACK,TH.CTL(PKT)	;is ack in header
+	BNE	PKTNOX			;naughty if yes
+5$:	BITB	#TC.SYN,TH.CTL(PKT)	;a syn packet?
+	BEQ	PKTNOX			;branch if no
+	BIC	#ST.USP,TCBFLG		;clear unspecified socket flags
+	BIS	#ST.SR,TCBFLG
+6$:	$LOG	NR.SYN			;count number of syn's received
+	BIS	#FL.ACK,WRKFLG		;set 'need to send ack' flag
+	MOV	TH.SEQ(PKT),INISEQ(TCB)	;set initial sequence numbers
+	MOV	TH.SEQ+2(PKT),INISEQ+2(TCB)
+	ADD	#1,TH.SEQ+2(PKT)	;advance packet sequence number by 1
+	ADC	TH.SEQ(PKT)
+	MOV	TH.SEQ(PKT),RCVSEQ(TCB)	;initialize receive left window edge
+	MOV	TH.SEQ+2(PKT),RCVSEQ+2(TCB)
+	BIT	#ST.SS,TCBFLG		;if a server, have we sent out a syn?
+	BNE	7$			;if so, then not another one.
+	BIS	#FL.SYN,WRKFLG		;else, send back a syn (and ack)
+	BIS	#ST.SS,TCBFLG
+	BR	PKTDRP
+;
+7$:	BITB	#TC.ACK,TH.CTL(PKT)	;syn packet includes an ack?
+	BEQ	PKTDRP			;branch if no
+	CMP	SNDSEQ(TCB),TH.ACK(PKT)	;yes. does it ack the outstanding syn
+	BNE	PKTNOX			;branch if no
+	CMP	SNDSEQ+2(TCB),TH.ACK+2(PKT)
+	BEQ	PKTREG			;branch if yes
+PKTNOX:	BITB	#TC.RST,TH.CTL(PKT)	;is this reset
+	BNE	PKTDRP			;branch if yes
+	BIS	#FL.RST,WRKFLG		;set 'send error packet' flag
+	RTS	PC
+;
+PKTDRP:	$LOG	PR.NOX			;count number of dropped packets
+	BR	PKTEXT
+;
+PKTREG:	BIC	#ST.SPN,TCBFLG		;consider it still alive
+	JSR	PC,REGPKT		;handle regular control or data packet
+PKTEXT:	MOV	RCVIOR(TCB),R1
+	JSR	PC,NETIN		;issue new input request
+	RTS	PC			; and then return to the main loop
+	.PAGE
+	.SBTTL	REGPKT - handle regular control or data packets
+;
+; Regpkt - process regular data or control packets
+;
+;	Called with:	r5 (tcb) - pointer to the active tcb
+;			r4 (tcbflg) - tcb connection state flags
+;			r3 (wrkflg) - tcp work-to-do flags
+;			r2 (pkt) - pointer to the input packet
+;
+REGPKT:	$LOG	PR.REG			;count regular ctl or data packets rcvd
+	MOV	TH.SEQ(PKT),R0		;compute packet offset
+	MOV	TH.SEQ+2(PKT),R1
+	SUB	RCVSEQ+2(TCB),R1
+	SBC	R0
+	SUB	RCVSEQ(TCB),R0
+	MOV	R0,TH.SEQ(PKT)		;save for later
+	MOV	R1,TH.SEQ+2(PKT)
+	BITB	#TC.RST,TH.CTL(PKT)	;is this reset
+	BEQ	2$			;branch if no
+	TST	R0			;yes. is it valid
+	BNE	2$			;branch if no
+	CMP	R1,RCVWS(TCB)
+	BHIS	2$			;branch if no
+	BIT	#ST.FA!ST.FNW,TCBFLG	;have all data been acked
+	BNE	2$			;branch if yes
+	$LOG	PR.SPC			;no. count error packets
+	MOV	#RF.RSD,R1		;indicate error to client
+	BIT	#ST.FS,TCBFLG
+	BEQ	1$
+	MOV	#RF.RSC,R1
+1$:	$SGUSE	#SG.RFS,R1		;connection reset (reason)
+	JSR	PC,DELCON
+	RTS	PC
+;
+2$:	BITB	#TC.URG,TH.CTL(PKT)	;is urgent data present
+	BEQ	RCVPK			;branch if no
+	ADD	TH.URG(PKT),R1
+	ADC	R0
+	BNE	RCVPK			;branch if out of range
+	CMP	R1,RCVUP(TCB)		;is it new urgent
+	BLO	RCVPK			;branch if no
+	MOV	R1,RCVUP(TCB)		;yes. save it
+	BIT	#ST.URG,TCBFLG		;has user process been notified
+	BNE	RCVPK			;branch if yes
+	BIS	#ST.URG,TCBFLG		;no. do so
+	$SGUSE	#SG.INT
+;
+	.SBTTL	RCVTXT - handle received user data
+;
+RCVPK:	CLR	TH.CHK(PKT)		;initialize for first segment
+	BIS	#FL.NUL!FL.DUP,WRKFLG
+	MOV	RCVIOR(TCB),R1
+1$:	$PUSH	R1,R2,R3
+	MOV	PH.LNG(R1),R0		;get amount of text in the packet
+	BEQ	8$			;if none, proceed to other packets
+	ADD	R0,TH.CHK(PKT)
+	MOV	RCVWS(TCB),R3		;r3 - length of reassembly buffer
+	BEQ	8$			;branch if zero window
+	ADD	PH.OFS(R1),R1
+	TST	TH.SEQ(PKT)		;see if packet lies to left or right
+	BNE	2$			;if high order part not zero, then text
+	MOV	TH.SEQ+2(PKT),R2
+	SUB	R2,R3
+	BLE	8$			;branch if too far to the right
+	BR	3$
+;
+2$:	CMP	TH.SEQ(PKT),#-1		;check high order difference
+	BNE	8$			;if not all 1's, too far to the left
+	MOV	TH.SEQ+2(PKT),R2
+	ADD	R2,R0
+	BLE	8$			;if all of pkt outside window, abort
+	SUB	R2,R1
+	CLR	R2			;start at head of reassembly buffer
+;
+; Now move text from the packet (pointed to by r2) into reassembly buffer
+;   (pointer to by r1), setting the 'text' flag.  move the amount in r0 and
+;   then if this is the end of a letter, set the end-of-letter bit in the flag
+;   associated with the last text byte.
+;
+; R0 - amount of text to move from packet into buffer
+; R1 - pointer into text field of packet
+; R2 - pointer into reassembly buffer (initially offset into buffer)
+; R3 - amount of space in buffer
+;
+3$:	BIC	#FL.NUL,@SP		;indicate text stored
+	CMP	R3,R0			;compare amount in window vs buff size
+	BLOS	4$			;if less, skip
+	MOV	R0,R3			;move minumum of two amounts
+4$:	SUB	R3,R0			;save leftover
+	ASL	R2			;convert from byte to word offset
+	BGT	5$			;branch if to the right
+	BIC	#FL.DUP,@SP
+5$:	ADD	RSMTL(TCB),R2		;add in queue head pointer
+6$:	CMP	R2,RSMEND(TCB)		;**** reached end of buffer?
+	BLO	7$			;if not, pointer ok
+	SUB	RSMLEN(TCB),R2		;else, wrap around to the front
+7$:	MOVB	#RF.TXT,(R2)+		;set flag to 'text present'
+	MOVB	(R1)+,(R2)+		;move the text byte into buffer
+	$LOOP	R3,6$			;and process all of it
+	MOV	R2,R0			;save buffer pointer
+8$:	$POP	R3,R2,R1
+	ADD	PH.LNG(R1),TH.SEQ+2(PKT) ;advance sequence number past text
+	ADC	TH.SEQ(PKT)
+	MOV	PH.LNK(R1),R1		;any more fragments
+	BNE	1$			;branch if yes
+	BIT	#FL.NUL,WRKFLG		;*** temp *** was text stored
+	BNE	RCVFIN			;branch if no
+	BITB	#TC.PSH,TH.CTL(PKT)	;is eol indicated
+	BEQ	RCVFIN			;branch if no
+	BIS	#RF.EOL,-(R0)		;yes. mark reassembly byte
+;
+	.SBTTL	RCVFIN - handle received 'fin' control
+;
+RCVFIN:	BITB	#TC.FIN,TH.CTL(PKT)	;received a fin packet?
+	BEQ	RCVUPD			;if not, process any acks
+	$LOG	NR.FIN			;count fins processed
+	TST	TH.SEQ(PKT)		;see if control inside window
+	BNE	2$			;if not zero, too far to the left
+	MOV	TH.SEQ+2(PKT),R0	;get offset into reassembly buffer
+	CMP	R0,RCVWS(TCB)		;is fin inside window
+	BHIS	2$			;branch if no
+	BIC	#FL.NUL,WRKFLG
+	ASL	R0			;convert to word offset
+	BNE	3$			;is fin in sequence
+	BIC	#FL.DUP,WRKFLG		;yes. don't ack it yet
+3$:	ADD	RSMTL(TCB),R0		;add offset to head pointer
+	MOV	#RF.FIN,@R0		;store control function flag in buffer
+2$:	INC	TH.CHK(PKT)		;account for sequence space
+	ADD	#1,TH.SEQ+2(PKT)	;advance packet sequence number
+	ADC	TH.SEQ(PKT)
+RCVUPD:	BIT	#FL.DUP,WRKFLG		;did left window edge move
+	BEQ	3$			;branch if yes
+	TST	TH.CHK(PKT)		;no. did sequence advance
+	BNE	1$			;branch if yes
+	$LOG	PR.NUL			;no. ack-only packet
+	BR	8$
+;
+1$:	BIS	#FL.ACK,WRKFLG		;immediate ack
+	BIT	#FL.NUL,WRKFLG		;was text stored
+	BNE	2$			;branch if no
+	$LOG	PR.DUP			;yes. future packet
+	BR	8$
+;
+2$:	$LOG	PR.OUT			;past packet
+	BR	8$
+;
+3$:	TSTB	ACKDLY(TCB)		;delayed ack
+	BNE	19$
+	MOVB	#2,ACKDLY(TCB)
+19$:	$LOG	NR.TXT			;window advance
+	MOV	RSMTL(TCB),R0
+4$:	BIT	#RF.FIN!RF.TXT,@R0
+	BEQ	7$
+	TST	(R0)+
+	CMP	R0,RSMEND(TCB)
+	BNE	5$
+	SUB	RSMLEN(TCB),R0
+5$:	ADD	#1,RCVSEQ+2(TCB)
+	ADC	RCVSEQ(TCB)
+	DEC	RCVUP(TCB)		;update urgent
+	BPL	6$
+	BIC	#ST.URG,TCBFLG
+	CLR	RCVUP(TCB)
+6$:	DEC	RCVWS(TCB)
+	BNE	4$
+7$:	MOV	R0,RSMTL(TCB)
+8$:	BITB	#OP.TRC,CCBFLG(TCB)	;is trace enabled
+	BEQ	RCVACK			;branch if no	
+	MOV	RCVIOR(TCB),R1		;yes. point to first fragment
+	MOV	RCVWS(TCB),-(SP)	;12 remaining receive window size
+	MOV	TH.CHK(PKT),-(SP)	;10 segment length
+	BITB	#TC.PSH,TH.CTL(PKT)
+	BEQ	9$
+	NEG	@SP
+9$:	MOV	TH.SEQ+2(PKT),-(SP)	;6 segment offset
+	SUB	TH.CHK(PKT),@SP
+	MOV	IH.ID(R1),-(SP)		;4 IP header ID
+	MOV	PH.TIM+2(R1),-(SP)	;2 arrival timestamp
+	.TRAP	#TR.TCR
+	.PAGE
+	.SBTTL	RCVACK - process received acknowledgement
+;
+; Now process any acknowledgements that might have been in the packet.
+; (this section needs rewriting to conform with window-management spec)
+;
+RCVACK:	BITB	#TC.ACK,TH.CTL(PKT)	;is ack present
+	BEQ	7$			;branch if no
+	MOV	TH.ACK(PKT),R0		;yes. compute offset
+	MOV	TH.ACK+2(PKT),R1
+	SUB	LWESEQ+2(TCB),R1
+	SBC	R0
+	SUB	LWESEQ(TCB),R0
+	BNE	7$			;branch if invalid
+	CMP	R1,RTXCNT(TCB)
+	BHI	7$			;branch if invalid
+	MOV	TH.WDW(PKT),R0		;has window just opened
+	BEQ	1$			;branch if no
+	TST	SNDWS(TCB)
+	BNE	1$			;branch if no
+	CLR	RETRY(TCB)		;yes. reset timeout
+	TST	RTXCNT(TCB)		;is anything queued
+	BEQ	1$			;branch if no
+	MOV	RTXTMO(TCB),RTXTIK(TCB)	;yes. shortcut rtx timeout
+1$:	MOV	TH.WDW(PKT),SNDWS(TCB)	;update send window
+	MOV	R1,MAXTXT(TCB)		;is anything acked
+	BEQ	7$			;branch if no
+	SUB	R1,RTXCNT(TCB)		;subtract number of bytes acked
+	ADD	R1,LWESEQ+2(TCB)	;advance sequence number of byte at
+	ADC	LWESEQ(TCB)		;  head of retrans queue
+	ADD	R1,SNDPP(TCB)		;update push pointer
+	BMI	2$			;branch if non-negative
+	CLR	SNDPP(TCB)
+2$:	SUB	R1,SNDUP(TCB)		;update urgent offset
+	BPL	3$			;branch if non-negative
+	BIC	#FL.URG,WRKFLG		;negative. must have passed it
+	CLR	SNDUP(TCB)
+3$:	MOV	RTXHD(TCB),R0		;get pointer to byte at head of queue
+	TST	RTXCC(TCB)		;any control markers in the rtx queue
+	BNE	5$			;if so, must search queue for it
+	ASL	R1			;establish buffer pointer
+	ADD	R1,R0
+	MOV	RTXEND(TCB),R1
+	SUB	RTXLEN(TCB),R1
+	SUB	R1,R0
+	CMP	R0,RTXLEN(TCB)
+	BLO	4$
+	SUB	RTXLEN(TCB),R0
+4$:	ADD	R1,R0
+	BR	10$			;and exit
+;
+5$:	BIT	#RF.FIN!RF.SYN,@R0	;acked byte is a control function?
+	BEQ	8$			;if not, advance pointer
+	DEC	RTXCC(TCB)		;decrement count of control in rtx q
+;
+; Acking control packet, see if acking a syn we sent
+;
+	BIT	#RF.SYN,@R0		;acking a syn?
+	BEQ	6$			;if not, skip
+	BIS	#ST.SA,TCBFLG		;connection state to established
+	BIS	#FL.CHK,WRKFLG
+	$PUSH	R0,R1
+	$SGUSE	#SG.EST,#0		;connection established
+	$POP	R1,R0
+	BR	8$
+;
+; Now see if acking a fin packet. if so, see if we can delete the connection
+;
+6$:	BIT	#RF.FIN,@R0		;acking a fin?
+	BEQ	8$			;if not, skip
+	BIS	#ST.FA,TCBFLG		;set 'fin acked' state flag
+	BIT	#ST.FR,TCBFLG		;have we received a fin?
+	BEQ	8$			;if not, skip
+	JSR	PC,DELCON		;remove the connection & signal user
+7$:	RTS	PC
+;
+8$:	TST	(R0)+			;is this end of buffer
+	CMP	R0,RTXEND(TCB)
+	BNE	9$			;branch if no
+	SUB	RTXLEN(TCB),R0		;yes. wrap around to front of buffer
+9$:	$LOOP	R1,5$			;and remove all the acked stuff
+10$:	MOV	R0,RTXHD(TCB)		;now update rtx head pointer
+;
+; Compute rtd/rtx estimates
+;
+CMPRTX:	MOV	ESTTL(TCB),R1		;is estimation buffer empty
+	SUB	MAXTXT(TCB),@R1		;no. has this packet been acked
+	BGT	6$			;branch if no
+	NEG	@R1			;yes. keep residue
+	MOV	(R1)+,MAXTXT(TCB)
+	MOV	RCVIOR(TCB),R0		;compute delay
+	MOV	PH.TIM(R0),-(SP)
+	MOV	PH.TIM+2(R0),RTDRTX(TCB)
+	SUB	(R1)+,@SP
+	SUB	(R1)+,RTDRTX(TCB)
+	SBC	@SP
+	DECB	WDWCNT(TCB)		;update external packet tally
+	CMPB	WDWTHR(TCB),#MAXEST	;increment external packet limit
+	BHIS	1$
+	INCB	WDWTHR(TCB)
+1$:	CLR	RETRY(TCB)		;reset timers
+	CLR	RTXTIK(TCB)
+	CMP	R1,ESTEND(TCB)		;update tail pointer
+	BLO	2$
+	SUB	ESTLEN(TCB),R1
+2$:	MOV	R1,ESTTL(TCB)
+	TST	(SP)+			;examine delay
+	BNE	5$			;branch if outrageous
+	MOV	RTDRTX(TCB),R0
+	CMP	R0,#TM.TTL/2
+	BHI	5$			;branch if unreasonable
+	CMP	R0,#TM.INP
+	BHIS	3$			;branch if just right
+	MOV	#TM.INP,R0		;too small. trim to range
+3$:	MOV	R0,RTDRTX(TCB)		;compute roundtrip delay sample
+	ASL	R0			;*** empirical constant ***
+	SUB	RTXTMO(TCB),R0		;smooth samples
+	ASH	#-2,R0			;*** empirical constant ***
+	BGE	4$
+	ASH	#-2,R0			;*** empirical constant ***
+4$:	ADD	R0,RTXTMO(TCB)
+5$:	CMP	ESTHD(TCB),ESTTL(TCB)
+	BNE	CMPRTX
+6$:	RTS	PC
+	.PAGE
+	.SBTTL	PKTOUT - output packet processing routine
+	.SBTTL	XMTERR - send reset error packet
+;
+; Pktout - output packet processing routine
+;
+;	Called with:	r5 (tcb) - pointer to active tcb
+;			r4 (tcbflg) - tcb connection state flags
+;			r3 (wrkflg) - tcp work-to-do flags
+;
+PKTOUT:	BIT	#FL.RST,WRKFLG		;need to send a reset error packet?
+	BEQ	SNDTXT			;if not, see about text packets
+	BIC	#FL.RST,WRKFLG		;clear 'need to send error' flag
+	$LOG	NS.ERR			;count number of error packets sent
+	JSR	PC,INIPKT		;get a packet buffer
+	BCS	1$			;if can't get packet buffer, exit
+	MOV	RCVIOR(TCB),R1		;retrieve tcp header pointer
+	MOV	PH.LNK+2(R1),R1
+	MOV	TH.SEQ(R1),TH.ACK(PKT)	;rcv.seq -> snd.ack
+	MOV	TH.SEQ+2(R1),TH.ACK+2(PKT)
+	BITB	#TC.ACK,TH.CTL(R1)	;was this from syn-sent state
+	BNE	2$			;branch if no
+	CLR	TH.SEQ(PKT)		;yes. 0 -> snd.seq
+	CLR	TH.SEQ+2(PKT)
+	MOVB	#TC.RST!TC.ACK,TH.CTL(PKT)
+	BR	3$
+;
+2$:	MOV	TH.ACK(R1),TH.SEQ(PKT)	;rcv.ack -> snd.seq
+	MOV	TH.ACK+2(R1),TH.SEQ+2(PKT)
+	MOVB	#TC.RST,TH.CTL(PKT)
+3$:	JSR	PC,XMTPKT		;transmit packet and exit
+1$:	$LOG	PR.NOX			;count number of packets received on
+	MOV	RCVIOR(TCB),R1
+	JSR	PC,NETIN		;if no storage, flush error, issue
+	.PAGE
+	.SBTTL	SNDTXT - send user data
+;
+; Copy user data to queue
+;
+SNDTXT:	BIT	#FL.TXT,WRKFLG		;is user data waiting
+	BEQ	6$			;branch if no
+	BIT	#ST.DEL!ST.FS,TCBFLG	;yes. has fin been sent
+	BNE	6$			;branch if yes
+	MOV	RTXLEN(TCB),R2		;no. compute remaining space
+	ASR	R2
+	SUB	RTXCNT(TCB),R2
+	SUB	QUECNT(TCB),R2
+	BEQ	6$			;branch if none
+	CMP	R2,SNDBR(TCB)		;min(remaining, request)
+	BLOS	1$
+	MOV	SNDBR(TCB),R2
+1$:	SUB	R2,SNDBR(TCB)		;is transfer complete
+	BNE	2$			;branch if no
+	BIC	#FL.TXT,WRKFLG		;yes. signal user process
+	$SGUSE	#SG.SC			;send complete
+2$:	MOV	SNDUVA(TCB),R1		;update pointers
+	ADD	R2,SNDUVA(TCB)
+	MOV	#100400,R0		;map window to user buffer
+	BISB	USEPID(TCB),R0
+	.WIND
+	MOV	R1,-(SP)
+	MOV	QUECNT(TCB),R0		;establish buffer pointer
+	ADD	R2,QUECNT(TCB)
+	ASL	R0
+	ADD	RTXTL(TCB),R0
+	MOV	RTXEND(TCB),R1
+	SUB	RTXLEN(TCB),R1
+	SUB	R1,R0
+	CMP	R0,RTXLEN(TCB)
+	BLO	3$
+	SUB	RTXLEN(TCB),R0
+3$:	ADD	R1,R0
+	MOV	@SP,R1
+4$:	CMP	R0,RTXEND(TCB)		;is this end of buffer
+	BNE	5$			;branch if no
+	SUB	RTXLEN(TCB),R0		;yes. wrap around to front of buffer
+5$:	MOVB	#RF.TXT,(R0)+		;copy byte to queue
+	MOVB	(R1)+,(R0)+
+	$LOOP	R2,4$
+	MOV	(SP)+,R1		;restore window
+	MOV	#400,R0
+	.WIND
+;
+; Copy queued data to packet
+;
+6$:	MOV	SNDWS(TCB),R1		;is window closed
+	BNE	7$			;branch if no
+	INC	R1			;yes. crack for probe
+7$:	SUB	RTXCNT(TCB),R1		;compute space left
+	BLE	SNDCTL			;branch if none
+	CMP	R1,QUECNT(TCB)		;compute segment size
+	BLOS	8$
+	MOV	QUECNT(TCB),R1
+8$:	MOV	R1,MAXTXT(TCB)
+	BEQ	SNDCTL			;branch if empty	
+	BITB	#OP.NGL,CCBFLG(TCB)	;is nagle enabled
+	BEQ	9$			;branch if no
+	BIT	#FL.ACK,WRKFLG		;yes. is ack set
+	BNE	9$			;branch if yes
+	TST	RTXCNT(TCB)		;no. is rtx queue empty
+	BEQ	9$			;branch if yes
+	CMP	R1,MAXSEG(TCB)		;no. is segment large enough
+	BHIS	9$			;branch if yes
+	MOVB	#1,WDWTHR(TCB)		;no. reduce external packet limit
+9$:	CMPB	WDWCNT(TCB),WDWTHR(TCB)	;is external packet limit exceeded
+	BHIS	SNDCTL			;branch if yes
+	JSR	PC,INIPKT		;yes. initialize internet header
+	BCS	SNDCTL			;if can't get packet, can't send text
+	$LOG	NS.TXT			;count number of text packets sent
+	CMP	R0,MAXTXT(TCB)		;compare vs maximum send text length
+	BHIS	10$			;if less, skip
+	MOV	R0,MAXTXT(TCB)
+10$:	$PUSH	R3			;save registers
+	MOV	MAXTXT(TCB),R3		;get copy parameters
+	SUB	R3,QUECNT(TCB)
+	ADD	R3,TH.CHK(PKT)		;set packet text length field
+	MOV	RTXTL(TCB),R0		;get pointer to tail of rtx buffer
+11$:	TSTB	(R0)+			;copy byte to packet
+	MOVB	(R0)+,(R1)+
+	CMP	R0,RTXEND(TCB)		;reached end of buffer?
+	BNE	12$			;if not, skip
+	SUB	RTXLEN(TCB),R0		;else, wrap around to front of buffer
+12$:	$LOOP	R3,11$
+	MOV	R0,RTXTL(TCB)		;update rtx buffer tail pointer
+	$POP	R3			;restore the registers
+	BR	SNDPKT
+;
+; SNDCTL - send control functions
+;
+SNDCTL:	BIT	#FL.FIN!FL.SYN,WRKFLG	;are control bits set
+	BEQ	1$			;if not, see about retransmissions
+	TST	QUECNT(TCB)		;is text queued
+	BNE	1$			;branch if yes
+	MOV	RTXLEN(TCB),R0
+	ASR	R0
+	CMP	RTXCNT(TCB),R0		;check amount used vs buffer length
+	BHIS	1$			;if no room, go to rtx check
+	JSR	PC,INIPKT		;initialize the packet internet header
+	BCS	1$			;if can't get packet buffer, exit
+	$LOG	NS.CTL			;count number of control packets sent
+	BIT	#FL.SYN,WRKFLG		;is syn indicated
+	BEQ	2$			;branch if no
+	MOV	SNDIOR(TCB),R0		;yes. compute max segment size
+	ADD	#BUFLDR,R0
+	SUB	R1,R0
+	ADD	TCPSIZ(TCB),R0
+	MOV	R0,TCPSIZ(TCB)
+	ADD	R0,MAXSEG(TCB)
+	MOV	#4*400+TO.SIZ,(R1)+	;plug in tcp max-size option
+	MOV	R0,@R1
+	SWAB	(R1)+
+	ADD	#1*20,TH.HLN(PKT)	;th.hln, th.ctl
+	ADD	#4,TH.CHK(PKT)
+	MOV	#FL.SYN,R0		;original syn
+	BR	3$
+;
+1$:	BR	SNDRTX
+;
+2$:	MOV	#FL.FIN,R0		;must be fin
+3$:	BIC	R0,WRKFLG		;set control bits
+	BISB	R0,TH.CTL(PKT)
+	MOV	RTXTL(TCB),R1		;get pointer to tail of queue
+	MOV	R0,(R1)+		;save in rtx buff
+	CMP	R1,RTXEND(TCB)		;reached end of buffer?
+	BNE	4$			;if not, skip
+	SUB	RTXLEN(TCB),R1		;wrap to front of the buffer
+4$:	MOV	R1,RTXTL(TCB)		;and update tail pointer
+	INC	RTXCC(TCB)		;one more control fcn queued up
+	MOV	#1,MAXTXT(TCB)		;advance sndseq only by 1
+SNDPKT:	ADD	MAXTXT(TCB),SNDSEQ+2(TCB) ;advance send sequence number
+	ADC	SNDSEQ(TCB)
+	INCB	WDWCNT(TCB)
+	TST	RTXCNT(TCB)		;is anything outstanding
+	BNE	1$			;branch if yes
+	CLR	RETRY(TCB)		;no. reset timers
+	CLR	RTXTIK(TCB)
+1$:	ADD	MAXTXT(TCB),RTXCNT(TCB)	;update count of stuff in queued
+	MOV	ESTHD(TCB),R1		;get estimator buffer pointer
+	MOV	MAXTXT(TCB),(R1)+	;save send sequence
+	MOV	SNDIOR(TCB),R0		;save send time
+	MOV	PH.TIM(R0),(R1)+
+	MOV	PH.TIM+2(R0),(R1)+
+	CMP	R1,ESTEND(TCB)		;update estimator buffer pointer
+	BLO	2$
+	SUB	ESTLEN(TCB),R1
+2$:	MOV	R1,ESTHD(TCB)
+	JSR	PC,XMTPKT		;send packet
+	RTS	PC
+	.PAGE
+	.SBTTL	SNDRTX - retransmit unacknowledged user data
+;
+SNDRTX:	BIT	#FL.RTX,WRKFLG		;timer expired? signals every sec
+	BEQ	9$			;if not, see about forcing an ack
+	BIC	#FL.RTX,WRKFLG		;clear time to rtx flag
+	MOV	#DD.IDL,R1		;has idle-connection timeout expired
+	CMP	RETRY(TCB),#1000./TM.INP*TS.IDL
+	BLO	1$			;branch if no
+	BITB	#OP.IDL,CCBFLG(TCB)
+	BNE	4$			;branch if yes
+1$:	BIT	#ST.FA!ST.FNW,TCBFLG	;are we expecting a close
+	BNE	2$			;branch if yes
+	TST	RTXCNT(TCB)		;no. are acks expected
+	BEQ	9$			;branch if no
+2$:	MOV	#DD.SYN,R1		;is connection established
+	BIT	#ST.SA!ST.FNW,TCBFLG
+	BEQ	3$			;branch if no
+	MOV	#DD.WDW,R1		;yes. has zero-window timeout expired
+	CMP	RETRY(TCB),#1000./TM.INP*TS.ZLW
+	BHI	4$			;branch if yes
+	TST	SNDWS(TCB)		;no. is window zero
+	BEQ	7$			;branch if yes
+	MOV	#DD.ACK,R1		;no. has ack timeout expired
+3$:	CMP	RETRY(TCB),#1000./TM.INP*TS.ACK
+	BLOS	7$			;branch if no
+4$:	BIT	#ST.SPN,TCBFLG		;connection suspended?
+	BNE	5$			;if so, don't signal user process
+	BIS	#ST.SPN,TCBFLG		;indicate connection suspended
+	$SGUSE	#SG.DD,R1		;host not responding (reason)
+5$:	BIT	#ST.SA,TCBFLG		;have we received a syn?
+	BEQ	6$			;if not, just can the connection
+	BIT	#ST.DEL!ST.FS,TCBFLG	;sent a fin or fgn tcp not responding?
+	BEQ	7$			;branch if no
+6$:	BIC	#ST.FNW,TCBFLG		;yes. abort the connection
+	JSR	PC,DELCON
+	RTS	PC
+;
+7$:	CMP	RTXTIK(TCB),#TM.TTL/2	;has zero-window rtx timer expired
+	BHIS	13$			;branch if yes
+	BIT	#ST.SA,TCBFLG		;no. is this zero window
+	BEQ	8$			;branch if no
+	TST	SNDWS(TCB)
+	BEQ	9$			;branch if yes
+8$:	CMP	RTXTIK(TCB),RTXTMO(TCB)	;no. has rtx timer expired
+	BHIS	13$			;branch if yes
+9$:	MOV	ACKTIK(TCB),R0		;no. is ack large enough
+	BEQ	10$			;branch if no
+	CMP	R0,MAXSEG(TCB)
+	BHIS	11$			;branch if yes
+10$:	BIT	#FL.ACK,WRKFLG
+	BEQ	12$			;branch if no
+11$:	JSR	PC,INIPKT		;initialize packet buffer
+	BCS	12$			;branch if cant
+	$LOG	NS.ACK			;count number of ack only packets sent
+	JSR	PC,XMTPKT		;and send packet w/o advancing sndseq
+12$:	RTS	PC
+;
+13$:	BIC	#ST.FNW,TCBFLG		;that'th all, folks
+	TST	RTXCNT(TCB)		;is anything waiting
+	BNE	XMTRTX			;branch if yes
+	RTS	PC
+;
+; It is time to retransmit the head of the retransmission queue.  first
+;   initialize a packet buffer and then reset the packet sequence number to
+;   the left send window edge.  next see if the head of the queue is a control
+;   function or text.
+;
+XMTRTX:	MOVB	#1,WDWTHR(TCB)		;reduce external packet limit
+	JSR	PC,INIPKT		;initialize a packet buffer
+	BCS	7$			;if can't get buffer, exit
+	$LOG	NS.RTX			;count packet retransmissions
+	CLR	RTXTIK(TCB)		;reset wakeup cell
+	TST	SNDWS(TCB)		;is backoff indicated
+	BEQ	2$			;branch if no
+	MOV	RTXTMO(TCB),-(SP)	;yes. creep it up
+	ASR	@SP
+	ADD	RTXTMO(TCB),@SP
+	CMP	@SP,#TM.TTL		;limit rtx interval
+	BLOS	1$
+	MOV	#TM.TTL,@SP
+1$:	MOV	(SP)+,RTXTMO(TCB)
+2$:	MOV	LWESEQ(TCB),TH.SEQ(PKT)	;reset packet sequence number to that
+	MOV	LWESEQ+2(TCB),TH.SEQ+2(PKT) ;of the unacked stuff
+	$PUSH	R3
+	MOV	RTXHD(TCB),R3		;get pointer to head of retrans queue
+	BIT	#RF.FIN!RF.SYN,(R3)	;control function at head of queue
+	BEQ	3$			;branch if no
+	BISB	@R3,TH.CTL(PKT)		;yes. go send it
+	BITB	#RF.SYN,@R3		;is it syn
+	BEQ	6$			;branch if no
+	MOV	#4*400+TO.SIZ,(R1)+	;yes. plug in tcp max-size option
+	MOV	TCPSIZ(TCB),@R1
+	SWAB	(R1)+
+	ADD	#1*20,TH.HLN(PKT)	;th.hln, th.ctl
+	ADD	#4,TH.CHK(PKT)
+	BR	6$
+;
+; R0 - max packet byte count
+; R1 - pointer into packet text field
+; R3 - pointer into retransmission buffer
+;
+3$:	CMP	R0,RTXCNT(TCB)		;compute packet size
+	BLOS	4$			;if less, skip
+	MOV	RTXCNT(TCB),R0		;else round down to max send text
+4$:	BITB	#RF.TXT,(R3)+		;next byte text?
+	BEQ	6$			;if not, finished with transfer
+	MOVB	(R3)+,(R1)+		;transfer byte into packet
+	INC	TH.CHK(PKT)		;increase byte count
+	CMP	R3,RTXEND(TCB)		;reached end of buffer?
+	BNE	5$			;if not, skip
+	SUB	RTXLEN(TCB),R3		;else reset to front of buffer
+5$:	$LOOP	R0,4$			;else, see if bytes left
+6$:	$POP	R3			;restore the registers
+	JSR	PC,XMTPKT
+7$:	RTS	PC
+	.PAGE
+	.SBTTL	Input/output packet processing utility routines
+;
+; DELCON - delete connection
+;
+DELCON:	BIC	#^C<FL.ACK!FL.RST!FL.TXT>,WRKFLG ;flush send work
+	BIC	#^C<ST.DEL!ST.FNW!ST.SR!ST.SS>,TCBFLG ;set state to closed
+	BIS	#ST.DEL,TCBFLG		;close the connection
+	RTS	PC
+;
+; SWPBYT - swap bytes in packet word fields
+;
+SWPBYT:	SWAB	TH.SEQ(PKT)		;send sequence
+	SWAB	TH.SEQ+2(PKT)
+	SWAB	TH.ACK(PKT)		;acknowledge sequence
+	SWAB	TH.ACK+2(PKT)
+	SWAB	TH.WDW(PKT)		;send window
+	SWAB	TH.URG(PKT)		;urgent pointer offset
+	RTS	PC
+;
+; INIPKT - initialize output packet buffer
+; Returns r0 = max text octets, r1 = data area pointer, r2 = pkt pointer
+;
+INIPKT:	JSR	PC,NETPKT		;allocate packet
+	TST	R0			;is there one
+	BNE	3$			;branch if no
+	MOV	R1,SNDIOR(TCB)		;remember pointer to iorb
+	MOV	PH.LNG(R1),R0		;yes. compute max text octets
+	SUB	#TH.LEN,R0
+	BGT	10$			;branch if long enough
+	MOV	#1,R0			;pathology. must have at least one
+10$:	MOV	PH.OFS(R1),PKT		;set tcp header pointer
+	ADD	R1,PKT
+	MOV	PKT,R1
+	CMP	(R1)+,(R1)+		;th.sp, th.dp (inserted by netpkt)
+	MOV	SNDSEQ(TCB),(R1)+	;th.seq
+	MOV	SNDSEQ+2(TCB),(R1)+
+	MOV	RCVSEQ(TCB),(R1)+	;th.ack
+	MOV	RCVSEQ+2(TCB),(R1)+
+	MOV	#5*20,(R1)+		;th.hln, th.ctl
+	MOV	RCVWS(TCB),(R1)+	;th.wdw
+	MOV	#TH.LEN,(R1)+		;th.chk
+	MOV	LWESEQ+2(TCB),@R1	;th.urg compute lwe offset
+	SUB	SNDSEQ+2(TCB),@R1
+	CMP	@R1,SNDPP(TCB)		;is push in range
+	BLE	4$			;branch if no
+	BISB	#TC.PSH,TH.CTL(PKT)	;yes. set push bit
+4$:	ADD	SNDUP(TCB),(R1)+	;is urgent in range
+	BMI	1$			;branch if no
+	BIT	#FL.URG,WRKFLG		;is urgent pending
+	BEQ	1$			;branch if no
+	BISB	#TC.URG,TH.CTL(PKT)	;yes. so mark it
+1$:	BIC	#FL.ACK,WRKFLG		;clear ack flags
+	CLR	ACKTIK(TCB)
+	CLRB	ACKDLY(TCB)
+	BIT	#ST.SR,TCBFLG		;have we received a syn?
+	BEQ	2$			;if not, can't send an ack
+	BISB	#TC.ACK,TH.CTL(PKT)	;else, set ack bit, ack field is ready
+2$:	CLC
+	RTS	PC			;and then return
+;
+3$:	SEC				;cant exit
+	RTS	PC
+;
+; XMTPKT - output packet to the network
+;
+XMTPKT:	MOV	SNDIOR(TCB),R1		;set ip header pointer
+	BITB	#OP.TRC,CCBFLG(TCB)	;is trace enabled
+	BEQ	4$			;branch if no	
+	MOV	SNDWS(TCB),-(SP)	;12 yes. remaining send window size
+	SUB	MAXTXT(TCB),@SP
+	ADD	LWESEQ+2(TCB),@SP
+	SUB	TH.SEQ+2(PKT),@SP
+	MOV	MAXTXT(TCB),-(SP)	;10 segment length
+	BITB	#TC.PSH,TH.CTL(PKT)
+	BEQ	3$
+	NEG	@SP
+3$:	MOV	TH.SEQ+2(PKT),-(SP)	;6 segment offset
+	SUB	LWESEQ+2(TCB),@SP
+	MOVB	SNDCNT(TCB),-(SP)	;4 outstanding internal segments
+	MOVB	WDWCNT(TCB),1(SP)	;5 outstanding external segments
+	MOV	PH.TIM+2(R1),-(SP)	;2 departure timestamp
+	.TRAP	#TR.TCX
+4$:	MOV	TH.CHK(PKT),PH.LNG(R1)
+	JSR	PC,SWPBYT		;swap bytes in packet word fields
+	CLR	TH.CHK(PKT)
+	JSR	PC,TCPSUM		;calculate the packet checksum
+	MOV	R0,TH.CHK(PKT)		;insert into packet header
+	JSR	PC,NETOT		;give to net output driver
+	MOV	R0,R1			;is status okay
+	BEQ	2$			;branch if yes
+	$SGUSE	#SG.ERR,R1		;connection error (reason)
+2$:	TST	RTXCNT(TCB)		;is ack timeout running
+	BNE	1$			;branch if yes
+	CLR	RETRY(TCB)		;no. reset idle timeout
+1$:	RTS	PC			;and return to caller
+;
+	.PSECT	$SUPD,RO,D		;supervisor d-space
+;
+; Operation code branch table
+;
+OPCTBL:	.WORD	PKTIN			;0 packet input processing routine
+	.WORD	PKTFVS			;1 release output packet buffer
+	.WORD	QUENCH			;2 catenet source quench
+	.WORD	UNREAC			;3 catenet destination unreachable
+	.WORD	RTXTIM			;4 handle rtx timer signal
+	.WORD	OPNCON			;5 open user connection
+	.WORD	CLSCON			;6 close user connection
+	.WORD	TCPWRK			;7 do some work, r1 = work flags
+;
+	.END
+                                                                                                                                                                                                                                                   

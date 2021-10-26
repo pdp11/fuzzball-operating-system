@@ -1,0 +1,676 @@
+	.TITLE	SBNX25	PDN X.25 leader processing
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn - PDN X.25 leader processing
+;
+; External symbols
+;
+	.GLOBL	RDRIN,RDROT	;redirect processing
+;
+; Entry symbols
+;
+	.GLOBL	SBNX25		;transfer vector
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.PSA,.GAT,.X25,.TRDEF ;dcnlib definitions
+	.MCALL	.TRAP,.ASYN	;dcnlib macros
+	.MCALL	$DFIH,$DFSIG	;moslib definitions
+	.COM			;define common data
+	.PSA			;define process storage areas
+	.GAT			;define gateway/bridge storage areas
+	.X25			;define x25 storage areas
+	.TRDEF			;define trap codes
+	$DFIH			;define internet header
+	$DFSIG			;define interprocess signals
+;
+; Module definitions
+;
+TTLSET	=	12.		;idle timeout (hello intervals)
+LOPBIT	=	000001		;set loopback
+EXTBIT	=	000002		;external loop (0), internal loop (1)
+;
+; Command codes
+;
+; Category 0: call setup and clearing
+;
+CD.CAL	=	000		;call
+CD.RNG	=	001		;ring
+CD.CLV	=	002		;clear virtual circuit
+CD.ANS	=	003		;answer
+CD.CLL	=	004		;clear logical channel
+;
+; Category 1: packet-level control
+;
+CD.RST	=	040		;reset
+CD.RAK	=	041		;reset ack
+CD.INT	=	042		;interrupt
+CD.RDY	=	043		;ready
+CD.IAK	=	044		;interrupt acknowledge
+;
+; Category 2: frame-level control
+;
+CD.STR	=	100		;restart
+CD.SAK	=	101		;restart ack
+CD.ERR	=	102		;error
+CD.DIA	=	103		;diagnostic
+;
+; Category 3: system control
+;
+CD.CTL	=	140		;system control
+CD.STA	=	141		;line status
+;
+; Control-channel event codes
+;
+EV.ERR	=	0*4		;error
+EV.STA	=	1*4		;line up
+EV.STR	=	2*4		;restart
+EV.SAK	=	3*4		;restart ack
+EV.RNG	=	4*4		;ring
+EV.CLV	=	5*4		;clear
+;
+; Logical-channel event codes
+;
+SV.RST	=	0*4		;reset
+SV.INT	=	1*4		;interrupt
+SV.ANS	=	2*4		;answer
+SV.CLR	=	3*4		;clear
+SV.OUT	=	4*4		;output
+SV.TOT	=	5*4		;timeout
+	.PAGE
+;
+; Procedure segment
+;
+; Process-state procedure
+; Dsects: r3 = par, r5 = psa
+;
+	.PSECT	$SUPI,RO,I
+;
+; Initialize
+;
+DCNINR:	MOV	PARVEC(R3),R0	;initialize input
+	EMT	INI+EXTBAS
+	JSR	PC,RSTFRM	;reset frame level
+	RTS	PC
+;
+DCNINX:	MOV	PARVEC(R3),R0	;initialize output
+	EMT	INI+EXTBAS
+	RTS	PC
+;
+; Start input
+; R2 = data area length, r4 = buffer pointer, returns c(cc) = c if error
+;
+DCNINP:	MOV	R2,-(SP)	;adjust for interface leader
+	ADD	#X25LEN,@SP
+1$:	MOV	R4,R1
+	ADD	#BUFLDR-X25LEN,R1
+	MOV	@SP,R0		;get next packet
+	MOVB	#XO.RED,X2.OPN(R1)
+	CCC
+	EMT	SIO+EXTBAS
+	BCS	3$		;branch if error
+	SUB	#X25LEN,R0	;correct packet length
+	BLE	1$		;branch if leader only
+	TSTB	X2.DPN(R1)	;is this control channel
+	BEQ	4$		;branch if yes
+	MOVB	X2.DPN(R1),R1	;no. save local source address
+	MUL	#CB.LEN,R1
+	ADD	R3,R1
+	ADD	#X25BLK,R1
+	MOV	CB.ADR(R1),NTRLNA(R5)
+	MOV	CB.ADR+2(R1),NTRLNA+2(R5)
+	TSTB	CB.TTL(R1)
+	BEQ	2$
+	MOVB	#TTLSET,CB.TTL(R1) ;***
+2$:	CLC
+3$:	BIT	(SP)+,R0	;pop off temporaries (preserve cc)
+	RTS	PC
+;
+4$:	MOVB	X2.CMD(R1),R0	;decode event category
+	ASH	#-5,R0
+	BIC	#^C3,R0	
+	ASL	R0
+	MOV	CATDEC(R0),R2
+	MOVB	X2.CMD(R1),R0	;decode event type
+	BIC	#^C37,R0
+	CMP	R0,(R2)+
+	BHIS	1$		;branch if invalid
+	ASL	R0		;extract event code
+	ADD	R2,R0
+	MOV	R3,R2
+	ADD	#X25BLK,R2
+	MOV	@R0,R0
+	BPL	5$
+	BIC	#100000,R0
+	MOV	R1,-(SP)
+	MOVB	X2.LCN(R1),R1	;determine channel pointers
+	MUL	#CB.LEN/2,R1
+	ADD	R1,R2
+	MOV	(SP)+,R1
+5$:	BIT	#DLMBIT,PAROPT(R3) ;are link advisories disabled
+	BNE	6$		;branch if no
+	MOV	R0,-(SP)
+	.TRAP	#TR.LDR,R0,R2,0(R2),2(R1),4(R1)
+	MOV	(SP)+,R0
+6$:	JSR	PC,FSA
+	BR	1$
+;
+; Start output
+; R2 = data area length, r4 = buffer pointer, returns c(cc) = c if error
+;
+DCNOUT:	MOV	R2,X25CNT(R3)	;save for later, much later
+	TSTB	X25BLK+CB.STA(R3) ;is control channel alive
+	BEQ	2$		;branch if no
+	CLRB	R0		;yes. search for matching logical channel
+	MOV	R3,R2
+	ADD	#X25BLK,R2
+	CLRB	X25LCN(R3)
+1$:	INCB	X25LCN(R3)	;advance to next channel
+	INCB	X25LCN(R3)
+	ADD	#CB.LEN,R2
+	CMPB	X25LCN(R3),LCNMAX(R3)
+	BLO	3$		;branch if more
+	MOVB	R0,X25LCN(R3)	;done. is channel table full
+	BNE	6$		;branch if no
+2$:	MOV	X25CNT(R3),R2
+	SEC			;yes. transfer fails
+	RTS	PC
+;
+3$:	TSTB	CB.STA(R2)	;is this channel idle
+	BNE	4$		;branch if no
+	TSTB	R0		;yes. is lcn already set
+	BNE	1$		;branch if yes
+	MOVB	X25LCN(R3),R0	;no. remember lcn
+	BR	1$
+;
+4$:	TSTB	CB.TTL(R2)	;is channel active
+	BEQ	1$		;branch if no
+	CMPB	IH.PRO(R4),#P.LNP ;yes. is this hello message
+	BNE	5$		;branch if no
+	DECB	CB.TTL(R2)	;yes. crank ttl
+	BNE	5$		;branch if okay
+	MOV	R0,-(SP)	;expired. declare timeout event
+	MOV	#SV.TOT,R0
+	JSR	PC,FSA
+	MOV	(SP)+,R0
+	BR	1$
+;
+5$:	CMP	PH.LDR+2(R4),CB.ADR(R2) ;does address match
+	BNE	1$		;branch if no
+	CMP	PH.LDR+4(R4),CB.ADR+2(R2)
+	BNE	1$		;branch if no
+	MOVB	X25LCN(R3),R0	;yes. remember lcn
+	BR	1$
+;
+6$:	MOVB	X25LCN(R3),R1	;compute channel pointer
+	MUL	#CB.LEN/2,R1
+	ADD	R3,R1
+	ADD	#X25BLK,R1
+	MOV	R1,R2
+	TSTB	CB.STA(R2)	;is channel there
+	BNE	7$		;branch if yes
+	CLRB	CB.TTL(R2)	;no. initialize channel
+	MOV	PH.LDR+2(R4),CB.ADR(R2)
+	MOV	PH.LDR+4(R4),CB.ADR+2(R2)
+	MOVB	#2*2,CB.STA(R2)	;start channel
+	JSR	PC,CALREQ	;send call request
+	TSTB	CB.STA(R2)	;is channel there
+	BNE	7$		;branch if yes
+	SEC			;no. transfer fails
+	BR	8$
+;
+7$:	MOV	#SV.OUT,R0	;declare output event
+	JSR	PC,FSA
+8$:	MOV	X25CNT(R3),R2
+	RTS	PC
+;
+; Send call request
+; x25lcn = lcn
+;
+CALREQ:	MOV	R3,R1		;get buffer pointer
+	ADD	#X25CMD,R1
+	MOV	R1,-(SP)	;save
+	MOV	#OPT10,R0	;copy prototype
+1$:	MOVB	(R0)+,(R1)+
+	CMP	R0,#OPT10X
+	BLO	1$
+	MOV	R2,R0		;encode called address
+	ADD	#CB.ADR,R0
+	MOV	@SP,R1
+	ADD	#OPT10A-OPT10,R1
+	JSR	PC,ENCODE
+	MOV	R3,R0		;encode calling address
+	ADD	#PARADR,R0
+	MOV	@SP,R1
+	ADD	#OPT10B-OPT10,R1
+	JSR	PC,ENCODE
+	MOV	(SP)+,R1	;evas
+	MOV	(R1)+,R0
+	MOVB	X25LCN(R3),X2.LCN(R1)
+	CCC
+	EMT	SIO+EXTBAS
+	RTS	PC
+;
+; Send clear
+; x25lcn = lcn, returns c(cc) = 1 (always)
+;
+CLEARX:	CLRB	CB.TTL(R2)	;clean getaway
+	MOV	R3,R1		;get buffer pointer
+	ADD	#X25CMD,R1
+	MOV	R1,-(SP)	;save
+	MOV	#OPT15,R0	;copy prototype
+1$:	MOVB	(R0)+,(R1)+
+	CMP	R0,#OPT15X
+	BLO	1$
+	MOV	(SP)+,R1	;send message
+	MOV	(R1)+,R0
+	MOVB	X25LCN(R3),X2.LCN(R1)
+	CCC
+	EMT	SIO+EXTBAS
+	BCC	2$
+	CLRB	CB.STA(R2)	;timeout. clear channel anyway
+2$:	SEC
+	RTS	PC
+;
+; Send data packet
+; x25lcn = lcn, r4 = packet pointer, x25cnt = count, returns c(cc) = 1 if fail
+;
+PKTORG:	MOV	R4,R1		;adjust for interface leader
+	ADD	#BUFLDR-X25LEN,R1
+	MOVB	X25LCN(R3),X2.DPN(R1)
+	ASRB	X2.DPN(R1)
+	MOVB	#XO.WRT,X2.OPN(R1)
+	MOV	X25CNT(R3),R0	;send message
+	ADD	#X25LEN,R0
+	CCC
+	EMT	SIO+EXTBAS
+	BCS	1$
+	MOVB	#TTLSET,CB.TTL(R2) ;***
+1$:	RTS	PC		;c(cc) = 1 if error
+;
+; Process redirect
+; R1 = icmp packet pointer, r2 = icmp header pointer, r4 = data packet pointer
+;
+DCNRDR:	MOV	NTRLNA(R5),PH.LDR+2(R1) ;insert local address
+	MOV	NTRLNA+2(R5),PH.LDR+4(R1)
+	MOV	PARADR(R3),IH.SRC(R1) ;and believable source address
+	MOV	PARADR+2(R3),IH.SRC+2(R1)
+	JSR	PC,RDROT	;construct redirect
+	RTS	PC
+;
+; Output reset
+;
+FRMERR:	JSR	PC,RSTFRM	;reset frame level
+	MOV	#OPT17,R1
+	BIT	#LOPBIT,PAROPT(R3)
+	BEQ	1$		;branch if dte
+	MOV	#OPT16,R1
+	BIT	#EXTBIT,PAROPT(R3)
+	BEQ	1$		;branch if external loop
+	MOV	#OPT12,R1	;internal loop
+1$:	MOV	(R1)+,R0	;send system-control command
+	EMT	SIO+EXTBAS
+NOOP:	RTS	PC
+;
+; fsa interpreter
+; r0 = event code, r1 = message pointer, r2 = channel pointer
+;
+FSA:	MOV	R1,-(SP)	;save
+	MOVB	CB.STA(R2),R1	;update channel
+	ADD	LNKSTA(R1),R0
+	MOVB	@R0,CB.STA(R2)
+	MOV	(SP)+,R1	;evas
+	JSR	PC,@2(R0)	;call action routine
+	RTS	PC
+;
+; fsa action routines
+;
+; Line-status received
+;
+RSTPKT:	CMPB	X2.VCN(R1),#1	;is line up
+	BEQ	1$		;branch if yes
+	JSR	PC,RSTFRM	;no. reset frame level
+	RTS	PC
+;
+1$:	JSR	PC,RESET	;reset packet level
+	MOV	#OPT13,R1	;send restart command
+	MOV	(R1)+,R0
+	EMT	SIO+EXTBAS
+	RTS	PC
+;
+; Restart received
+;
+RSTACK:	JSR	PC,RESET	;reset packet level
+	MOV	#OPT14,R1	;send restart-ack command
+	MOV	(R1)+,R0
+	EMT	SIO+EXTBAS
+	RTS	PC
+;
+; Ring received
+;
+RING:	MOV	R3,R2		;search for free logical channel
+	ADD	#X25BLK,R2
+	CLRB	X2.LCN(R1)
+1$:	INCB	X2.LCN(R1)	;advance to next channel
+	INCB	X2.LCN(R1)
+	ADD	#CB.LEN,R2
+	CMPB	X2.LCN(R1),LCNMAX(R3)
+	BHIS	CLEARV		;branch if none
+	TSTB	CB.STA(R2)	;is this channel idle
+	BNE	1$		;branch if no
+	MOV	R1,-(SP)	;yes. initialize channel
+	MOV	@SP,R0		;decode calling address
+	ADD	#X2.DAT,R0
+	MOVB	(R0)+,R1
+	ADD	R1,R0
+	INC	R0
+	MOV	R2,R1
+	ADD	#CB.ADR,R1
+	JSR	PC,DECODE
+	MOVB	PARADR(R3),CB.ADR(R2)
+	MOV	(SP)+,R1
+	MOVB	X2.VCN(R1),CB.VCN(R2) ;insert state info
+	MOVB	#TTLSET,CB.TTL(R2)
+	MOVB	#3*2,CB.STA(R2)
+	CLR	-(SP)		;build answer
+	MOV	#CD.ANS,-(SP)
+	MOV	#XO.WRT*400,-(SP)
+	MOVB	X2.LCN(R1),X2.LCN(SP)
+	MOVB	X2.VCN(R1),X2.VCN(SP)
+	MOV	SP,R1		;send command
+	MOV	#6,R0
+	EMT	SIO+EXTBAS
+	ADD	#6,SP
+	RTS	PC
+;
+; Reject received
+;
+REJECT:	JSR	PC,CLEAR	;send clear lc
+	BR	CLEARY
+;
+; Answer received
+;
+ANSWER:	MOVB	X2.VCN(R1),CB.VCN(R2) ;insert state info
+	MOVB	#TTLSET,CB.TTL(R2)
+CLEARY:	MOVB	PARPID(R3),R1	;goose output side
+	.ASYN
+	RTS	PC
+;
+; Clear vc received
+;
+CLEARV:	CLR	-(SP)		;build clear-vc
+	MOV	#1*400,-(SP)
+	MOV	#CD.CLV,-(SP)
+	MOV	#XO.WRT*400,-(SP)
+	MOVB	X2.VCN(R1),X2.LCN(SP)
+	BR	CLR1
+;
+; Clear lc received
+;
+CLEAR:	CLR	-(SP)		;build clear-lc
+	MOV	#1*400,-(SP)
+	MOV	#CD.CLL,-(SP)
+	MOV	#XO.WRT*400,-(SP)
+	MOVB	X2.LCN(R1),X2.LCN(SP)
+CLR1:	MOV	SP,R1		;send message
+	MOV	#7,R0
+	EMT	SIO+EXTBAS
+	ADD	#8.,SP
+	RTS	PC
+;
+; Reset lc received
+;
+RSETLY:	JSR	PC,CLEARY	;goose output side
+RSETLC:	MOV	#CD.RAK,R0	;build reset-ack
+	BR	RST1
+;
+; Interrupt received
+;
+INTRPT:	MOV	#CD.IAK,R0	;build interrupt-ack
+RST1:	CLR	-(SP)
+	MOV	R0,-(SP)
+	MOV	#XO.WRT*400,-(SP)
+	MOVB	X2.LCN(R1),X2.LCN(SP)
+	MOV	SP,R1		;send command
+	MOV	#6,R0
+	EMT	SIO+EXTBAS
+	ADD	#6,SP
+	RTS	PC
+;
+; Subroutines
+;
+; Reset channels
+;
+RSTFRM:	CLRB	X25BLK+CB.STA(R3) ;reset control channel
+RESET:	MOV	R3,R1		;reset all logical channels
+	ADD	#X25BLK,R1
+	CLRB	R0
+1$:	INCB	R0		;reset channel
+	INCB	R0
+	ADD	#CB.LEN,R1
+	CMPB	R0,LCNMAX(R3)
+	BHIS	2$
+	CLRB	CB.STA(R1)
+	BR	1$
+;
+2$:	RTS	PC
+;
+; Encode ip address to x.121 address
+; r0 = ip address pointer, r1 = x.121 address pointer
+; Note: dnic = 0000 0 iiihh00 xx
+;
+ENCODE:	MOV	R2,-(SP)	;save
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	ADD	#12.,R1
+	CLRB	-(R1)		;12 (0)
+	CLRB	-(R1)		;11 (0)
+	TSTB	(R0)+		;discard net number
+	CLR	R2		;10-9 (hh) host number
+	BISB	(R0)+,R2
+	MOV	#2,R4
+1$:	MOV	R2,R3
+	CLR	R2
+	DIV	#10.,R2
+	MOVB	R3,-(R1)
+	SOB	R4,1$
+	MOV	(R0)+,R2	;8-6 (iii) imp number
+	SWAB	R2
+	MOV	#3,R4
+2$:	MOV	R2,R3
+	CLR	R2
+	DIV	#10.,R2
+	MOVB	R3,-(R1)
+	SOB	R4,2$
+	MOV	#5,R4		;5-1 (0)
+3$:	CLRB	-(R1)
+	SOB	R4,3$
+	MOV	(SP)+,R4	;evas
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	RTS	PC
+;
+; Decode x.121 address to ip address
+; r0 = x.121 address pointer, r1 = ip address pointer
+; Note: dnic = 0000 0 iiihh00 xx
+;
+DECODE:	MOV	R2,-(SP)	;save
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	ADD	#5,R0		;1-5
+	CLR	R3		;6-8 (iii) imp number
+	MOV	#3,R4
+1$:	MUL	#10.,R3
+	MOVB	(R0)+,R2
+	BIC	#^C17,R2
+	ADD	R2,R3
+	SOB	R4,1$
+	SWAB	R3
+	MOV	R3,2(R1)
+	CLR	R3		;9-10 (hh) host number
+	MOV	#2,R4
+2$:	MUL	#10.,R3
+	MOVB	(R0)+,R2
+	BIC	#^C17,R2
+	ADD	R2,R3
+	SOB	R4,2$
+	MOVB	R3,1(R1)
+	MOV	(SP)+,R4	;evas
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$SUPD,RO,D
+;
+; Transfer vector
+;
+SBNX25:	.WORD	DCNINR		;0 initialize input
+	.WORD	DCNINP		;1 start input
+	.WORD	RDRIN		;2 process leader
+	.WORD	DCNRDR		;3 process redirect
+	.WORD	DCNINX		;4 initialize output
+	.WORD	DCNOUT		;5 start output
+	.WORD	FRMERR		;6 reset output
+;
+; Event mapping tables
+;
+CATDEC:	.WORD	CAT000		;000 call setup and clearing
+	.WORD	CAT040		;040 virtual circuit control
+	.WORD	CAT100		;100 packet level control
+	.WORD	CAT140		;140 system control
+;
+CAT000:	.WORD	5		;number of entries
+	.WORD	EV.ERR		;000 call
+	.WORD	EV.RNG		;001 ring
+	.WORD	EV.CLV		;002 clear virtual circuit
+	.WORD	SV.ANS+100000	;003 answer
+	.WORD	SV.CLR+100000	;004 clear logical channel
+;
+CAT040:	.WORD	5		;number of entries
+	.WORD	SV.RST+100000	;040 reset
+	.WORD	EV.ERR		;041 reset ack
+	.WORD	SV.INT+100000	;042 interrupt
+	.WORD	EV.ERR		;043 ready
+	.WORD	EV.ERR		;044 interrupt acknowledge
+;
+CAT100:	.WORD	4		;number of entries
+	.WORD	EV.STR		;100 restart
+	.WORD	EV.SAK		;101 restart ack
+	.WORD	EV.ERR		;102 error
+	.WORD	EV.ERR		;103 diagnostic
+;
+CAT140:	.WORD	2		;number of entries
+	.WORD	EV.ERR		;140 system control
+	.WORD	EV.STA		;141 line status
+;
+; State transition tables
+;
+LNKSTA:	.WORD	LNK00,LNK01,LNK02,LNK03,LNK04 ;state vector
+;
+; Control-channel tables
+;
+; State 0, packet restart
+;
+LNK00:	.WORD	0*2,FRMERR	;0 error
+	.WORD	0*2,RSTPKT	;1 line up
+	.WORD	1*2,NOOP	;2 restart
+	.WORD	1*2,NOOP	;3 restart ack
+	.WORD	0*2,FRMERR	;4 ring
+	.WORD	0*2,FRMERR	;5 clear
+;
+; State 1, packet ready
+;
+LNK01:	.WORD	1*2,FRMERR	;0 error
+	.WORD	0*2,RSTPKT	;1 line up
+	.WORD	1*2,RSTACK	;2 restart
+	.WORD	1*2,NOOP	;3 restart ack
+	.WORD	1*2,RING	;4 ring
+	.WORD	1*2,CLEARV	;5 clear
+;
+; Logical-channel tables
+;
+; State 2, call request
+;
+LNK02:	.WORD	0*2,RSETLY	;0 reset
+	.WORD	2*2,INTRPT	;1 interrupt
+	.WORD	3*2,ANSWER	;2 answer
+	.WORD	0*2,REJECT	;3 clear
+	.WORD	4*2,CLEARX	;4 output
+	.WORD	2*2,NOOP	;5 timeout
+;
+; State 3, call ready
+;
+LNK03:	.WORD	0*2,RSETLC	;0 reset
+	.WORD	3*2,INTRPT	;1 interrupt
+	.WORD	3*2,NOOP	;2 answer
+	.WORD	0*2,CLEAR	;3 clear
+	.WORD	3*2,PKTORG	;4 output
+	.WORD	4*2,CLEARX	;5 timeout
+;
+; State 4, call clear
+;
+LNK04:	.WORD	0*2,RSETLY	;0 reset
+	.WORD	4*2,INTRPT	;1 interrupt
+	.WORD	4*2,NOOP	;2 answer
+	.WORD	0*2,CLEARY	;3 clear
+	.WORD	4*2,NOOP	;4 output
+	.WORD	4*2,NOOP	;5 timeout
+;
+OPT10:	.WORD	OPT10X-.-2	;call command
+	.BYTE	0,XO.SIG
+	.BYTE	CD.CAL,0,0,OPT10X-.-1
+	.BYTE	12.
+OPT10A:	.ASCII	'00000IIIHH00'	;called address
+	.BYTE	12.
+OPT10B:	.ASCII	'00000IIIHH00'	;calling address
+	.BYTE	4,314,0,0,0	;protocol field (ip)
+	.BYTE	4,0,0,4,1	;facilities field (ddn standard x.25)
+	.BYTE	0		;user data field (empty)
+OPT10X	=	.
+	.EVEN
+;
+OPT15:	.WORD	OPT15X-.-2	;clear command
+	.BYTE	0,XO.SIG
+	.BYTE	CD.CLL,0,0,1,0
+OPT15X	=	.
+	.EVEN
+;
+OPT12:	.WORD	OPT12X-.-2	;system control internal loop
+	.BYTE	0,XO.WRT
+	.BYTE	CD.CTL,0,0,OPT12X-.-1
+	.BYTE	0,102,3,1
+OPT12X	=	.
+	.EVEN
+;
+OPT16:	.WORD	OPT16X-.-2	;system control external loop
+	.BYTE	0,XO.WRT
+	.BYTE	CD.CTL,0,0,OPT16X-.-1
+	.BYTE	0,114,273,152,1,102,1,1
+OPT16X	=	.
+	.EVEN
+;
+OPT17:	.WORD	OPT17X-.-2	;system control dte
+	.BYTE	0,XO.WRT
+	.BYTE	CD.CTL,0,0,OPT17X-.-1
+	.BYTE	1
+OPT17X	=	.
+	.EVEN
+;
+OPT13:	.WORD	OPT13X-.-2	;restart command
+	.BYTE	0,XO.WRT
+	.BYTE	CD.STR,0,0,0
+OPT13X	=	.
+	.EVEN
+;
+OPT14:	.WORD	OPT14X-.-2	;restart ack command
+	.BYTE	0,XO.WRT
+	.BYTE	CD.SAK,0,0,0
+OPT14X	=	.
+	.EVEN
+;
+	.END
+                                                                 

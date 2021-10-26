@@ -1,0 +1,975 @@
+	.TITLE	CLKTST	Testing utility for ICMP/UDP/NTP time
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Testing utility for ICMP/UDP/NTP time
+;
+; This program calls network time servers and computes statistics from the
+; replies. It uses the ICMP Timestamp message (rfc-792), UDP/TIME protocol
+; (rfc-868) and NTP/TIME (rfc-958). It is designed to read a list of host
+; names from the file CLKTST.TXT in HOSTS.TXT format and send time requests to
+; each one in turn.
+;
+; External symbols
+;
+	.GLOBL	CTRL,NETMSG,RTNMSG ;network routines
+	.GLOBL	RDASC,RDDEC,HASH ;char i/o routines
+;
+; Entry symbols
+;
+	.GLOBL	RDBYT,PRBYT	;char i/o routines
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.GDAT,.GCLK,.WIND,.PRIO ;dcnlib macros
+	.MCALL	.TTYIN,.TTYOU,.PRINT,.EXIT,.QSET ;rt-11 macroni
+	.MCALL	.CSIGE,.READW,.WRITW,.CLOSE,.WAIT
+	.MCALL	.SPND,.RSUM,.MRKT,.CMKT,.SCCA
+	.MCALL	$DFIH,$DFGH,$DFUH,$DFNH,$DFSIG ;moslib macroni
+	.MCALL	CALL,FORMAT	;netlib macros
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	$DFIH			;define internet header
+	$DFGH			;define icmp header
+	$DFUH			;define user datagram header
+	$DFNH			;define network time header
+	$DFSIG			;define interprocess signals
+;
+; Module definitions
+;
+	.MACRO	XADD A,B	;96-bit add
+	ADD	12+A,12+B
+	ADC	10+B
+	ADC	6+B
+	ADC	4+B
+	ADC	2+B
+	ADC	B
+	ADD	10+A,10+B
+	ADC	6+B
+	ADC	4+B
+	ADC	2+B
+	ADC	B
+	ADD	6+A,6+B
+	ADC	4+B
+	ADC	2+B
+	ADC	B
+	LADD	A,B
+	.ENDM	XADD
+;
+	.MACRO	LADD A,B	;48-bit add
+	ADD	4+A,4+B
+	ADC	2+B
+	ADC	B
+	ADD	2+A,2+B
+	ADC	B
+	ADD	A,B
+	.ENDM	LADD
+;
+	.MACRO	LSUB,A,B	;48-bit subtract
+	SUB	4+A,4+B
+	SBC	2+B
+	SBC	B
+	SUB	2+A,2+B
+	SBC	B
+	SUB	A,B
+	.ENDM	LSUB
+;
+	.MACRO	XNEG A		;96-bit complement
+	COM	12+A
+	COM	10+A
+	COM	6+A
+	COM	4+A
+	COM	2+A
+	COM	A
+	ADD	#1,12+A
+	ADC	10+A
+	ADC	6+A
+	ADC	4+A
+	ADC	2+A
+	ADC	A
+	.ENDM	XNEG
+;
+	.MACRO	LNEG A		;48-bit complement
+	COM	4+A
+	COM	2+A
+	COM	A
+	ADD	#1,4+A
+	ADC	2+A
+	ADC	A
+	.ENDM	LNEG
+;
+; Assembly parameters
+;
+QUESIZ	=	20.		;max elements on completion queue
+TCBSIZ	=	256.		;size of tcb
+S.TIM	=	37.*400		;time port number
+S.NTP	=	123.*400	;network time port number
+RTXTIM	=	3*60.		;retry timeout (three seconds)
+RTXMAX	=	2		;default max retries
+SMPMAX	=	8.		;sample size
+ESTMAX	=	200.		;max hosts
+HOSMAX	=	14.		;max host name length
+;
+; Statistics table entry format
+;
+.	=	0
+ES.CNT:	.BLKW	1		;number of samples
+ES.MOD:	.BLKB	1		;leap/version/mode
+ES.STR:	.BLKB	1		;stratum
+	.EVEN
+ES.RID:	.BLKW	2		;reference id
+ES.DLY:	.BLKW	1		;delay
+ES.EST:	.BLKW	2		;min-delay sample
+ES.MAX:	.BLKW	2		;max of samples
+ES.MIN:	.BLKW	2		;min of samples
+ES.SUM:	.BLKW	3		;sum of samples
+ES.SQR:	.BLKW	6		;sum of sample squares
+ES.STX	=	.		;end of statistics area
+ES.ADR:	.BLKW	2		;host address
+ES.NAM:	.BLKB	HOSMAX		;host name (last)
+	.EVEN
+ES.LEN	=	.		;length of entry
+;
+; Procedure segment
+;
+	.PSECT	$BOSI,RO,I
+;
+; Time-server query program
+;
+; Usage: outfile=infile[/option],...
+; outfile	output statistics file
+; infile	input text name/address file (rfc-810 format)
+;
+; Options
+; p:prot	protocol (all, icm, udp, ntp)
+; d		enable debug
+;
+; Initialize files and things
+;
+START:	BIS	#40000,@#44	;disable folding
+	.QSET	#QUEUE,#QUESIZ	;allocate space for completion queue
+	.SCCA	#ARGBLK,#SCCA
+NXTFIL:	MOV	@#42,SP		;reset stack
+	MOV	#<^RALL>,PROTSW	;initialize defaults
+	CLR	DBUGSW
+	.CSIGE	@#50,#DEFEXT,#0	;get file spec
+	BCS	NXTFIL		;branch if error
+	TST	(SP)+		;pop off option count
+1$:	CMP	SP,@#42		;more switches specified
+	BHIS	4$		;branch if no
+	MOV	(SP)+,R1	;yes. get option switch
+	CMPB	R1,#140
+	BLO	2$
+	SUB	#040,R1
+2$:	TST	R1
+	BPL	13$		;branch if no value
+	MOV	(SP)+,R0	;value. retrieve it
+	CMPB	R1,#'P		;is this p:value
+	BNE	3$		;branch if no
+	MOV	R0,PROTSW	;yes. stash protocol
+	BR	1$
+;
+13$:	CMPB	R1,#'D		;is this d
+	BNE	3$		;branch if no
+	INC	DBUGSW		;yes. enable debug
+	BR	1$
+;
+3$:	.PRINT	#COM15		;invalid switch specification
+	BR	NXTFIL
+;
+4$:	CLR	BLOCK		;initialize
+	MOV	#BUFEND,HOSPTR
+	MOV	#3,CHAN
+	MOV	#ESTLST,ESTPTR
+	CLR	SCCA
+	CLR	LPTR
+	.WAIT	#0		;is output file specified
+	BCS	5$		;branch if no
+	CLR	LBLK		;yes. direct output there
+	MOV	#LBUF,LPTR
+5$:	TST	SCCA		;is stop set
+	BNE	7$		;branch if yes
+	CLRB	CHAR		;no. unlock next line
+	JSR	PC,HASH		;is key "HOST"
+	CMP	R0,#<^RHOS>
+	BNE	6$		;branch if no
+	MOV	ESTPTR,R5	;yes. call the troops
+	JSR	PC,PARSE
+	JSR	PC,CTIME
+	BR	6$
+;
+6$:	JSR	PC,RDASC	;skip remainder this line
+	BNE	6$
+	BR	5$
+;
+7$:	TST	LPTR		;is output file open
+	BEQ	NXTFIL		;branch if no
+	JSR	PC,PREOF	;yes. close file
+	TST	LBLK
+	BEQ	NXTFIL
+	.CLOSE	#0
+	BR	NXTFIL
+;
+; Subroutine to parse line and insert host name and address
+;
+PARSE:	MOV	R5,R1		;copy principal address field
+	ADD	#ES.ADR,R1
+1$:	JSR	PC,RDDEC
+	MOVB	R0,(R1)+
+	JSR	PC,RDDEC
+	MOVB	R0,(R1)+
+	JSR	PC,RDDEC
+	MOVB	R0,(R1)+
+	JSR	PC,RDDEC
+	MOVB	R0,(R1)+
+2$:	CMPB	CHAR,#':	;is this end of field
+	BEQ	3$		;branch if yes
+	JSR	PC,RDASC
+	BNE	2$		;branch if no
+3$:	MOV	R5,R1		;copy principal name field
+	ADD	#ES.NAM,R1
+	CLR	R2
+4$:	CMP	R2,#HOSMAX-1	;parse next field
+	BHIS	6$		;branch if overflow
+	JSR	PC,RDASC	;get next char
+	BEQ	5$		;branch if eol
+	CMPB	R0,#',		;is this end of field
+	BEQ	5$		;branch if yes
+	CMPB	R0,#':
+	BEQ	5$		;branch if yes
+	MOVB	R0,(R1)+	;no. copy char
+	INC	R2
+	BR	4$
+;
+5$:	CMP	R2,#HOSMAX-1	;pad with trailing <sp>
+	BHIS	6$		;branch if complete
+	MOVB	#<' >,(R1)+
+	INC	R2
+	BR	5$
+;
+6$:	CLRB	(R1)+		;insert backstop
+	RTS	PC
+;
+; Subrouting to call time server
+;
+CTIME:	CLR	FLIPSW		;initialize
+FLIP:	MOV	#1,WEIGHT	;set defaults
+	MOV	R5,R1		;initialize statistics area
+	MOV	#ES.STX/2,R2
+1$:	CLR	(R1)+
+	SOB	R2,1$
+	CLRB	ES.MOD(R5)
+	CLRB	ES.STR(R5)
+	CLR	ES.RID(R5)
+	CLR	ES.RID+2(R5)
+	MOV	#177777,ES.DLY(R5)
+	MOV	#100000,ES.MAX(R5)
+	MOV	#000000,ES.MAX+2(R5)
+	MOV	#077777,ES.MIN(R5)
+	MOV	#177777,ES.MIN+2(R5)
+	CMP	PROTSW,#<^RALL>	;is this alternating protocol
+	BNE	2$		;branch if no
+	ADD	#2,FLIPSW	;yes. three-way branch
+	ADD	FLIPSW,PC
+	BR	.		;0 crump
+	BR	6$		;2 icmp
+	BR	3$		;4 udp/time
+	CLR	FLIPSW		;6 ntp/time
+	BR	5$
+;
+2$:	CMP	PROTSW,#<^RUDP>	;is this udp
+	BNE	4$		;branch if no
+3$:	MOVB	#P.UDP,CCBPRO	;udp
+	MOV	#S.TIM,CCBADR+4
+	FORMAT	#COM18,R5
+	BR	7$
+;
+4$:	CMP	PROTSW,#<^RNTP>	;is this ntp
+	BNE	6$		;branch if no
+5$:	MOVB	#P.UDP,CCBPRO	;ntp
+	MOV	#S.NTP,CCBADR+4
+	FORMAT	#COM18B,R5
+	BR	7$
+;
+6$:	MOVB	#P.IMP,CCBPRO	;icmp
+	FORMAT	#COM18A,R5
+7$:	CLR	TCB		;(pass check in open)
+	MOV	ES.ADR(R5),CCBADR
+	MOV	ES.ADR+2(R5),CCBADR+2
+	MOV	#RTXMAX,RETRY
+	CALL	CTRL,#CM.OPN,#CCB,#TCB ;open connection
+	TST	R0
+	BEQ	8$		;branch if no error
+	JSR	PC,RTNMSG	;error. display message
+	BR	9$
+;
+8$:	.SPND			;lots happen in there
+9$:	TST	SCCA		;no. is control-c pending
+	BNE	11$		;branch if yes
+	TST	ES.CNT(R5)	;no. were samples stored
+	BEQ	11$		;branch if no
+	TST	FLIPSW		;yes. is this new host
+	BEQ	10$		;branch if no
+	JMP	FLIP		;yes. back for more
+;
+10$:	CLC			;normal exit
+	RTS	PC
+;
+11$:	CLR	FLIPSW		;start out fresh
+	SEC			;error exit
+	RTS	PC
+;
+; Net trap routine
+;
+NCA:	MOV	SD.ADR(R0),R1	;get signal particulars
+	MOV	SD.CHN(R0),R2
+	.CMKT	#ARGBLK,#1,#0	;kill timeout
+	BIC	#^C17,R2	;decode signal
+	MOV	R2,R0
+	ASL	R2
+	ADD	R2,PC
+	BR	SIGOPN		;0 open
+	BR	SIGERR		;1 connection error
+	BR	SIGERR		;2 host not responding
+	BR	SIGCLS		;3 closed
+	BR	SIGXXX		;4 data available
+	BR	SIGERR		;5 connection reset
+	BR	SIGERR		;6 send complete
+	BR	SIGERR		;7 remote disconnect
+	BR	SIGERR		;10 remote interrupt
+	BR	SIGERR		;11 nsp (decnet)
+;
+SIGXXX:	JMP	SIGDAT
+;
+SIGCLS:	.RSUM			;close complete. unlock mainline
+	RTS	PC
+;
+SMPSRV:	CMP	ES.CNT(R5),#SMPMAX ;is sample complete
+	BHIS	1$		;branch if yes
+	DEC	RETRY		;no. has max retries been reached
+	BNE	SIGOPN		;branch if no
+1$:	JSR	PC,SUMSTX	;yes. compute statistics
+	BR	SIGERY
+;
+SIGERR:	JSR	PC,NETMSG	;net error. display message
+SIGERY:	CALL	CTRL,#CM.CLS,#0,#TCB ;udp close
+	RTS	PC
+;
+SIGERZ:	JSR	PC,RTNMSG	;display error message
+	CLR	R0		;lose clout
+	.PRIO
+	BR	SIGERY
+;
+SIGOPN:	TST	SCCA		;is control-c pending
+	BNE	SIGERY		;branch if yes
+	MOV	#1,R0		;assume clout
+	.PRIO
+	CALL	CTRL,#CM.GET,#TEMP,#TCB ;no. allocate and init ip datagram
+	TST	R0
+	BNE	SIGERZ		;branch if error
+	MOV	TEMP,R1		;get packet pointers
+	MOV	R1,R2
+	ADD	PH.OFS(R1),R2
+	CMPB	CCBPRO,#P.UDP	;is this udp
+	BEQ	2$		;branch if yes
+	MOV	#GH.LEN,PH.LNG(R1) ;icmp. complete icmp header
+	MOV	#GC.TSP,GH.TYP(R2)
+	CLR	GH.ID(R2)
+	MOV	PH.TIM(R1),R0	;get transmit time
+	MOV	PH.TIM+2(R1),R1
+	MOV	R1,GH.SEQ(R2)	;(just for habit)
+	SWAB	R0
+	SWAB	R1
+	MOV	R0,GH.ORG(R2)
+	MOV	R1,GH.ORG+2(R2)
+	MOV	R0,GH.REC(R2)
+	MOV	R1,GH.REC+2(R2)
+	MOV	R0,GH.XMT(R2)
+	MOV	R1,GH.XMT+2(R2)
+	CLR	GH.CHK(R2)	;compute checksum
+	MOV	TEMP,R1
+	JSR	PC,CHKSUM
+	MOV	R0,GH.CHK(R2)
+	CALL	CTRL,#CM.SND,R1,#TCB ;send ip packet
+	TST	R0
+	BNE	SIGERZ		;branch if error
+	BR	SNDMKT
+;
+2$:	JSR	PC,NTPCNV	;get current udp/ntp time
+	CMP	CCBADR+4,#S.TIM	;is this udp time
+	BNE	3$		;branch if no
+	MOV	#UH.LEN,PH.LNG(R1) ;yes. set message length
+	MOV	#T1,R1		;save source timestamp
+	MOV	#TSPORG,R2
+	JSR	PC,NTPDCN
+	BR	SIGSND
+;
+3$:	MOV	#NT.LEN,PH.LNG(R1) ;ntp time. set message length
+	ADD	#UH.LEN,R2	;construct ntp message
+	MOVB	#1*10+3,(R2)+	;(nt.sta) leap/version/mode
+	CLRB	(R2)+		;(nt.str) local clock stratum
+	CLR	(R2)+		;(nt.pre) local clock precision
+	CLR	(R2)+		;(nt.err) synchronization delay
+	CLR	(R2)+
+	CLR	(R2)+		;(nt.drf) synchronization dispersion
+	CLR	(R2)+
+	CLR	(R2)+		;(nt.rid) reference clock id
+	CLR	(R2)+
+	CLR	(R2)+		;(nt.ref) reference timestamp
+	CLR	(R2)+
+	CLR	(R2)+
+	CLR	(R2)+
+	SWAB	TSPORG		;baws
+	SWAB	TSPORG+2
+	SWAB	TSPORG+4
+	MOV	#3,R0		;(nt.org,nt.rec,nt.xmt) copy timestamps
+4$:	MOV	TSPORG,(R2)+
+	MOV	TSPORG+2,(R2)+
+	MOV	TSPORG+4,(R2)+
+	CLR	(R2)+
+	SOB	R0,4$
+SIGSND:	CALL	CTRL,#CM.UDP,TEMP,#TCB ;send udp packet
+	TST	R0
+	BEQ	SNDMKT		;branch if error
+	JMP	SIGERZ
+;
+SNDMKT:	CLR	R0		;lose clout
+	.PRIO
+	.MRKT	#ARGBLK,#TIME1,#SMPSRV,#1 ;arm watchdog bark
+	RTS	PC
+;
+SIGDAT:	MOV	#RTXMAX,RETRY	;rearm for next engagement
+	CLR	R0		;map packet into user space
+	.WIND
+	MOV	R1,R3		;shuffle packet pointers
+	MOV	R3,R2
+	ADD	PH.OFS(R3),R2
+	TST	DBUGSW		;dump packet if debug
+	BEQ	1$
+	JSR	PC,DUMP
+;
+; ICMP Timestamp message (rfc-792)
+;
+1$:	CMPB	IH.PRO(R3),#P.IMP ;is this icmp
+	BNE	UDP10		;branch if no
+	CMP	PH.LNG(R3),#GH.LEN ;yes. is format correct
+	BLO	ERR10		;branch if no
+	TSTB	GH.REC(R2)	;yes. is reply valid
+	BMI	ERR11		;branch if no
+	TSTB	GH.XMT(R2)
+	BMI	ERR11		;branch if no
+	ADD	#GH.ORG,R2	;yes. copy timestamps
+	MOV	#T1,R1
+	MOV	#3,R0
+2$:	CLR	(R1)+		;t1,t2,t3
+	MOV	(R2)+,@R1
+	SWAB	(R1)+
+	MOV	(R2)+,@R1
+	SWAB	(R1)+
+	SOB	R0,2$
+	CLR	(R1)+		;t4
+	MOV	PH.TIM(R3),(R1)+
+	MOV	PH.TIM+2(R3),(R1)+
+	BR	PRX
+;
+; UDP Time Protocol (rfc-868)
+;
+UDP10:	CMP	PH.LNG(R3),#UH.LEN ;udp. is format correct
+	BLO	ERR10		;branch if no
+	JSR	PC,NTPCNV	;yes. get current udp/ntp time
+	CMP	UH.SRC(R2),#S.TIM ;is this udp time
+	BNE	NTP10		;branch if no
+	CMP	PH.LNG(R3),#UH.LEN+4 ;yes. is format correct
+	BLO	ERR10		;branch if no
+	ADD	#UH.LEN+4,R2	;yes. swab decks
+	SWAB	-(R2)
+	SWAB	-(R2)
+	MOV	#T2,R1		;t2,t3
+	JSR	PC,UDPDCN
+	MOV	T2+4,T3+4
+	MOV	T2+2,T3+2
+	MOV	T2,T3
+	MOV	#T4,R1		;t4
+	MOV	#TSPORG,R2
+	JSR	PC,NTPDCN
+	BR	PRX
+;
+ERR10:	FORMAT	#COM21		;invalid packet format
+	BR	ERR12A
+;
+ERR11:	FORMAT	#COM21A		;unknown time
+	BR	ERR12A
+;
+ERR12:	FORMAT	#COM21B		;invalid time
+ERR12A:	CALL	CTRL,#CM.FRE,R3,#TCB ;free ip packet
+	JMP	SIGERY
+;
+; NTP time (rfc-958)
+;
+NTP10:	CMP	UH.SRC(R2),#S.NTP ;is this ntp time
+	BNE	ERR10		;branch if no
+	CMP	PH.LNG(R3),#NT.LEN ;yes. is format correct
+	BLO	ERR10		;branch if no
+	MOV	ESTPTR,R5
+	MOVB	NT.STA(R2),ES.MOD(R5)
+	MOVB	NT.STR(R2),ES.STR(R5)
+	MOV	NT.RID(R2),ES.RID(R5)
+	MOV	NT.RID+2(R2),ES.RID+2(R5)
+	ADD	#NT.ORG+24.,R2	;yes. swab decks
+	MOV	#12.,R0
+1$:	SWAB	-(R2)
+	SOB	R0,1$
+	MOV	#T1,R1		;convert to milliseconds
+	JSR	PC,NTPDCN	;t1
+	JSR	PC,NTPDCN	;t2
+	JSR	PC,NTPDCN	;t3
+	MOV	#TSPORG,R2	;t4
+	JSR	PC,NTPDCN
+;
+; Compute delay and offset
+;
+PRX:	LSUB	T1,T2		;t2 - t1
+	LSUB	T4,T3		;t3 - t4
+	MOV	T2+4,DELAY+4
+	MOV	T2+2,DELAY+2
+	MOV	T2,DELAY
+	LADD	T3,T2		;((t2 - t1) + (t3 - t4))/2 = c
+	ASR	T2
+	ROR	T2
+	ROR	T2
+	MOV	T2+4,OFFSET+4
+	MOV	T2+2,OFFSET+2
+	MOV	T2,OFFSET
+	LSUB	T3,DELAY	;(t2 - t1) - (t3 - t4) = d
+	MOV	DELAY+4,DELAY
+	JSR	PC,STAX		;update statistics
+	CALL	CTRL,#CM.FRE,R3,#TCB ;free ip packet
+	JMP	SMPSRV
+;
+; Subroutine to convert udp/ntp time to milliseconds
+; R2 = input pointer, r1 = output pointer
+;
+UDPDCN:	MOV	(R2)+,ACCUM+6	;get udp time (32 bits)
+	MOV	(R2)+,ACCUM+10
+	CLR	ACCUM+12
+	BR	NTP1
+;
+NTPDCN:	MOV	(R2)+,ACCUM+6	;get ntp time (64 bits)
+	MOV	(R2)+,ACCUM+10
+	MOV	(R2)+,ACCUM+12
+	TST	(R2)+
+NTP1:	MOV	#1000.,OFFSET+4	;convert to milliseconds
+	SXT	OFFSET+2
+	SXT	OFFSET	
+	JSR	PC,BIGMUL
+	MOV	ACCUM+4,(R1)+
+	MOV	ACCUM+6,(R1)+
+	MOV	ACCUM+10,(R1)+
+	RTS	PC
+;
+; Subroutine to update statistics
+; offset = sample
+;
+STAX:
+;	FORMAT	#COM27,#CCB	;info line
+;	FORMAT	#COM28,#STOBGN
+	MOV	ESTPTR,R5	;set pointer
+	CMP	DELAY,ES.DLY(R5) ;is delay min
+	BHIS	1$		;branch if no
+	MOV	DELAY,ES.DLY(R5) ;yes. stash offset
+	MOV	OFFSET+4,ES.EST+2(R5)
+	MOV	OFFSET+2,ES.EST(R5)
+1$:	CMP	OFFSET+2,ES.MAX(R5) ;update sample max
+	BLT	3$
+	BGT	2$
+	CMP	OFFSET+4,ES.MAX+2(R5)
+	BLE	3$
+2$:	MOV	OFFSET+4,ES.MAX+2(R5)
+	MOV	OFFSET+2,ES.MAX(R5)
+3$:	CMP	OFFSET+2,ES.MIN(R5) ;update sample min
+	BGT	5$
+	BLT	4$
+	CMP	OFFSET+4,ES.MIN+2(R5)
+	BGE	5$
+4$:	MOV	OFFSET+4,ES.MIN+2(R5)
+	MOV	OFFSET+2,ES.MIN(R5)
+5$:	ADD	WEIGHT,ES.CNT(R5) ;update sample count
+	MOV	WEIGHT,TEMP	;update sample sum
+6$:	LADD	OFFSET,ES.SUM(R5)
+	DEC	TEMP
+	BNE	6$
+	TST	OFFSET		;form abs value
+	BPL	7$
+	LNEG	OFFSET
+7$:	MOV	OFFSET+4,ACCUM+12 ;form square
+	MOV	OFFSET+2,ACCUM+10
+	MOV	OFFSET,ACCUM+6
+	JSR	PC,BIGMUL
+	MOV	WEIGHT,TEMP	;update sample square
+8$:	XADD	ACCUM,ES.SQR(R5)
+	DEC	TEMP
+	BNE	8$
+	RTS	PC
+;
+; Subroutine to compute summary statistics
+;
+SUMSTX:	MOV	ESTPTR,R5	;set pointer
+	CLR	DELAY		;compute E(x)
+	MOV	ES.SUM+4(R5),ACCUM+12
+	MOV	ES.SUM+2(R5),ACCUM+10
+	MOV	ES.SUM(R5),ACCUM+6
+	SXT	ACCUM+4
+	SXT	ACCUM+2
+	SXT	ACCUM
+	BPL	1$
+	COM	DELAY
+	XNEG	ACCUM
+1$:	MOV	ES.CNT(R5),OFFSET+4
+	NEG	OFFSET+4
+	SXT	OFFSET+2	
+	SXT	OFFSET	
+	JSR	PC,BIGDIV
+	TST	DELAY
+	BPL	2$
+	XNEG	ACCUM
+2$:	MOV	ACCUM+12,DELAY+4
+	MOV	ACCUM+10,DELAY+2
+	MOV	ACCUM+6,DELAY
+	MOV	ES.SUM+4(R5),OFFSET+4 ;compute sum(x)^2
+	MOV	ES.SUM+2(R5),OFFSET+2
+	MOV	ES.SUM(R5),OFFSET
+	TST	OFFSET
+	BPL	3$
+	LNEG	OFFSET
+3$:	MOV	OFFSET+4,ACCUM+12
+	MOV	OFFSET+2,ACCUM+10
+	MOV	OFFSET,ACCUM+6
+	JSR	PC,BIGMUL
+	MOV	ES.CNT(R5),OFFSET+4 ;compute (sum(x)^2)/n
+	NEG	OFFSET+4
+	SXT	OFFSET+2	
+	SXT	OFFSET	
+	JSR	PC,BIGDIV
+	XNEG	ACCUM		;compute sum(x^2) - (sum(x)^2)/n
+	XADD	ES.SQR(R5),ACCUM
+	MOV	ES.CNT(R5),OFFSET+4 ;compute E(x^2) - E(x)^2
+	NEG	OFFSET+4
+	SXT	OFFSET+2	
+	SXT	OFFSET	
+	JSR	PC,BIGDIV
+	TST	ES.CNT(R5)	;were samples stored
+	BNE	4$		;branch if yes
+	FORMAT	#COM17,R5	;no. so advise
+	BR	5$
+;
+4$:	FORMAT	#COM19,R5	;display sample statistics
+	FORMAT	#COM20,#STOBGN
+5$:	RTS	PC
+;
+; Subroutine to read byte from input file
+; Returns r0 = char, cc(z) = 1 if end line
+;
+RDBYT:	CMPB	CHAR,#LF	;is line empty
+	BEQ	7$		;branch if yes
+	CMP	HOSPTR,#BUFFER+512. ;no. is buffer empty
+	BLO	2$		;branch if no
+1$:	.READW	#ARGBLK,CHAN,#BUFFER,#256.,BLOCK ;yes. read block
+	BCS	3$		;branch if error
+	INC	BLOCK
+	MOV	#BUFFER,HOSPTR
+2$:	MOVB	@HOSPTR,R0	;fetch byte
+	INC	HOSPTR
+	BIC	#^C177,R0
+	CMPB	R0,#<' >
+	BEQ	RDBYT		;delete space
+	CMPB	R0,#LF
+	BEQ	6$		;end on <lf>
+	CMPB	CHAR,#';
+	BEQ	RDBYT		;delete ";" and rest of line
+	MOVB	R0,CHAR		;normal exit
+	CLZ
+	RTS	PC
+;
+3$:	TSTB	@#52		;is this end file
+	BEQ	4$		;branch if yes
+	.PRINT	#COM13		;no. input file i/o error
+	BR	5$
+;
+4$:	INC	CHAN		;advance to next filespec
+	.WAIT	CHAN
+	BCS	5$		;branch if not there
+	CLR	BLOCK
+	BR	1$
+
+5$:	INC	SCCA		;set stop flag
+	MOV	#LF,R0
+6$:	MOVB	R0,CHAR		;end line exit
+7$:	CLR	R0
+	RTS	PC
+	RTS	PC
+;
+; Subroutine to write byte
+; R0 = byte
+;
+PRBYT:	TST	LPTR		;is output file open
+	BNE	1$		;branch if yes
+	.TTYOU			;no. easy come, easy go
+	RTS	PC
+;
+1$:	MOVB	R0,@LPTR	;stash byte
+	INC	LPTR
+	CMP	LPTR,#LBUF+512.	;is buffer full
+	BHIS	PREOF		;branch if yes
+	RTS	PC
+;
+; Subroutine to flush output format buffer
+;
+PREOF:	CMP	LPTR,#LBUF	;is output format buffer empty
+	BLOS	3$		;branch if yes
+1$:	CMP	LPTR,#LBUF+512.	;no. zero-fill block
+	BHIS	2$
+	CLRB	@LPTR
+	INC	LPTR
+	BR	1$
+;
+2$:	.WRITW	#ARGBLK,#0,#LBUF,#256.,LBLK ;yes. write buffer
+	BCS	4$		;branch if error
+	INC	LBLK
+	MOV	#LBUF,LPTR
+3$:	RTS	PC
+;
+4$:	.PRINT	#COM11		;output file i/o error
+	.EXIT
+;
+; Subroutine to convert internal time to udp/ntp format
+; Converts date, time to tsporg (48 bits)
+;
+NTPCNV:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	.GDAT			;get date
+	BIC	#140000,R0
+	MUL	#21600.,R0	;(60*60*24/4) convert to day-seconds
+	ASHC	#2,R0		;(4)
+	ADD	#58752.,R1	;(2,272,060,800) 0000 1 january 1972
+	ADC	R0
+	ADD	#34668.,R0
+	MOV	R0,TSPORG
+	MOV	R1,TSPORG+2
+	CLR	TSPORG+4
+	CLR	ACCUM		;convert milliseconds to seconds
+	CLR	ACCUM+2
+	CLR	ACCUM+4
+	.GCLK
+	MOV	R0,ACCUM+6
+	MOV	R1,ACCUM+10
+	CLR	ACCUM+12
+	MOV	#-1000.,OFFSET+4
+	SXT	OFFSET+2
+	SXT	OFFSET
+	JSR	PC,BIGDIV
+	ADD	ACCUM+12,TSPORG+4 ;add to day-seconds
+	ADC	TSPORG+2
+	ADC	TSPORG
+	ADD	ACCUM+10,TSPORG+2
+	ADC	TSPORG
+	ADD	ACCUM+6,TSPORG
+	MOV	(SP)+,R3	;restore registers
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to compute icmp checksum
+; R1 = packet pointer
+;
+CHKSUM:	MOV	R1,-(SP)	;save few
+	MOV	R2,-(SP)
+	CLR	R0
+	MOV	PH.LNG(R1),R2	;get data pointers
+	ADD	PH.OFS(R1),R1
+	CMP	R2,#GH.HDR	;is packet long enough
+	BLO	3$		;branch if no
+	CLR	-(SP)		;yes. complete checksum
+	ASR	R2
+	ROL	@SP
+1$:	ADD	(R1)+,R0	;accumulate checksum
+	ADC	R0
+	DEC	R2
+	BNE	1$
+	TST	@SP
+	BEQ	4$
+	MOVB	(R1)+,@SP
+4$:	ADD	(SP)+,R0
+	ADC	R0
+	TST	R0		;clean up complement
+	BEQ	2$
+3$:	COM	R0
+2$:	MOV	(SP)+,R2	;restore few
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; 96-bit multiply
+; offset = multiplier, accum = multiplicand
+;
+BIGMUL:	CLR	ACCUM		;initialize
+	CLR	ACCUM+2
+	CLR	ACCUM+4
+	MOV	#49.,R0
+1$:	ASR	ACCUM		;shift partial product right
+	ROR	ACCUM+2
+	ROR	ACCUM+4
+	ROR	ACCUM+6
+	ROR	ACCUM+10
+	ROR	ACCUM+12
+	BCC	2$		;branch if lsb = 0
+	LADD	OFFSET,ACCUM	;lsb ~= 0. add multiplier
+2$:	SOB	R0,1$
+	RTS	PC
+;
+; 96-bit divide
+; offset = (-)divisor, accum = dividend
+;
+BIGDIV:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	CLR	R1		;clear remainder
+	CLR	R2
+	CLR	R3
+	MOV	#97.,R0		;initialize
+1$:	ROL	R3		;shift partial remainder left
+	ROL	R2
+	ROL	R1
+	ADD	OFFSET+4,R3	;subtract divisor
+	ADC	R2
+	ADC	R1
+	ADD	OFFSET+2,R2
+	ADC	R1
+	ADD	OFFSET,R1
+	BCS	2$		;branch if no underflow
+	SUB	OFFSET+4,R3	;restore partial remainder
+	SBC	R2
+	SBC	R1
+	SUB	OFFSET+2,R2
+	SBC	R1
+	SUB	OFFSET,R1
+2$:	ROL	ACCUM+12	;rotate partial quotient left
+	ROL	ACCUM+10
+	ROL	ACCUM+6
+	ROL	ACCUM+4
+	ROL	ACCUM+2
+	ROL	ACCUM
+	SOB	R0,1$
+	MOV	R1,ACCUM
+	MOV	R2,ACCUM+2
+	MOV	R3,ACCUM+4
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to dump icmp datagram
+; R1 = packet pointer
+;
+DUMP:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	PH.LNG(R1),R2	;compute datagram length
+	ADD	PH.OFS(R1),R2
+	SUB	#BUFLDR,R2
+	INC	R2
+	ASR	R2
+	ADD	#BUFLDR,R1	;point to ip header
+	MOV	R1,TEMP		;display current address
+	FORMAT	#DMP00,#TEMP
+4$:	MOV	#8.,R3		;set loop count
+2$:	FORMAT	#DMP01		;display current word
+	TST	(R1)+
+	DEC	R2
+	BLE	3$		;branch if done
+	SOB	R3,2$		;loop until end line
+	FORMAT	#DMP02		;end line
+	BR	4$
+;
+3$:	FORMAT	#DMP03		;end line
+	MOV	(SP)+,R3	;restore registers
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D	;read-only data
+;
+TIME1:	.WORD	0,RTXTIM	;reply timeout
+DEFEXT:	.RAD50	'TXTDAT      '	;default extensions
+CHAR:	.BLKB	1		;break char
+COM15:	.ASCIZ	'?CLKTST-F-Invalid option'
+COM13:	.ASCIZ	'?CLKTST-F-Input file i/o error'
+COM11:	.ASCIZ	'?CLKTST-F-Output file i/o error'
+COM21:	.ASCIZ	'W-Invalid packet format'
+COM21A:	.ASCIZ	'W-Unknown time'
+COM21B:	.ASCIZ	'W-Invalid time'
+COM27:	.ASCIZ	'?CLKTST-I-^C'<CCBADR-CCB>' ^LD ^LT^+'
+COM28:	.ASCIZ	' ^I'<DELAY-STOBGN>' ^SMI'<OFFSET+2-STOBGN>
+COM24:	.ASCIZ	' ^I'<ES.CNT>' ^SMI'<ES.SUM+2>' ^MI'<ES.SQR+10>
+COM18:	.ASCIZ	'U ^A'<ES.NAM>' ^C'<ES.ADR>'	^+'
+COM18A:	.ASCIZ	'I ^A'<ES.NAM>' ^C'<ES.ADR>'	^+'
+COM18B:	.ASCIZ	'N ^A'<ES.NAM>' ^C'<ES.ADR>'	^+'
+COM17:	.ASCIZ	'W-No response'
+COM19:	.ASCII	'^BK'<ES.MOD>' ^BI'<ES.STR>' ^I'<ES.CNT>' ^C'<ES.RID>
+	.ASCIZ	'	^I'<ES.DLY>'	^SMI'<ES.EST>'	^SMI'<ES.MAX>'	^SMI'<ES.MIN>'^+'
+COM20:	.ASCIZ	'	^SMI'<DELAY+2-STOBGN>'	^MI'<ACCUM+10-STOBGN>
+DMP00:	.ASCIZ	'^K'<0>' ^+'
+DMP01:	.ASCIZ	' ^K'<0>'^+'
+DMP02:	.ASCIZ	'^/       ^+'
+DMP03:	.BYTE	0
+	.EVEN
+;
+	.PSECT	$DATA,RW,I	;initialized read/write data
+;
+; Connection control block
+;
+CCB:	.WORD	TCBSIZ		;ccb length
+	.WORD	NCA		;completion routine
+CCBPRO:	.BYTE	P.UDP,0		;protocol, flags
+	.WORD	0,0,0		;local socket (default)
+CCBADR:	.WORD	0,0,0		;remote socket
+	.WORD	0,0		;max datagram size, options (default)
+;
+	.PSECT	$ERAS,RW,I	;read/write data
+;
+STOBGN	=	.		;beginning of format area
+TEMP:	.BLKW	1		;temporary
+ARGBLK:	.BLKW	5		;rt-11 argument block
+CHAN:	.BLKW	1		;input file channel
+PROTSW:	.BLKW	1		;protocol
+FLIPSW:	.BLKW	1		;protocol switch (alt)
+DBUGSW:	.BLKW	1		;debug switch
+BLOCK:	.BLKW	1		;input block
+HOSPTR:	.BLKW	1		;input buffer pointer
+LBLK:	.BLKW	1		;output block
+LPTR:	.BLKW	1		;output buffer pointer
+ESTPTR:	.BLKW	1		;statistics table pointer
+SCCA:	.BLKW	1		;stop switch
+WEIGHT:	.BLKW	1		;sample weight
+RETRY:	.BLKW	1		;retry count
+T1:	.BLKW	3		;source timestamp
+T2:	.BLKW	3		;receive timestamp
+T3:	.BLKW	3		;transmit timestamp
+T4:	.BLKW	3		;destination timestamp
+DELAY:	.BLKW	3		;48-bit operand
+OFFSET:	.BLKW	3		;48-bit operand
+TSPORG:	.BLKW	3		;48-bit operand
+ACCUM:	.BLKW	6		;96-bit accumulator
+QUEUE:	.BLKW	QUESIZ.*7.	;space for completion queue
+TCB:	.BLKW	TCBSIZ		;transmission control block
+BUFFER:	.BLKW	256.		;input buffer
+BUFEND	=	.		;end of input buffer
+LBUF:	.BLKW	256.		;output buffer
+ESTLST:	.BLKW	ESTMAX*ES.LEN/2	;statistics table
+ESTEND	=	.		;end of statistics table
+	.EVEN
+;
+	.END	START
+                                                                                                           

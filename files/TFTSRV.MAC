@@ -1,0 +1,396 @@
+	.TITLE	TFTSRV	TFTP server
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn - tftp server
+;
+; This program is an internet trivial file-transfer protocol server allegedly
+; compatible with rfc783.
+;
+; Note: Whatcha see is whatcha get. This turkey ignores tftp transfer mode.
+; Only one transfer is supported at a time.
+;
+; TFTP Formats
+;
+; Type   Op #     Format without UDP header
+;        2 bytes    string    1 byte    string    1 byte
+;       +-------+------------+------+------------+------+
+; RRQ/  | 01/02 |  Filename  |   0  |    Mode    |   0  |
+; WRQ   +-------+------------+------+------------+------+
+;        2 bytes    2 bytes      n bytes
+;       +-------+------------+------------+
+; DATA  | 03    |   Block #  |    Data    |
+;       +-------+------------+------------+
+;        2 bytes    2 bytes
+;       +-------+------------+
+; ACK   | 04    |   Block #  |
+;       +-------+------------+
+;        2 bytes    2 bytes      string    1 byte
+;       +-------+------------+------------+------+
+; ERROR | 05    |  ErrorCode |   ErrMsg   |   0  |
+;       +-------+------------+------------+------+
+;
+; External symbols
+;
+	.GLOBL	GETPKT,SNDPKT,FREPKT,CONECT ;utility routines
+	.GLOBL	OPNBLK		;connection block
+	.GLOBL	BLOCK,MAXBLK,RETRY,TFTDST,TFTSRC,TIMER ;tftp state
+	.GLOBL	UDPDST,UDPSRC	;address/port fields
+;
+; Entry symbols
+;
+	.GLOBL	TFTREQ		;file request
+	.GLOBL	TFTOUT		;timout entry
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR	;dcnlib definitions
+	.MCALL	.LGD		;dcnlib macros
+	.MCALL	$DFIH,$DFUH,$DFSIG ;moslib definitions
+	.MCALL	DFCON,CALL,FORMAT ;netlib macros
+	.MCALL	.CSISP,.ENTER,.LOOKU,.PURGE,.CLOSE,.READW,.WRITW ;rt-11 macros
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.LGD			;define login file entry
+	$DFIH			;define internet header
+	$DFUH			;define user datagram header
+	$DFSIG			;define interprocess signals
+	DFCON			;define connection block
+;
+; Module definitions
+;
+RTXMAX	=	4.		;max retransmissions
+TIMOUT	=	10.		;ack timeout (sec)
+IDLOUT	=	60.		;idle timeout (sec)
+;
+; Trivial file-transfer protocol (tftp) header
+;
+.	=	UH.LEN
+TF.COD:	.BLKW	1		;operation code
+TX.RRQ	=	1		;read request
+TX.WRQ	=	2		;write request
+TX.DAT	=	3		;data
+TX.ACK	=	4		;ack
+TX.ERR	=	5		;error
+TF.BLK:	.BLKW	1		;block number/error code
+ER.UNS	=	0		;unspecified
+ER.FNF	=	1		;file not found
+ER.ACC	=	2		;access violation
+ER.BIG	=	3		;disk full or allocation exceeded
+ER.BAD	=	4		;illegal tftp operation
+ER.TID	=	5		;unknown transfer id
+ER.DUP	=	6		;file already exists
+ER.NSU	=	7		;no such user
+TF.LEN	=	.		;end of tftp header
+;
+	.PSECT	$BOSI,RO,I
+;
+; File request
+; R0 = udp length, r1 = packet pointer, r2 = udp header pointer
+;
+TFTREQ:	MOV	R1,TEMP		;save packet pointer
+	MOV	R2,R3
+	ADD	#TF.LEN,R3
+	SUB	#TF.LEN,R0
+	BMI	2$		;branch if too short
+	MOV	R0,SIZE
+	TST	CMMD		;is connection open
+	BNE	1$		;branch if yes
+	MOV	UDPDST,TFTDST ;no. capture address fields
+	MOV	UDPDST+2,TFTDST+2
+	MOV	UDPDST+4,TFTDST+4
+	MOV	UDPSRC,TFTSRC
+	MOV	UDPSRC+2,TFTSRC+2
+	MOV	UDPSRC+4,TFTSRC+4
+1$:	CMP	UDPDST,TFTDST ;is this for current connection
+	BNE	3$		;branch if no
+	CMP	UDPDST+2,TFTDST+2
+	BNE	3$		;branch if no
+	CMP	UDPDST+4,TFTDST+4
+	BNE	3$		;branch if no
+	CMP	UDPSRC,TFTSRC
+	BNE	3$		;branch if no
+	CMP	UDPSRC+2,TFTSRC+2
+	BNE	3$		;branch if no
+	CMP	UDPSRC+4,TFTSRC+4
+	BNE	3$		;branch if no
+	MOV	TF.COD(R2),R0	;yes. extract command code
+	SWAB	R0
+	CMP	R0,#TX.ERR
+	BHI	2$		;branch if invalid
+	ASH	#2,R0
+	ADD	R0,PC
+	JMP	TFT00		;0 invalid
+	JMP	TFT01		;1 read request
+	JMP	TFT02		;2 write request
+	JMP	TFT03		;3 data
+	JMP	TFT04		;4 ack
+	JMP	TFT05		;5 error
+;
+2$:	JMP	TFT00
+;
+3$:	MOV	#COM37,ERRCOD	;connection busy
+	JMP	TFTER1
+;
+; Timout entry
+;
+TFTOUT:	MOV	TFTDST,UDPDST ;restore address fields
+	MOV	TFTDST+2,UDPDST+2
+	MOV	TFTDST+4,UDPDST+4
+	MOV	TFTSRC,UDPSRC
+	MOV	TFTSRC+2,UDPSRC+2
+	MOV	TFTSRC+4,UDPSRC+4
+	MOV	CMMD,R0		;determine state
+	ASH	#2,R0
+	ADD	R0,PC	
+	JMP	NOOP		;0 idle
+	JMP	TFTIDL		;1 write (idle timeout)
+	JMP	TFTACK		;2 read (ack timeout)
+;
+; Error
+;
+TFT05:	.PURGE	#0		;end operation
+	CLR	TIMER
+	CLR	CMMD		;reset transfer
+	FORMAT	#COM85		;remote error
+DISCRD:	JSR	PC,FREPKT	;free ip packet
+NOOP:	RTS	PC
+;
+; Read request
+; R2 = udp header pointer, r3 = tftp data pointer
+;
+TFT01:	TST	-(R3)		;point to file name
+	JSR	PC,SETUP	;parse request
+	BCS	TFTLOG		;branch if error
+	.LOOKU	#ARGBLK,#0,#AREA+30. ;open file
+	BCS	TFTNTF		;branch if error
+	MOV	R0,AREA+38.
+	FORMAT	#COM81,TEMP	;transfer begins [host] [file]
+	FORMAT	#COM81A,#AREA+30.
+	MOV	#1,CMMD		;initialize read
+	MOV	#1,BLOCK
+	JMP	TFT04A
+;
+; Write request
+; R2 = udp header pointer, r3 = tftp data pointer
+;
+TFT02:	TST	-(R3)		;point to file name
+	MOV	R3,R1		;insert "=" at end
+1$:	TSTB	(R1)+
+	BNE	1$
+	CLRB	@R1		;(presumes an extra byte available)
+	MOVB	#'=,-(R1)	
+	JSR	PC,SETUP	;parse request
+	BCS	TFTLOG		;branch if error
+	.ENTER	#ARGBLK,#0,#AREA,AREA+8. ;open file
+	BCS	TFTSYN		;branch if error
+	MOV	R0,MAXBLK
+	FORMAT	#COM81,TEMP	;transfer begins [host] [file]
+	FORMAT	#COM81B,#AREA
+	MOV	#2,CMMD		;initialize write
+	CLR	BLOCK
+	MOV	#IDLOUT,TIMER	;start idle timer
+	JMP	TFT03A
+;
+TFTLOG:	MOV	#COM88,ERRCOD	;invalid request
+	BR	TFTERR
+;
+TFTNTF:	MOV	#COM31,ERRCOD	;file not found
+	BR	TFTERR
+;
+TFTSYN:	MOV	#COM30,ERRCOD	;invalid file name or size
+	BR	TFTERR
+;
+TFTIDL:	MOV	#COM38,ERRCOD	;host not responding
+	JSR	PC,GETPKT	;allocate/init ip packet
+	BCC	TFTERR		;branch if ok
+	RTS	PC
+;
+TFTBLK:	MOV	#COM39,ERRCOD	;invalid block number
+	BR	TFTERR
+;
+TFT00:	MOV	#COM32,ERRCOD	;invalid operation or sequence
+TFTERR:	.PURGE	#0		;end operation
+	CLR	TIMER
+	CLR	CMMD
+TFTER1:	JSR	PC,FREPKT	;free packet buffer
+	JSR	PC,GETPKT	;get eof packet
+	BCS	TFTRTS		;branch if cant
+	MOV	PH.OFS(R1),R2
+	ADD	R1,R2
+	MOV	R2,R3		;construct tftp header
+	ADD	#TF.COD,R3
+	MOV	#TX.ERR*400,(R3)+ ;(th.cod)
+	MOV	ERRCOD,R1	;(th.blk)
+	CLRB	(R3)+
+	MOVB	(R1)+,(R3)+
+	FORMAT	R1
+1$:	MOVB	(R1)+,(R3)+	;(message)
+	BNE	1$
+TFTSND:	MOV	R3,R0		;restore pointers
+	SUB	R2,R0
+	JSR	PC,SNDPKT	;send packet
+TFTRTS:	RTS	PC
+;
+; Data
+; R2 = udp header pointer, r3 = tftp data pointer
+;
+TFT03:	CMP	CMMD,#2		;is this write operation
+	BEQ	1$		;branch if yes
+	JMP	DISCRD		;no. ignore packet
+;
+1$:	CLR	TIMER		;stop idle timer
+	MOV	TF.BLK(R2),R1	;is block valid
+	BEQ	2$		;branch if no
+	SWAB	R1
+	CMP	R1,MAXBLK
+	BLOS	3$		;branch if yes
+2$:	JMP	TFTBLK		;invalid block number
+;
+3$:	MOV	R1,BLOCK	;was previous last block
+	DEC	R1
+	MOV	SIZE,R0
+	BEQ	6$		;branch if yes
+	CMP	R0,#512.	;no. is block full
+	BLO	4$		;branch if no
+	MOV	#256.,SIZE	;yes. write block
+	.WRITW	#ARGBLK,#0,R3,SIZE,R1
+	BCS	5$		;branch if error
+	MOV	#IDLOUT,TIMER	;start idle timer
+	BR	TFT03A
+;
+4$:	MOV	SIZE,R0		;pad to word boundary
+	ADD	R3,R0
+	CLRB	(R0)+
+	SUB	R3,R0		;compute size
+	ASR	R0
+	MOV	R0,SIZE
+	.WRITW	#ARGBLK,#0,R3,SIZE,R1
+	BCC	6$		;branch if ok
+5$:	MOV	#COM34,ERRCOD	;file write error
+	JMP	TFTERR
+;
+6$:	.CLOSE	#0		;end operation
+	CLR	CMMD
+	FORMAT	#COM44		;transfer complete
+TFT03A:	JSR	PC,FREPKT	;free packet buffer
+	JSR	PC,GETPKT	;get ack packet
+	BCS	1$		;branch if cant
+	MOV	PH.OFS(R1),R2
+	ADD	R1,R2
+	MOV	R2,R3		;construct tftp header
+	ADD	#TF.COD,R3
+	MOV	#TX.ACK*400,(R3)+ ;(th.cod)
+	MOV	BLOCK,@R3	;(th.blk)
+	SWAB	(R3)+
+	JMP	TFTSND		;send ack packet
+;
+1$:	RTS	PC
+;
+; Ack
+; R2 = udp header pointer, r3 = tftp data pointer
+;
+TFT04:	CMP	CMMD,#1		;is this read operation
+	BEQ	1$		;branch if yes
+	JMP	DISCRD		;no. ignore packet
+;
+1$:	CLR	TIMER		;stop ack timer
+	SWAB	TF.BLK(R2)	;is block invalid
+	CMP	TF.BLK(R2),BLOCK
+	BLOS	3$		;branch if yes
+2$:	JMP	TFTBLK		;invalid block number
+;
+3$:	MOV	TF.BLK(R2),BLOCK ;update block
+	INC	BLOCK
+TFT04A:	JSR	PC,FREPKT	;free ack packet
+	CLR	RETRY
+TFTACK:	INC	RETRY		;is retry count exceeded
+	CMP	RETRY,#RTXMAX
+	BHI	5$		;branch if yes
+	JSR	PC,GETPKT	;no. allocate/init ip packet
+	BCC	1$		;branch if ok
+	RTS	PC
+;
+1$:	MOV	PH.OFS(R1),R2	;get packet pointers
+	ADD	R1,R2
+	MOV	R2,R3		;construct tftp header
+	ADD	#TF.COD,R3
+	MOV	#TX.DAT*400,(R3)+ ;(tf.cod)
+	MOV	BLOCK,R1
+	MOV	R1,@R3		;(tf.blk)
+	SWAB	(R3)+
+	DEC	R1
+	.READW	#ARGBLK,#0,R3,#256.,R1
+	BCS	2$		;branch if error
+	ADD	#512.,R3	;update pointers
+	MOV	#TIMOUT,TIMER	;start ack timer
+	BR	3$
+;
+2$:	TSTB	@#52		;is this eof
+	BNE	4$		;branch if no
+	.PURGE	#0		;yes. end operation
+	CLR	CMMD
+	FORMAT	#COM44		;transfer complete
+3$:	JMP	TFTSND		;send data packet
+;
+4$:	MOV	#COM45,ERRCOD	;file read error
+	JMP	TFTERR
+;
+5$:	JMP	TFTIDL		;host not responding
+;
+; Subroutine to parse request
+;
+SETUP:	CALL	CONECT,#USERID,#0,#AF.FTP ;(tftp login) connect to directory
+	TST	R0
+	BNE	1$		;branch if login incorrect
+	MOV	SP,R5		;parse filespec
+	.CSISP	#AREA,#DEFEXT,R3
+	MOV	R5,SP
+	BCS	1$		;branch if syntax error
+	.PURGE	#0		;normal return
+	CLC
+	RTS	PC
+;
+1$:	SEC			;error return
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+DEFEXT:	.RAD50	'            '	;default extensions
+;
+; Text strings
+;
+USERID:	.ASCIZ	'ANONYMOUS'
+COM44:	.ASCIZ	'?UDP-F-Transfer complete'
+COM45:	.ASCIZ	<ER.UNS>'?UDP-F-File read error'
+COM34:	.ASCIZ	<ER.UNS>'?UDP-F-File write error'
+COM31:	.ASCIZ	<ER.FNF>'?UDP-F-File not found'
+COM30:	.ASCIZ	<ER.FNF>'?UDP-F-Invalid file name or size'
+COM32:	.ASCIZ	<ER.BAD>'?UDP-F-Invalid operation or sequence'
+COM37:	.ASCIZ	<ER.TID>'?UDP-F-Connection busy'
+COM38:	.ASCIZ	<ER.UNS>'?UDP-F-Host not responding'
+COM39:	.ASCIZ	<ER.BAD>'?UDP-F-Invalid block number'
+COM88:	.ASCIZ	<ER.BAD>'?UDP-F-Invalid request'
+COM81:	.ASCIZ	'?UDP-I-Transfer begins ^C'<IH.SRC>'^+'
+COM81A:	.ASCIZ	' from ^F'<0>'[^I'<8.>']'
+COM81B:	.ASCIZ	' to ^F'<0>'[^I'<8.>']'
+COM85:	.ASCII	'?UDP-I-Remote error ^C'<IH.SRC>
+	.ASCIZ	' ^XI'<IH.LEN+TF.BLK>' ^A'<IH.LEN+TF.LEN>
+	.EVEN
+;
+	.PSECT	$ERAS,RW,I
+STOBGN	=	.		;beginning of erasable storage
+;
+; Variables
+;
+TEMP:	.BLKW	1		;temp
+SIZE:	.BLKW	1		;size of data packet
+ERRCOD:	.BLKW	1		;error code
+ARGBLK:	.BLKW	5		;rt-11 argument block
+AREA:	.BLKW	39.		;scratch area
+;
+	.END
+                                                                                                          

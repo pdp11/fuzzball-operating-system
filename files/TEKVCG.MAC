@@ -1,0 +1,721 @@
+	.TITLE	TEKVCG	VCG Driver
+	.NLIST	BEX
+	.ENABL	LC
+;
+; VCG Driver
+;
+; The program processes data consisting of Tektronix display commands and
+; shows it on the 1024 x 768 Tektronix display area scaled for the Peritek
+; VCG 640 x 512 x 3 screen. Alphanumeric and vector modes are supported, along
+; with a nonstandard run-length encoded, bitmap mode scaled for the Peritek
+; screen. Colors and other attributes are selected by parameters included in
+; the data.
+;
+; This program requires the Peritek CSP-2 subroutine package to perform the
+; actual data transcription on the display memory.
+;
+; Character-interpretation summary
+;
+; Mode controls
+; 001	soh	enter attribute-header mode (nonstandard)
+; 034	fs	enter bitmap mode (nonstandard)
+; 035	gs	enter vector mode
+; 037	us	enter alphanumeric mode
+;
+; Format effectors (alphanumeric mode)
+; 010	bs	cursor back one column
+; 011	tab	cursor to next tab stop
+; 012	lf	cursor down one line
+; 015	cr	cursor to left margin
+;
+; Control sequences
+; 033-014 (esc-ff)	erase/new page
+; 033-027 (esc-etb)	enable hardcopy
+; 033-032 (esc-sub)	cursor readback
+; 033-070		set character huge
+; 033-071		set character big
+; 033-072		set character standard
+; 033-073		set character small
+; 033-140+n		set line type (0-4)
+;
+; External symbols
+;
+	.GLOBL	MOVE,DRAW	;csp2f3 library routines
+	.GLOBL	CMAP,CLRGR,SETPV,VCGSEL,GCRS
+	.GLOBL	CHRSEL,CHGMAG,CHROUT,CHSETI,RDXY,WRTLN
+	.GLOBL	TKRPLY		;send reply octet
+;
+; Entry symbols
+;
+	.GLOBL	TKINIT		;initialize display
+	.GLOBL	TKSEND		;send octet to display
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR		;dcnlib definitions
+	.COM				;define common data
+	.CHR				;define ascii character codes
+;
+; Module definitions
+;
+	.MACRO	CALL	SUB,ARGLST
+..N	=	0
+	MOV	#ARGBLK+2,R5
+	.IRP	X,<ARGLST>
+	MOV	X,(R5)+
+..N	=	..N+1
+	.ENDR
+	MOV	#ARGBLK,R5
+	MOV	#..N,@R5
+	JSR	PC,SUB
+	.ENDM
+;
+; Assembly parameters
+;
+PXMAX	=	640.		;max x pels
+PYMAX	=	512.		;max y pels
+XMAX	=	1024.		;max x coordinate
+YMAX	=	768.		;max y coordinate
+VCGREG	=	174760		;vcg register base (4 words)
+VCGWDW	=	175000		;vcg window base (128 words)
+;
+; VCG control registers
+;
+.	=	0
+VCGADR:	.BLKW	1		;crtc address register
+VCGDAT:	.BLKW	1		;crtc data register
+VCGCTL:	.BLKW	1		;display address and control register
+VC.ADR	=	177400		;line address bits 7-0
+VC.AD8	=	000200		;line address bit 8
+VC.VGO	=	000040		;enable crtc
+VC.WDW	=	000020		;enable window memory addressing
+VC.MEM	=	000002		;write ones in memory
+VC.DMA	=	000001		;enable dma memory addressing
+VCGBUF:	.BLKW	1		;display buffer register
+;
+; Procedure segment
+;
+	.PSECT	$BOSI,RO,I
+;
+; TKINIT (vcg) initialize display
+;
+TKINIT:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	MOV	R5,-(SP)
+	MOV	#ERSBGN,R1	;clear all variables
+1$:	CLR	(R1)+
+	CMP	R1,#ERSEND
+	BLO	1$
+	MOV	VCADR,R3	;get crtc address
+	CLR	VCGCTL(R3)	;copy crtc initialization parameters
+	MOV	#16.,R0
+	CLR	R1
+	MOV	#DSPAR,R2
+5$:	MOV	R1,VCGADR(R3)
+	MOV	(R2)+,VCGDAT(R3)
+	INC	R1
+	SOB	R0,5$
+	MOV	#VC.VGO+VC.WDW,VCGCTL(R3) ;restart crtc
+	CALL	VCGSEL,<#DRADR,#CRADR>    ;set device addresses
+	JSR	PC,SETUP	;initialize vcg
+	MOV	#ESC,R0		;simulate <esc><ff>
+	JSR	PC,TKSEND
+	MOV	#FF,R0
+	JSR	PC,TKSEND
+	MOV	(SP)+,R5	;restore registers
+	MOV	(SP)+,R4
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; TKSEND (vcg) send octet to display
+; R0 = octet
+;
+TKSEND:	MOV	R0,-(SP)	;save registers
+	MOV	R1,-(SP)
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	MOV	R5,-(SP)
+	BIC	#^C177,R0	;knock off parity bit
+	CMP	MODE,#EXCMOD	;is this extended-control mode
+	BEQ	2$		;branch if yes
+	CMPB	R0,#ESC		;no is this <esc> (set extended-control mode)
+	BNE	1$		;branch if no
+	MOV	MODE,PRVMOD	;yes. set extended-control mode
+	MOV	#EXCMOD,MODE
+	BR	5$
+;
+1$:	CMPB	R0,#SOH		;is this <soh> (attribute-header mode)
+	BNE	3$		;branch if no
+	MOV	#ATRMOD,MODE	;yes. set attribute-header mode
+	CLR	XVCG		;home beam
+	MOV	#PYMAX-1,YVCG
+	CALL	MOVE,<#XVCG,#YVCG>
+	BR	5$
+;
+2$:	JMP	10$		;handrail
+;
+3$:	CMPB	R0,#US		;is this <us> (alphanumeric mode)
+	BNE	4$		;branch if no
+	MOV	#ALFMOD,MODE	;yes. set alphanumeric mode
+	CALL	GCRS,<#I5>	;turn on cursor
+	CALL	SETPV,<#PTYP,#PVAL>
+	CALL	RDXY,<#XVCG,#YVCG> ;find where we are
+	MOV	YVCG,YPOSN
+	MOV	#BUFFER,BUFPTR	;(sleazy assumption at left margin)
+	BR	5$
+;
+4$:	CMPB	R0,#GS		;is this <gs> (vector mode)
+	BNE	6$		;branch if no
+	JSR	PC,UNBUF	;yes. flush alpha buffer
+	MOV	#VECMOD,MODE	;set vector mode
+	CALL	GCRS,<#M1>	;turn off cursor
+	CALL	SETPV,<#PTYP+2,#PVAL+2>
+	CLRB	DRKSW
+	MOVB	#100,TEMP
+5$:	BR	11$
+;
+6$:	CMPB	R0,#FS		;is this <fs> (bitmap mode)
+	BNE	10$		;branch if no
+	JSR	PC,UNBUF	;yes. flush alpha buffer
+	MOV	#BITMOD,MODE	;set bitmap mode
+	CALL	GCRS,<#M1>	;turn off cursor
+	CALL	SETPV,<#PTYP+4,#PVAL+4>
+	MOV	XPEL,R0		;set x dimension
+	BIC	#^C077,R0
+	ASH	#6,R0
+	BIS	XPEL+2,R0
+	MOV	R0,XPOSN
+	MOV	YPEL,R0		;set y dimension
+	BIC	#^C077,R0
+	ASH	#6,R0
+	BIS	YPEL+2,R0
+	MOV	R0,YPOSN
+	MOV	XPOSN,PELLIN	;assume x modulus
+	CMPB	LPMODE,#1	;is this landscape mode
+	BEQ	8$		;branch if yes
+	CMPB	LPMODE,#2	;no. is this portrait mode
+	BEQ	7$		;branch if yes
+	MOV	XPOSN,R0	;no. is x > y
+	MUL	#PYMAX,R0
+	DIV	#PXMAX,R0
+	CMP	R0,YPOSN
+	BHIS	8$		;branch if yes
+7$:	MOV	PELLIN,R0	;no. assume y modulus
+	MUL	#PXMAX,R0
+	DIV	#PYMAX,R0
+	MOV	R0,PELLIN
+8$:	CLR	R0		;scale for y axis
+	MOV	PELLIN,R1
+	DIV	SCALE,R0
+	MOV	R0,PALLIN
+	CLR	YPOSN
+	CLR	XPOSN		;initialize raster line
+	MOV	PVAL+4,R2
+	ASL	R2
+	MOV	#LINE,R0
+9$:	MOV	BGNTAB(R2),(R0)+
+	CMP	R0,#LINEND
+	BLO	9$
+	MOV	#MSKTAB,SUBCYC	;initialize stuff
+	MOV	#LINE,LINPTR
+	BR	11$
+;
+10$:	JSR	PC,@MODE	;do something useful
+11$:	MOV	(SP)+,R5	;restore registers
+	MOV	(SP)+,R4
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	MOV	(SP)+,R0
+	RTS	PC
+;
+; Extended control mode
+; R0 = octet
+; 033-014 (esc-ff)	erase/new page
+; 033-027 (esc-etb)	enable hardcopy (ignored)
+; 033-032 (esc-sub)	cursor readback
+; 033-070		set character huge
+; 033-071		set character big
+; 033-072		set character standard
+; 033-073		set character small
+; 033-140+n		set line type (0-4)
+;
+EXCMOD:	MOV	PRVMOD,MODE	;restore mode
+	CMPB	R0,#FF		;is this <esc><ff>
+	BNE	1$		;branch if no
+	CALL	CLRGR,<#BGND>	;yes. clear screen
+	CLR	DSTART		;reset scrolling
+	MOV	VCADR,R3
+	MOV	#14,VCGADR(R3)
+	MOVB	DSTART+1,VCGDAT(R3)
+	MOV	#15,VCGADR(R3)
+	MOVB	DSTART,VCGDAT(R3)
+	CLR	XVCG		;home beam
+	MOV	#PYMAX,YVCG
+	SUB	HIGH,YVCG
+	CALL	MOVE,<#XVCG,#YVCG>
+	MOV	#ALFMOD,MODE	;set alphanumeric mode
+	CALL	GCRS,<#I5>	;turn on cursor
+	CALL	SETPV,<#PVAL,#PVAL>
+	MOV	YVCG,YPOSN
+	MOV	#BUFFER,BUFPTR
+	RTS	PC
+;
+1$:	CMPB	R0,#ETB		;is this <esc><etb>
+	BEQ	2$		;branch if yes (enable hardcopy)
+	CMPB	R0,#SUB		;no. is this <esc><sub>
+	BNE	2$		;branch if no
+	JSR	PC,TKRPLY	;yes. reply cursor x/y coordinates
+	MOV	XPOS,R0		;return x coordinate
+	ASH	#-5,R0
+	BIC	#^C37,R0
+	ADD	#040,R0
+	JSR	PC,TKRPLY
+	MOV	XPOS,R0
+	BIC	#^C37,R0
+	ADD	#040,R0
+	JSR	PC,TKRPLY
+	MOV	YPOS,R0		;return y coordinate
+	ASH	#-5,R0
+	BIC	#^C37,R0
+	ADD	#040,R0
+	JSR	PC,TKRPLY
+	MOV	YPOS,R0
+	BIC	#^C37,R0
+	ADD	#040,R0
+	JSR	PC,TKRPLY
+	MOV	#CR,R0		;end with cr
+	JSR	PC,TKRPLY
+2$:	RTS	PC
+;
+; Vector mode
+; R0 = octet
+;
+VECMOD:	CMPB	R0,#040		;is this display data	
+	BLO	1$		;branch if no
+	MOVB	TEMP,R1		;yes. get previous octet
+	MOVB	R0,TEMP		;save for next time
+	BIT	#100,R0		;is current byte high-order bits
+	BNE	2$		;branch if no
+	BIT	#100,R1		;yes. is previous byte high-order bits
+	BEQ	1$		;branch if yes (bad data)
+	BIT	#040,R1		;is previous byte low-x bits
+	BNE	3$		;branch if no
+	BIC	#^C037,R0	;yes. assemble high-y bits
+	ASH	#5,R0
+	BIC	#^C037,YPOS
+	BIS	R0,YPOS
+1$:	RTS	PC
+;
+2$:	BIT	#040,R0		;is current byte y
+	BEQ	4$		;branch if no
+	BIC	#^C037,R0	;yes. assemble low-y bits
+	BIC	#037,YPOS
+	BIS	R0,YPOS
+	RTS	PC
+;
+3$:	BIC	#^C037,R0	;assemble high-x bits
+	ASH	#5,R0
+	BIC	#^C037,XPOS
+	BIS	R0,XPOS
+	RTS	PC
+;
+4$:	BIC	#^C037,R0	;assemble low-x bits
+	BIC	#037,XPOS
+	BIS	R0,XPOS
+	MOV	XPOS,R0		;scale x
+	MUL	#PXMAX,R0
+	DIV	#XMAX,R0
+	MOV	R0,XVCG
+	MOV	YPOS,R0		;scale y
+	MUL	#PYMAX,R0
+	DIV	#YMAX,R0
+	MOV	R0,YVCG
+	TSTB	DRKSW		;is this dark vector
+	BNE	5$		;branch if no
+	INCB	DRKSW		;yes. let there be light
+	CALL	MOVE,<#XVCG,#YVCG> ;move (dark vector)
+	RTS	PC
+;
+5$:	CALL	DRAW,<#XVCG,#YVCG> ;draw (bright vector)
+	RTS	PC
+;
+; Alphanumeric mode
+; R0 = octet
+;
+; This code implements the multi-media paragraph protocol, so that overflow
+; lines are wrapped on a word basis.
+;
+; Character fonts
+; 0	CG2	ASCII 5 x 7 96-char font (7 x 12 cell, 91 x 42 screen)
+; 1	CG1	ASCII 7 x 9 96-char font (10 x 14 cell, 64 x 36 screen)
+; 2	CG3	Cyrillic 7 x 9 96-char font (10 x 14 cell, 64 x 36 screen)
+;
+ALFMOD:	CMP	R0,#HT		;is char <ht>
+	BNE	2$		;branch if no
+1$:	MOV	#<' >,R0	;yes. cursor to next tab stop
+	JSR	PC,ALFMOD
+	MOV	BUFPTR,R0
+	SUB	#BUFFER,R0
+	BIT	#7,R0
+	BNE	1$
+	RTS	PC
+;
+2$:	CMP	R0,#LF		;is char <lf>
+	BNE	9$		;branch if no
+	JSR	PC,UNBUF	;yes. empty buffer
+	CMP	YVCG,HIGH	;will screen overflow
+	BHIS	3$		;branch if no
+	SUB	YVCG,YPOSN	;yes. wrap to top line
+	MOV	#PYMAX,YVCG
+3$:	MOV	YVCG,ARGTMP	;update position
+	SUB	HIGH,YVCG
+	SUB	HIGH,YPOSN
+	MOV	HIGH,ARGCNT
+4$:	TST	YPOSN		;is scroll necessary
+	BGE	8$		;branch if no
+	ADD	#16.,YPOSN	;yes. erase scroll area
+	ADD	#16.,ARGCNT
+5$:	DEC	ARGTMP
+	BGE	6$
+	ADD	#PYMAX,ARGTMP
+6$:	MOV	BGND,R0		;assemble scroll bar
+	ASL	R0
+	MOV	#LINE,R1
+7$:	MOV	BGNTAB(R0),(R1)+
+	CMP	R1,#LINEND
+	BLO	7$
+	CALL	WRTLN,<#ARGTMP,#LINE> ;write scroll bar
+	DEC	ARGCNT
+	BNE	5$
+	ADD	#40,DSTART	;scroll up
+	MOV	VCADR,R3
+	MOV	#14,VCGADR(R3)
+	MOVB	DSTART+1,VCGDAT(R3)
+	MOV	#15,VCGADR(R3)
+	MOVB	DSTART,VCGDAT(R3)
+	BR	4$
+;
+8$:	CALL	MOVE,<#XVCG,#YVCG> ;position beam
+	RTS	PC
+;
+9$:	CMP	R0,#CR		;is char <cr>
+	BNE	10$		;branch if no
+	JSR	PC,UNBUF	;yes. empty buffer
+	CLR	XVCG		;cursor to left margin
+	CALL	MOVE,<#XVCG,#YVCG>
+	RTS	PC
+;
+10$:	CMP	R0,#BS		;is char <bs>
+	BNE	12$		;branch if no
+	CMP	BUFPTR,#BUFFER	;yes. is this left margin
+	BLOS	11$		;branch if yes
+	SUB	WIDE,XVCG	;no. cursor left one column
+	CALL	MOVE,<#XVCG,#YVCG>
+	DEC	BUFPTR
+11$:	RTS	PC
+;
+12$:	CMP	R0,#040		;is char displayable
+	BLO	16$		;branch if no
+	CMP	R0,#177
+	BHIS	16$		;branch if no
+	MOVB	R0,@BUFPTR	;yes. save char
+	INC	BUFPTR
+	ADD	WIDE,XVCG	;will this char fit
+	CMP	XVCG,#PXMAX
+	BLOS	16$		;branch if yes
+	MOV	BUFPTR,R0	;no. plant backstop
+	CLRB	@R0
+13$:	CMP	R0,#BUFFER	;scan back to previous dark char
+	BLOS	15$		;branch if none
+	CMPB	-(R0),#<' >
+	BNE	13$
+	MOV	R0,BUFPTR	;output line so far
+	MOV	R0,-(SP)
+	MOV	#CR,R0	
+	JSR	PC,ALFMOD
+	MOV	#LF,R0
+	JSR	PC,ALFMOD
+	MOV	(SP)+,ARGTMP
+14$:	INC	ARGTMP		;move up rest of line
+	MOVB	@ARGTMP,R0
+	BEQ	16$
+	JSR	PC,ALFMOD
+	BR	14$
+;
+15$:	DEC	BUFPTR		;save last char in line
+	MOVB	@BUFPTR,-(SP)
+	MOV	#CR,R0		;break line
+	JSR	PC,ALFMOD
+	MOV	#LF,R0
+	JSR	PC,ALFMOD
+	MOVB	(SP)+,R0
+	JSR	PC,ALFMOD	;insert last char first
+16$:	RTS	PC
+;
+; Subroutine to empty line buffer
+;
+UNBUF:	CLRB	@BUFPTR		;unbuffer line
+	MOV	#BUFFER,BUFPTR
+	CLR	ARGCNT
+1$:	MOVB	@BUFPTR,ARGCNT	;display char
+	BEQ	2$
+	CALL	CHROUT,<#ARGCNT>
+	INC	BUFPTR
+	BR	1$
+;	
+2$:	MOV	#BUFFER,BUFPTR	;reset buffer pointer
+	RTS	PC
+;
+; Bitmap mode (nonstandard)
+; R0 = octet
+;
+; In this mode the specified raster is generated using run-length encoded data
+; octets in the range 040 - 137. A value greater than 100 represents a white
+; run, while a value less than 100 represents a black run. The special value
+; 100 indicates the end of a scan line.
+;
+BITMOD:	CMPB	R0,#040		;is this control char
+	BLO	5$		;branch if yes
+	SUB	#100,R0		;no. is this end of line
+	BNE	BIT10		;branch if no
+	CLR	XPOSN		;yes. humpback
+	ADD	#PXMAX,YPOSN	;did we pass a y tick
+	BLE	5$		;branch if no
+1$:	CALL	WRTLN,<#YVCG,#LINE> ;yes. write line
+	TST	YVCG		
+	BEQ	2$
+	DEC	YVCG
+2$:	SUB	PALLIN,YPOSN	;did we pass a y tick
+	BGT	1$		;branch if yes
+	MOV	PVAL+4,R2	;no. initialize raster line
+	ASL	R2
+	MOV	#LINE,R0
+4$:	MOV	BGNTAB(R2),(R0)+
+	CMP	R0,#LINEND
+	BLO	4$
+5$:	MOV	#MSKTAB,SUBCYC	;initialize stuff
+	MOV	#LINE,LINPTR
+	RTS	PC
+;
+BIT10:	MOV	#-1,R2		;is this foreground
+	TST	R0
+	BPL	1$		;branch if yes
+	MOV	BGND,R2		;no. assume background
+	ASL	R2		;get proliferated pel index
+	NEG	R0
+1$:	ADD	#PXMAX,XPOSN	;increment x in screen space
+2$:	CMP	LINPTR,#LINEND	;is line full
+	BHIS	6$		;branch if yes
+	TST	R2		;is pel foreground
+	BMI	4$		;branch if yes
+	MOV	@SUBCYC,R1	;no. insert background pel
+	BIC	R1,@LINPTR
+	COM	R1
+	MOV	BGNTAB(R2),R3
+	BIC	R1,R3
+	BIS	R3,@LINPTR
+4$:	TST	XPOSN		;did we pass an x tick
+	BLE	5$		;branch if no
+	ADD	#2,SUBCYC	;yes. update pointers
+	CMP	SUBCYC,#MSKEND
+	BLO	40$
+	MOV	#MSKTAB,SUBCYC
+	ADD	#2,LINPTR
+40$:	SUB	PELLIN,XPOSN
+	BGT	2$		;branch if no
+5$:	SOB	R0,1$		;kapocketa tout suite
+6$:	RTS	PC
+;
+; Attribute header
+; R0 = octet
+;
+ATRMOD:	SUB	#040,R0		;remove bias
+	BLT	1$		;branch if control char
+	BIC	#^C077,R0	;extract <index>
+	MOV	#ATR3,MODE	;parameter data
+	ASL	R0
+	ADD	#OPTION,R0
+	CMP	R0,#OPTEND
+	BHIS	1$		;branch if invalid
+	MOV	R0,INDEX	;valid. set for following <value>
+	MOV	#ATR2,MODE
+1$:	RTS	PC
+;
+ATR2:	SUB	#040,R0		;remove bias
+	BLT	ATR3		;branch if control char
+	BIC	#^C077,R0	;store <value>
+	MOV	INDEX,R1
+	MOV	R0,@INDEX
+	JSR	PC,SETUP	;initialize vcg
+ATR3:	MOV	#ATRMOD,MODE	;restore mode
+	RTS	PC
+;
+;  Subroutine to initialize vcg parameters
+;
+SETUP:	CALL	CMAP,<#I0,#CMAP0,#CMAP0+2,#CMAP0+4> ;construct color map
+	CALL	CMAP,<#I1,#CMAP1,#CMAP1+2,#CMAP1+4>
+	CALL	CMAP,<#I2,#CMAP2,#CMAP2+2,#CMAP2+4>
+	CALL	CMAP,<#I3,#CMAP3,#CMAP3+2,#CMAP3+4>
+	CALL	CMAP,<#I4,#CMAP4,#CMAP4+2,#CMAP4+4>
+	CALL	CMAP,<#I5,#CMAP5,#CMAP5+2,#CMAP5+4>
+	CALL	CMAP,<#I6,#CMAP6,#CMAP6+2,#CMAP6+4>
+	CALL	CMAP,<#I7,#CMAP7,#CMAP7+2,#CMAP7+4>
+	CALL	CHRSEL,<#FONT>	;select font
+	CALL	CHGMAG,<#MAG,#MAG> ;select mag factor
+	CALL	CHSETI,<#WIDE,#HIGH,#BASE,#NCHAR>
+	MOV	WIDE,R1
+	MUL	MAG,R1
+	MOV	R1,WIDE
+	MOV	HIGH,R1
+	MUL	MAG,R1
+	MOV	R1,HIGH
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+; Vcg initialization parameters
+;
+; 12.2850 MHz master clock and 640 x 512 graphics display optimized for
+; Mitsubishi C-3419 color display monitor
+;
+; The following parameters define a raster 38 cells wide by 17 cells high.
+; Each cell is 20 pels wide by 16 pels high. The display area is 32 x 32 cells
+; (640 x 512 pels). The line period is 61.8 us (16.164 kHz) and the frame
+; period is 33.2 ms (30.1 Hz). The horizontal sync pulse is 4.88 us long and
+; is preceded by a 1.63-us front porch and followed by a 3.26-us back porch.
+; The vertical sync pulse is 185 us long. The horizontal retrace time is
+; 9.77 us and the vertical retrace time is 1.54 ms.
+;
+DSPAR:	.WORD	38.-1		;0 horizontal total
+	.WORD	32.		;1 horizontal displayed
+	.WORD	32.+1		;2 horizontal sync position
+	.WORD	3*16.+3		;3 h. and v. sync width
+	.WORD	33.-1		;4 vertical total
+	.WORD	9.		;5 vertical total adjust
+	.WORD	32.		;6 vertical displayed
+	.WORD	32.		;7 vertical sync position
+	.WORD	3		;8 interlace mode
+	.WORD	16.-2		;9 scan line
+	.WORD	0		;10 cursor start
+	.WORD	0		;11 cursor end
+	.WORD	0		;12 display start address high
+	.WORD	0		;13 display start address low
+	.WORD	0		;14 light pen register high
+	.WORD	0		;15 light pen register low
+;
+; Vcg interface
+;
+VCADR:	.WORD	VCGREG		;crtc register address
+CRADR:	.WORD	VCGREG+VCGCTL	;control register address
+DRADR:	.WORD	VCGWDW		;data register address
+;
+; Pel encode table
+;
+BGNTAB:	.WORD	000000		;0
+	.WORD	011111		;1
+	.WORD	022222		;2
+	.WORD	033333		;3
+	.WORD	044444		;4
+	.WORD	055555		;5
+	.WORD	066666		;6
+	.WORD	077777		;7
+;
+; Pel mask table
+;
+MSKTAB:	.WORD	000007		;0
+	.WORD	000070		;1
+	.WORD	000700		;2
+	.WORD	007000		;3
+	.WORD	070000		;4
+MSKEND	=	.
+;
+I0:	.WORD	0		;call constants
+I1:	.WORD	1
+I2:	.WORD	2
+I3:	.WORD	3
+I4:	.WORD	4
+I5:	.WORD	5
+I6:	.WORD	6
+I7:	.WORD	7
+M1:	.WORD	-1
+;
+; Parameter vector
+;
+; The following parameters define the operation of the VCG in all modes. They
+; can be set by the attribute header in the form of <index> <value> pairs,
+; where <index> is in the range 0 - 63 and <value> is a six-bit quantity.
+;
+OPTION	=	.		;beginning of parameter list
+CMAP0:	.WORD	10.,15.,15.	;0-2 pel 0 color map (RGB)
+CMAP1:	.WORD	10.,15.,15.	;3-5 pel 1 color map (RGB)
+CMAP2:	.WORD	10.,15.,15.	;6-8 pel 2 color map (RGB)
+CMAP3:	.WORD	10.,15.,15.	;9-11 pel 3 color map (RGB)
+CMAP4:	.WORD	15.,10.,15.	;12-14 pel 4 color map (RGB)
+CMAP5:	.WORD	15.,10.,15.	;15-17 pel 5 color map (RGB)
+CMAP6:	.WORD	15.,15.,10.	;18-20 pel 6 color map (RGB)
+CMAP7:	.WORD	0.,0.,0.	;21-23 pel 7 color map (RGB)
+PTYP:	.WORD	2,2,2		;24-26 foreground type (alpha/vector/bitmap)
+PVAL:	.WORD	4,2,1		;27-29 foreground value (alpha/vector/bitmap)
+BGND:	.WORD	7		;30 background value
+FONT:	.WORD	0		;31 character font
+MAG:	.WORD	1		;32 character size
+XPEL:	.WORD	PXMAX/64.,0.	;33-34 x pels (bitmap) (high-order first)
+YPEL:	.WORD	PYMAX/64.,0.	;35-36 y pels (bitmap) (high-order first)
+SCALE:	.WORD	1		;37 y scale (bitmap)
+LPMODE:	.WORD	0		;38 image mode (landscape/portrait)
+OPTEND	=	.		;end of parameter list
+;
+; Variables
+;
+ERSBGN	=	.		;beginning of erasable storage
+ARGBLK:	.BLKW	10.		;fortran argument block
+;
+; Bitmap interface
+;
+PELLIN:	.BLKW	1		;x scale factor
+PALLIN:	.BLKW	1		;y scale factor
+XPOSN:	.BLKW	1		;x position in screen space
+YPOSN:	.BLKW	1		;y position in screen space
+SUBCYC:	.BLKW	1		;subcycle
+LINPTR:	.BLKW	1		;line-buffer pointer
+LINE:	.BLKW	128.		;line buffer
+LINEND	=	.		;end of line buffer
+;
+; Tekronix emulator interface
+;
+MODE:	.BLKW	1		;current mode
+PRVMOD:	.BLKW	1		;previous mode
+INDEX:	.BLKW	1		;parameter pointer
+XPOS:	.BLKW	1		;x position
+YPOS:	.BLKW	1		;y position
+XVCG:	.BLKW	1		;scaled x position
+YVCG:	.BLKW	1		;scaled y position
+DSTART:	.BLKW	1		;display start address
+TEMP:	.BLKB	1		;last vector-mode octet
+DRKSW:	.BLKB	1		;dark switch
+	.EVEN
+;
+; Character generator interface
+;
+WIDE:	.BLKW	1		;width of character cell (pels)
+HIGH:	.BLKW	1		;height of character cell (pels)
+BASE:	.BLKW	1		;table offset
+NCHAR:	.BLKW	1		;table length
+ARGCNT:	.BLKW	1		;temporary counter
+ARGTMP:	.BLKW	1		;temporary argument
+BUFPTR:	.BLKW	1		;wrap buffer pointer
+BUFFER:	.BLKB	93.		;wrap buffer
+	.EVEN
+ERSEND	=	.		;end of erasable storage
+;
+	.END
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  

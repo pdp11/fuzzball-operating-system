@@ -1,0 +1,440 @@
+	.TITLE	FAXBIT 	Facsimile to bitmap conversion
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Facsimile to bitmap conversion
+;
+; This module converts image files from Dacom facsimile to Sun bitmap format.
+;
+; Dacom 450 frame format (all bits are inverted in file)
+;
+;  0                   1                   2                   3
+;  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |             Synchronization Code              |  Flags  |Seq|
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;  3                 4                   5                   6
+;  1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+; |     Samples       |      X Position       | M |  W  |  B  |
+; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+;
+; Synchronization Code	{000110,111001,111001,000110}
+; Flags			{Run,CFB,Rpt,Spr,SUB}
+; Seq			frame sequence (tumbled)
+; Samples		count of data bits (0-512)
+; X Position		current X position (0-1725)
+; M			current mode 0: w-w, 1: b-w, 2: w-b, 3: b-b
+; W			current white run length
+; B			current black run length
+;
+; All conversions assume page length of 11.5 in
+;
+; External symbols
+;
+	.GLOBL	BOUT,YOUT	;output word
+;
+; Entry symbols
+;
+	.GLOBL	FAXBIT		;input word
+;
+; Module definitions
+;
+	.ASECT
+XMAX	=	1726.		;max x pels
+;
+; Dacom 450 facsimile frame format
+;
+.	=	0
+FM.CNT:	.BLKB	1		;frame count (octets)
+FM.COD:	.BLKB	1		;frame code
+FC.SET	=	070		;setup frame
+FC.DAT	=	071		;data frame
+FC.EOF	=	072		;eof frame
+FM.DAT:	.BLKB	74.		;data field (585 bits)
+SYCOD1	=	^B01000110	;sync codes (inverted)
+SYCOD2	=	^B10011110
+SYCOD3	=	^B00011011
+SSRCRF	=	^B00000100
+FM.LEN	=	.		;end of frame
+;
+; Procedure segment
+;
+	.PSECT	$BOSI,RO,I
+;
+; Facsimile to bitmap conversion
+; code = faxbit( <word>)
+;
+FAXBIT:	MOV	2(SP),R0	;hunt up next 16 bits
+	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R4,-(SP)
+	MOV	R5,-(SP)
+	COM	R0		;tumbleweed
+	MOV	R0,@FRMPTR	;stash word
+	ADD	#2,FRMPTR
+	CMP	FRMPTR,#FRMEND	;is buffer full
+	BLO	HOME		;branch if no
+	MOV	#FRAME,FRMPTR	;yes. extract header fields
+	CMPB	FRAME+FM.COD,#^C<FC.DAT> ;is this data frame
+	BNE	1$		;branch if no
+	MOV	FRAME+FM.DAT+2,R1 ;yes. extract sample count
+	MOV	FRAME+FM.DAT+4,R0
+	ASHC	#1,R0
+	BIC	#^C1777,R0
+	MOV	R0,SAMPLE
+	MOV	FRAME+FM.DAT+4,R1 ;extract x position
+	MOV	FRAME+FM.DAT+6,R0
+	ASHC	#7,R0
+	BIC	#^C7777,R0
+	MOV	R0,XPOSN
+	MOV	FRAME+FM.DAT+6,R0 ;extract run cods
+	ASH	#-5,R0
+	BIC	#^C377,R0
+	MOV	R0,CODE
+	JSR	PC,DACOM	;decode frame
+	BR	HOME
+;
+1$:	CMPB	FRAME+FM.COD,#^C<FC.SET> ;is this setup frame
+	BNE	HOME		;branch if no
+	MOVB	FRAME+FM.DAT+10,R0 ;extract length code
+	BIC	#^C3,R0		;0: 11", 1: 14", 2: 5-1/2"
+	ASL	R0
+	MOV	HGTCOD(R0),HEIGHT
+	MOVB	FRAME+FM.DAT+7,R0 ;extract speed code
+	ASH	#-6,R0		;0: quality, 1: express, 2: detail
+	BIC	#^C3,R0
+	ASL	R0
+	MOV	SCACOD(R0),SCALE
+	MOV	MAGIC,R0	;(rs.mag) initialize header
+	MOV	MAGIC+2,R1
+	JSR	PC,DBOUT
+	CLR	R0		;(rs.width)
+	MOV	#XMAX,R1
+	JSR	PC,DBOUT
+	CLR	R0		;(rs.height)
+	MOV	HEIGHT,R1
+	JSR	PC,DBOUT
+	CLR	R0		;(rs.depth)
+	MOV	#1,R1
+	JSR	PC,DBOUT
+	MOV	#XMAX,R0	;(rs.length) (pels)
+	ADD	#17,R0
+	BIC	#17,R0
+	MUL	HEIGHT,R0
+	ASHC	#-3.,R0		;convert to bytes
+	MOV	R0,LENGTH
+	MOV	R1,LENGTH+2
+	JSR	PC,DBOUT
+	CLR	R0		;(rs.typ) specify b/w (standard)
+	MOV	#1,R1
+	JSR	PC,DBOUT
+	CLR	R0		;(rs.col)
+	CLR	R1
+	JSR	PC,DBOUT
+	CLR	R0		;(rs.map)
+	CLR	R1
+	JSR	PC,DBOUT
+HOME:	MOV	(SP)+,R5	;evas
+	MOV	(SP)+,R4
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to output sun doubleword (uncounted)
+; R0-r1 = doubleword
+;
+DBOUT:	SWAB	R0		;swab 0
+	JSR	PC,YOUT
+	MOV	R1,R0		;swab 1
+	SWAB	R0
+	JSR	PC,YOUT
+	RTS	PC
+;
+; Decode dacom 450 encoded fax data
+; See: weber, d.r. an adaptive run length encoding algorithm. icc-75?
+; Uses r0-r5
+;
+; Decoding state variables (set in header of current frame)
+;
+; SAMPLE	count of data bits remaining (0-512)
+; XPOSN		current X position (0-1725)
+; BLKSIZ	current size of black run-length word (2-7)
+; WHTSIZ	current size of white run-length word (2-7)
+; MODE		current state (column) 0: w-w, 1: b-w, 2: w-b, 3: b-b
+; RUN		run length this mode
+;
+DACOM:	TST	SAMPLE		;is frame trivial
+	BEQ	RETURN		;branch if yes
+	MOV	#FRAME+FM.DAT+7,R1 ;no. initialize for bit scan
+	MOV	#8.-5+1,R2
+	MOVB	(R1)+,R3	;get first octet
+	ASH	#-5,R3
+	MOV	#FRAME,R0
+STATE:	TST	SAMPLE		;is this last bit
+	BNE	LATER		;branch if no
+	JSR	PC,UPDATE	;yes. clean out run
+RETURN:	RTS	PC
+;
+LATER:	CMP	MODE,#3		;is new-frame data valid
+	BHI	1$		;branch if no
+	MOV	CODE,R5		;yes. is new frame ready
+	BEQ	1$		;branch if no
+	CLR	CODE		;yes. copy state variables
+	MOV	R5,R0
+	BIC	#^C7,R0
+	MOV	R0,BLKSIZ
+	ASH	#-3,R5
+	MOV	R5,R0
+	BIC	#^C7,R0
+	MOV	R0,WHTSIZ
+	ASH	#-3,R5
+	BIC	#^C3,R5
+	MOV	R5,MODE
+1$:	MOV	MODE,R0		;flick off to right state
+	ASL	R0
+	ADD	R0,PC
+	BR	STAT00		;0 w-w
+	BR	STAT01		;1 b-w
+	BR	STAT02		;2 w-b
+	BR	STAT03		;3 b-b
+	BR	STAT04		;4 p
+	BR	STAT05		;5 i=1 from b-w
+	BR	STAT06		;6 i=0 from 5
+	BR	STAT07		;7 i=1 from 5
+	BR	STAT08		;8 i=0 from w-b
+	BR	STAT09		;9 i=1 from 8
+	BR	STAT10		;10 i=0 from 8
+;
+STAT00:	MOV	#WHTSIZ,R0	;w-w. decode run length word
+	JSR	PC,WORD
+	BEQ	STATE		;branch if last word
+	JSR	PC,UPDATE	;update run
+	MOV	#4,MODE		;assume p state
+	JSR	PC,BIT		;get p bit
+	BCS	STATE		;branch if p=1
+	MOV	#3,MODE		;p=0. switch to b-b
+	BR	STATE
+;
+STAT03:	MOV	#BLKSIZ,R0	;b-b. decode run length word
+	JSR	PC,WORD
+	BEQ	STATE		;branch if last word
+	JSR	PC,UPDATE	;update run
+	MOV	#4,MODE		;assume p state
+	JSR	PC,BIT		;get p bit
+	BCS	STATE		;branch if p=1
+	MOV	#0,MODE		;p=0. switch to w-w
+	BR	STATE
+;
+STAT04:	JSR	PC,BIT		;p. get i bit
+	BCC	1$		;branch if i=0
+	MOV	#2,MODE		;i=1. switch to w-b
+	BR	EXIT
+;
+1$:	MOV	#1,MODE		;i=0. switch to b-w
+	BR	EXIT
+;
+STAT02:	JSR	PC,BIT		;w-b. get i bit
+	BCS	EXIT		;branch if i=1
+	JSR	PC,UPDATE	;i=0. update run
+	MOV	#8.,MODE	;go to state 8
+	BR	JUMP
+;
+STAT01:	JSR	PC,BIT		;b-w. get next bit
+	BCC	EXIT		;branch if i=0
+	JSR	PC,UPDATE	;i=1. update run length
+	MOV	#5,MODE		;go to state 5
+	BR	JUMP
+;
+EXIT:	INC	RUN		;update run length
+	BR	JUMP
+;
+STAT05:	INC	MODE		;assume state 6
+	JSR	PC,BIT		;get next bit
+	BCC	JUMP		;branch if zero
+	INC	MODE		;one. go to state 7
+	BR	JUMP
+;
+STAT06:	MOV	#0,MODE		;assume w-w
+	JSR	PC,BIT		;get next bit
+	BCC	JUMP		;branch if zero
+	MOV	#2,MODE		;one. go to w-b
+	BR	EXIT
+;
+STAT07:	MOV	#3,MODE		;assume b-b
+	JSR	PC,BIT		;get next bit
+	BCS	JUMP		;branch if one
+	BR	ERROR		;zero. error
+;
+STAT08:	INC	MODE		;assume state 9
+	JSR	PC,BIT		;get next bit
+	BCS	JUMP		;branch if one
+	INC	MODE		;zero. go to state 10
+	BR	JUMP
+;
+STAT09:	MOV	#3,MODE		;assume b-b
+	JSR	PC,BIT		;get next bit
+	BCS	JUMP		;branch if one
+	MOV	#1,MODE		;one. go to b-w
+	BR	EXIT
+;
+STAT10:	MOV	#0,MODE		;assume w-w
+	JSR	PC,BIT		;get next bit
+	BCC	JUMP		;branch if zero
+ERROR:	CLR	MODE		;abort remainder of frame
+	CLR	RUN
+	CLR	SAMPLE
+JUMP:	JMP	STATE
+;
+; Subroutine to update runs
+;
+UPDATE:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	MOV	LACPTR,R2	;fetch pointer
+1$:	MOV	RUN,R1		;is anything there
+	BEQ	6$		;branch if no
+	ADD	XPOSN,R1	;reduce modulo xmax
+	CMP	R1,#XMAX
+	BLO	2$
+	MOV	#XMAX,R1
+2$:	SUB	XPOSN,R1
+	ADD	R1,XPOSN
+	SUB	R1,RUN
+3$:	MOVB	MODE,(R2)+	;stash bits
+	SOB	R1,3$	
+	CMP	XPOSN,#XMAX	;is this end of line
+	BLO	1$		;branch if no
+4$:	CMP	R2,#LACEND	;is fill complete
+	BHIS	5$		;branch if yes
+	CLRB	(R2)+		;no. fill to 16-bit boundary
+	BR	4$
+;
+5$:	MOV	#1,R0		;output top line
+	JSR	PC,PUTLIN
+	MOV	#2,R0		;output bottom line
+	JSR	PC,PUTLIN
+	SUB	#XMAX,XPOSN	;update pointers
+	MOV	#LACBUF,R2
+	BR	1$
+;
+6$:	MOV	R2,LACPTR	;save pointer
+	MOV	(SP)+,R2	;restore registers
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to output line
+; R0 = mask
+;
+PUTLIN:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R0,R3
+	MOV	SCALE,R2
+1$:	MOV	#LACBUF,R1	;assemble next line
+2$:	MOV	#1,R0		;assemble next word
+3$:	BITB	R3,(R1)+
+	BNE	4$
+	CLC
+	BR	5$
+;
+4$:	SEC
+5$:	ROL	R0
+	BCC	3$
+	SWAB	R0
+	JSR	PC,BOUT
+	CMP	R1,#LACEND
+	BLO	2$
+	DEC	R2		;around again for repetitions
+	BNE	1$
+	MOV	(SP)+,R3	;evas
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to get next bit
+; R1 = frame pointer, r2 = remaining bits, r3 = octet, returns c(cc) = bit
+;
+BIT:	TST	SAMPLE		;are any bits remaining
+	BEQ	2$		;branch if no
+	DEC	SAMPLE		;yes. update trivia
+	DEC	R2
+	BNE	1$
+	MOV	#8.,R2
+	MOVB	(R1)+,R3	;get next octet
+1$:	ROR	R3		;get next bit
+2$:	RTS	PC
+;
+; Subroutine to decode run length word
+; R0 = run-length code pointer, r4-r5 = scratch
+;
+WORD:	CLR	-(SP)		;initialize continuation switch
+	MOV	R0,R5		;save run-length code pointer
+1$:	MOV	@R5,R4		;get next subword
+	MOV	#-1,R0
+2$:	JSR	PC,BIT
+	RORB	R0
+	DEC	R4
+	BNE	2$
+	BIC	#^C377,R0	;leave it left-justified in byte
+	MOV	R0,-(SP)
+	MOV	@R5,R4		;right justify it
+	SUB	#8.,R4
+	ASH	R4,R0
+	ADD	R0,RUN		;update run length
+	MOV	(SP)+,R0
+	CMPB	R0,#-1		;is this continue mode
+	BNE	4$		;branch if no
+	INC	@SP		;yes. make sure no decrease later
+	CMP	@R5,#7		;increase size
+	BHIS	3$
+	INC	@R5
+3$:	TST	SAMPLE		;is this end of frame
+	BNE	1$		;branch if no
+	BR	5$
+;
+4$:	INC	RUN		;update run length
+	TST	@SP		;are we in continue mode
+	BNE	5$		;branch if yes
+	MOV	@R5,R4		;get size again
+	MOVB	THRESH(R4),R4	;is lower limit 
+	BEQ	5$		;branch if yes
+	BITB	R4,R0		;no. are selected high-order bits zero
+	BNE	5$		;branch if no
+	DEC	@R5		;yes. decrease size
+5$:	TST	(SP)+
+	TST	SAMPLE		;set cc
+	RTS	PC
+	.PAGE
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+MAGIC:	.WORD	131*400+246,152*400+225	;sun image file magic identifier (?!)
+HGTCOD:	.WORD	2200.,2800.,1100.,2200. ;height. 0: 11", 1: 14", 2: 5-1/2"
+SCACOD:	.WORD	2,3,1,2		;scale. 0: quality, 1: express, 2: detail
+THRESH:	.BYTE	0,0,0,200,300,300,300,300 ;thresholds
+;
+; Variables
+;
+SCALE:	.BLKW	1		;y scale
+HEIGHT:	.BLKW	1		;image height
+SAMPLE:	.BLKW	1		;remaining bits in frame
+XPOSN:	.BLKW	1		;current x position
+CODE:	.BLKW	1		;initial run codes
+MODE:	.BLKW	1		;current mode (state)
+RUN:	.BLKW	1		;run length this mode
+WHTSIZ:	.BLKW	1		;white code size
+BLKSIZ:	.BLKW	1		;black code size
+FRMPTR:	.WORD	FRAME		;frame pointer
+LACPTR:	.WORD	LACBUF		;interlace buffer pointer
+FRAME:	.BLKW	FM.LEN/2	;frame buffer
+FRMEND	=	.		;end of frame buffer
+LACBUF:	.BLKB	1728.		;interlace buffer (multiple of 16.)
+LACEND	=	.		;end of interlace buffer
+	.EVEN
+;
+	.END
+                                                                                                                           

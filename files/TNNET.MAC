@@ -1,0 +1,369 @@
+	.TITLE	TNNET	DCN/TN User process subroutines
+	.SBTTL	System and module definitons
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn tn user process subroutines
+;
+; External symbols
+;
+	.GLOBL	RDLIN,RDASC,ERRLVL
+	.GLOBL	CTRL,RECV,SEND
+	.GLOBL	STATE,FLAGS,PRIDNT,OPNBLK,TIME
+	.GLOBL	NAMRST,WRTCHR,SFLFCB
+
+;
+; Entry symbols
+;
+	.GLOBL	NETDAT,NETSIG,NETRST,SNDNET,SNDATA
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR	;dcnlib definitions
+	.MCALL	.NVT		;dcnlib macros
+	.MCALL	.EXIT,.MRKT,.CMKT,.READW,.PURGE ;rt-11 macros
+	.MCALL	$DFSIG		;moslib definitions
+	.MCALL	DFCON,DFFCB	;netlib definitions
+	.MCALL	CALL,ENTER,LOOK,FORMAT ;netlib macros
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.NVT			;define telnet control codes
+	$DFSIG			;define interprocess signals
+	DFCON			;define connection block
+	DFFCB			;define file control block
+;
+; Module definitions
+;
+; Assembly parameters
+;
+TELSIZ	=	4096.		;telnet ccb size
+RPYSIZ	=	512.		;reply buffer size
+CMDSIZ	=	512.		;command buffer size (multiple of 512)
+TNECHO	=	001		;telnet echo option
+TNSUGA	=	003		;telnet suppress go-ahead option
+;
+; Status flags (flags)
+;
+SFLBIT	=	100000		;send file open bit
+CHRBIT	=	040000		;character-mode bit
+FILBIT	=	020000		;script file open bit
+ECHBIT	=	010000		;echo bit
+IACBIT	=	004000		;telnet iac bit
+REMBIT	=	002000		;echo mode bit
+TRMBIT	=	001000		;terminal enabled bit
+SCRBIT	=	000400		;file enabled bit
+VCGBIT	=	000200		;display enabled bit
+BINBIT	=	000100		;image mode bit
+URGBIT	=	000040		;suppress output bit
+QUOBIT	=	000020		;quote-mode bit
+NONBIT	=	000010		;no-echo bit
+TELBIT	=	000004		;disable telnet negotiation
+	.PAGE
+	.SBTTL	DATA TRANSFER ROUTINES
+;
+	.PSECT	$BOSI,RO,I
+;
+; Initialize overlay
+;
+NETRST:	MOV	#STOBGN,@#50	;reset storage
+	MOV	#TELSIZ+CMDSIZ+RPYSIZ,R0 ;allocate buffers
+	JSR	PC,NAMRST
+	MOV	R0,OPNBLK+CONPTR
+	MOV	#TELSIZ,OPNBLK+CONFMT
+	ADD	#TELSIZ,R0
+	MOV	R0,CMDBUF
+	MOV	R0,CMDNET	;initialize pointers
+	MOV	R0,CMDPTR
+	ADD	#CMDSIZ,R0
+	MOV	R0,RPYBUF
+	BIC	#ECHBIT+QUOBIT,FLAGS
+	.CMKT	#ARGBLK,#1,#0
+	CLR	MRKT
+	BIC	#10000,@#44
+	CLR	STATE
+	RTS	PC
+;
+; Process net signals
+;
+NETSIG:	TST	STATE		;is something happening
+	BEQ	SIGERR		;branch if no
+	BIC	#^C17,R0	;yes. decode signal
+	ASL	R0
+	ADD	R0,PC
+	BR	SIGOPN		;0 open
+	BR	SIGNOP		;1 connection error (reason)
+	BR	SIGNOP		;2 host not responding (reason)
+	BR	SIGCLS		;3 closed
+	BR	SIGERR		;4 data available
+	BR	SIGERR		;5 connection refused (reason)
+	BR	SIGCOM		;6 send complete
+	BR	SIGERR		;7 remote disconnect
+	BR	SIGINT		;10 remote interrupt
+;
+SIGCLS:	FORMAT	#COM97		;closed
+	CMP	STATE,#4	;is this quit
+	BNE	2$		;branch if no (disc or remote disconnect)
+	.EXIT			;yes. hop the last train
+;
+2$:	BIT	#QUOBIT,FLAGS	;is this quote mode
+	BEQ	1$		;branch if no
+	FORMAT	#PROMPT		;yes. print prompt
+1$:	BIS	#TRMBIT,FLAGS	;switch to command mode
+	BIC	#QUOBIT+CHRBIT+REMBIT+NONBIT+ECHBIT+TELBIT+SFLBIT,FLAGS
+	.PURGE	#1
+	.CMKT	#ARGBLK,#1,#0
+	CLR	MRKT
+	BIC	#10000,@#44
+	CLR	STATE
+	RTS	PC
+;
+SIGERR:	CALL	CTRL,#CM.CLS,#0,OPNBLK+CONPTR ;close connection
+SIGNOP:	RTS	PC
+;
+SIGOPN:	MOV	#2,STATE	;connection ready
+	JSR	PC,SNDNET
+	RTS	PC
+;
+SIGCOM:	MOV	CMDBUF,R0	;copy meanwhile arrivals
+	MOV	CMDNET,R1
+2$:	CMP	R1,CMDPTR
+	BHIS	1$
+	MOVB	(R1)+,(R0)+
+	BR	2$
+;
+1$:	MOV	R0,CMDPTR
+	MOV	CMDBUF,CMDNET
+	JSR	PC,SNDNET	;send next glob to net
+	RTS	PC
+;
+SIGINT:	BIS	#URGBIT,FLAGS	;remote interrupt
+	RTS	PC
+;
+; Data received from net
+;
+NETDAT:	MOV	RPYBUF,R1	;get pointers
+	CALL	RECV,#RPYSIZ,R1,OPNBLK+CONPTR ;get next glob
+	BIC	#100000,R0	;set pointers
+	MOV	R0,R2
+	BEQ	1$
+	MOV	R1,R3
+2$:	MOVB	(R3)+,R0	;process octet
+	JSR	PC,NET1
+	SOB	R2,2$
+1$:	RTS	PC
+;
+; Subroutine to precess net char
+; R0 = char
+;
+NET1:	BIT	#IACBIT,FLAGS	;is this telnet option sequence
+	BNE	3$		;branch if yes
+	BIT	#TELBIT,FLAGS	;no. is telnet negotiation enabled
+	BEQ	1$		;branch if no
+	CMPB	R0,#IAC		;yes. is this telnet iac
+	BNE	1$		;branch if no
+	BIS	#IACBIT,FLAGS	;yes. set for next character
+	MOVB	#IAC,OPTION
+	MOVB	#377,OPTION+1
+	CLRB	OPTION+2
+	RTS	PC
+;
+1$:	BIC	#IACBIT,FLAGS	;reset iac mode
+	BIT	#URGBIT,FLAGS	;is this urgent mode
+	BNE	2$		;branch if yes
+	JSR	PC,WRTCHR	;no. output char
+2$:	RTS	PC
+;
+3$:	CMPB	R0,#377		;is this iac
+	BEQ	1$		;branch if yes
+	CMPB	R0,#360		;no. is this command
+	BLO	4$		;branch if no
+	MOVB	R0,OPTION+1	;yes. store command
+	CMPB	R0,#373		;is this negotiation
+	BHIS	11$		;branch if yes
+4$:	MOVB	R0,OPTION+2	;no. store command/option
+	BIC	#IACBIT,FLAGS
+	TST	ERRLVL
+	BNE	5$
+	FORMAT	#COM55,#OPTION
+5$:	CLR	R0		;interpret command
+	BISB	OPTION+1,R0
+	SUB	#360,R0
+	ASL	R0
+	ADD	R0,PC
+	BR	11$		;360 ignore
+	BR	11$		;361 ignore
+	BR	15$		;362 dm
+	BR	11$		;363 ignore
+	BR	11$		;364 ignore
+	BR	11$		;365 ignore
+	BR	11$		;366 ignore
+	BR	11$		;367 ignore
+	BR	11$		;370 ignore
+	BR	11$		;371 ignore
+	BR	11$		;372 ignore
+	BR	7$		;373 will
+	BR	12$		;374 wont
+	BR	6$		;375 do
+	BR	6$		;376 dont
+	BR	11$		;377 ignore
+;
+6$:	MOVB	#WONT,OPTION+1	;do/dont. say "wont"
+	BR	9$
+;
+7$:	CMPB	OPTION+2,#TNSUGA ;will. is this suppress go-ahead option
+	BEQ	11$		;branch if yes
+	CMPB	OPTION+2,#TNECHO ;no. is this echo option
+	BNE	8$		;branch if no
+	BIT	#REMBIT,FLAGS	;yes. is remote echo requested
+	BEQ	8$		;branch if no
+	BIS	#ECHBIT,FLAGS	;yes. set remote mode
+	BR	13$
+;
+8$:	MOVB	#DONT,OPTION+1	;say "dont"
+9$:	TST	ERRLVL
+	BNE	10$
+	FORMAT	#COM56,#OPTION
+10$:	MOV	#3,R0
+	MOV	#OPTION,R1
+	JSR	PC,SNDATA
+11$:	RTS	PC
+;
+12$:	CMPB	OPTION+2,#TNECHO ;wont. is this echo option
+	BNE	14$		;branch if no
+	BIC	#ECHBIT,FLAGS	;yes. set local echo
+13$:	BIT	#QUOBIT,FLAGS
+	BEQ	14$
+	BIS	#10000,@#44
+	BIT	#ECHBIT+CHRBIT,FLAGS
+	BNE	14$
+	BIC	#10000,@#44
+14$:	RTS	PC
+;
+15$:	BIC	#URGBIT,FLAGS	;data mark. reset urgent bit
+	RTS	PC
+;
+; subroutine to send block to net
+; R0 = count, r1 = address
+;
+SNDATA:	MOV	R1,-(SP)	;save goodies
+	MOV	R2,-(SP)
+	TST	STATE		;is connection open
+	BEQ	SND01A		;branch if no
+1$:	MOVB	(R1)+,R2	;yes. copy block to buffer
+	MOVB	R2,@CMDPTR
+	INC	CMDPTR
+	SOB	R0,1$
+	JSR	PC,SNDNET	;send to net
+SND01A:	MOV	(SP)+,R2	;resotre goodies
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to send data to net
+;
+SND02:	CLR	MRKT		;clear timer switch
+SNDNET:	MOV	R1,-(SP)	;save goodies
+	MOV	R2,-(SP)
+	CMP	STATE,#2	;is connection ready
+	BNE	SND01A		;branch if no
+	CMP	CMDNET,CMDBUF	;is net busy
+	BHI	SND01A		;branch if yes
+	TST	MRKT		;no. is timer running
+	BNE	SND01A		;branch if yes
+	BIT	#SFLBIT,FLAGS	;no. is this send file
+	BEQ	6$		;branch if no
+	CMP	CMDPTR,CMDNET
+	BHI	6$		;branch if no
+	.READW	#ARGBLK,#1,CMDBUF,#CMDSIZ/2,SFLFCB+FCBBLK ;yes. get next block
+	BCS	8$		;branch if error
+	ASL	R0		;update pointers
+	ADD	R0,CMDPTR
+	ASR	R0
+	SWAB	R0
+	BIC	#^C377,R0
+	ADD	R0,SFLFCB+FCBBLK
+1$:	BIT	#BINBIT,FLAGS	;is this image mode
+	BNE	6$		;branch if yes
+	MOV	CMDBUF,R1	;no. edit for ascii mode
+	MOV	R1,R2
+2$:	BICB	#200,@R1	;mask and test for nul
+	BEQ	3$		;branch if yes
+	CMPB	@R1,#DEL	;no. is it del
+	BEQ	3$		;branch if yes
+	MOVB	@R1,(R2)+	;no. copy byte
+3$:	CMPB	(R1)+,#SUB	;was it eof (sub)
+	BEQ	4$		;branch if yes
+	CMP	R1,CMDPTR	;no. is buffer full
+	BLO	2$		;branch if no
+	BR	5$
+;
+4$:	FORMAT	#COM42		;transfer complete
+	.PURGE	#1		;end operation
+	BIC	#SFLBIT,FLAGS
+5$:	MOV	R2,CMDPTR
+6$:	MOV	CMDPTR,R0	;is stuff in buffer
+	MOV	R0,CMDNET
+	SUB	CMDBUF,R0
+	BEQ	SND01		;branch if no
+	BIS	#100000,R0	;yes. send it
+	CALL	SEND,R0,CMDBUF,OPNBLK+CONPTR
+	TST	R0		;was it successful
+	BEQ	7$		;branch if yes
+	JSR	PC,PRIDNT	;no. display error comment
+	BIC	#SFLBIT,FLAGS
+	BR	SND01
+;
+7$:	BIT	#QUOBIT,FLAGS	;is this quote mode
+	BEQ	SND01		;branch if no
+	TST	TIME+2		;yes is timeout specified
+	BEQ	SND01		;branch if no
+	.MRKT	#ARGBLK,#TIME,#SND02,#1 ;yes. set timer
+	INC	MRKT
+	BR	SND01
+;
+8$:	TSTB	@#52		;transfer exception. is it end of file
+	BEQ	9$		;branch if yes
+	FORMAT	#COM44,#SFLFCB	;file read error [file]
+	BR	10$
+;
+9$:	FORMAT	#COM42		;transfer complete
+10$:	.PURGE	#1		;end operation
+	BIC	#SFLBIT,FLAGS
+SND01:	MOV	(SP)+,R2	;restore goodies
+	MOV	(SP)+,R1
+	RTS	PC
+	.PAGE
+	.SBTTL	TABLES, TEXT STRINGS AND VARIABLES
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+; Text strings for telnet user protocol
+;
+COM55:	.ASCIZ	'?TELNET-I-Recd ^BK'<0>' ^BK'<1>' ^BK'<2>
+COM56:	.ASCIZ	'?TELNET-I-Sent ^BK'<0>' ^BK'<1>' ^BK'<2>
+COM44:	.ASCIZ	'?TELNET-F-File read error ^F'<FCBNAM>
+COM42:	.ASCIZ	'?TELNET-I-Transfer complete'
+COM97:	.ASCIZ	'?TELNET-I-Closed'
+PROMPT:	.ASCIZ	'*^+'
+	.EVEN
+;
+	.PSECT	$ERAS,RW,I
+;
+; Variables
+;
+CMDBUF:	.BLKW	1		;command buffer base
+CMDNET:	.BLKW	1		;command buffer net pointer
+CMDPTR:	.BLKW	1		;command buffer pointer
+RPYBUF:	.BLKW	1		;reply buffer base
+ARGBLK:	.BLKW	5		;rt-11 argument block
+OPTION:	.BLKW	3		;telnet negotiation string
+MRKT:	.BLKW	1		;timer switch
+	.EVEN
+;
+	.PSECT	$STOR,RW,I
+STOBGN	=	.		;beginning of allocatable storage
+;
+	.END
+                                                                                                                                                                                                                                          

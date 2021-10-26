@@ -1,0 +1,930 @@
+	.TITLE	FAX	DACOM FACSIMILE DRIVER
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn basic operating system
+; Dacom 450 facsimile driver
+;
+; The dacom 450 is a digitally-coded facsimile machine operating
+; To 4.8 kbps. it scans documents and codes into 585-bit blocks, which
+; Appear to this program as an arbitrary bit stream. it prints this
+; Stream on playback. each page appears as two files - the first as a
+; Series of repetitions of setup blocks, the second as the data itself.
+;
+; Either of two hardware interfaces can be used: a dec duv-11 synchronous
+; Line unit or the university college london (ucl) hdlc synchronous line
+; Unit. to use the former, leave "hdlc" undefined. to use the latter set
+; "hdlc" to anything.
+;
+; To operate with dcn software, access the device "fax:" in
+; The usual way using rt-11 .read and .write macros. for output
+; The machine will print the buffers passed to it.
+;
+; External symbols
+;
+	.GLOBL	.WAIT,.SKED,.STIM
+;
+; Entry symbols
+;
+	.GLOBL	FAXPAT		;process control vector
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.PSA,.DFBLK,.FAX,.PAT ;definitions
+	.MCALL	.SETV,.GETDA,.PUTDA,.CTIM,.WIND ;supervisor calls
+	.COM
+	.CHR
+	.PSA
+	.DFBLK
+	.FAX
+;
+; Module definitions
+;
+;HDlc	=	1		;define for ucl hdlc interface
+;
+; Status bits (status)
+;
+WATBIT	=	000001		;receive mode (scan)
+LASBLK	=	000002		;last blk
+FLUSH	=	000004		;flag for flush input data
+HDRBIT	=	000010		;header bits sent out
+TXTFLG	=	000020		;copying txt from d buff to cir buff
+SHFLAG	=	000040		;bit shift flag
+FEDERR	=	000100		;field check error
+DACERR	=	000200		;dacom trx error (no hdr2 or txt)
+TOTERR	=	004000		;ack timeout bit
+UNFERR	=	010000		;buffer underflow bit
+OVFERR	=	020000		;buffer overflow bit
+LSDERR	=	040000		;lost data bit
+EOFBIT	=	100000		;end of file bit
+;
+; Assembly parameters
+;
+BUFMAX	=	1024.		;length of circular buffer
+RECMAX	=	32.		;length of chunk copied
+	.IF	DF,HDLC
+SYNCOD	=	^B000110	;middle six bits of sync code
+	.IFF
+SYCOD1	=	^B10111001	;first syn byte (inv. from spec.)
+SYCOD2   =	^B01100001	;second syn byte (inv.from spec.)
+SYCOD3  =	^B11100100	;third syn byte	
+	.ENDC
+;
+DATMAK  =	^B11101111	;data blk chk mask
+MAKDLY	=	2000.		;send mark-hold interval
+ACKDLY	=	1000.		;ack mark-hold interval
+TOTDLY	=	3000.		;ack timeout, hung up timeout
+;
+; Extended interrupt codes
+;
+INIT	=	002+EXTBAS	;initialize
+RDBUF	=	003+EXTBAS	;read buffer
+INTR	=	004+EXTBAS	;input interrupt
+WRBUF	=	005+EXTBAS	;write buffer
+INTX	=	006+EXTBAS	;output interrupt
+;
+; Process save area (fax)
+;
+.	=	PSAEND
+STATE:	.BLKW	1		;current state
+STATUS:	.BLKW	1		;status bits
+MODE:	.BLKW	1		;input mode
+ERRORS:	.BLKW	1		;status at last error (for diagnostic)
+PUTPTR:	.BLKW	1		;put buffer pointer
+GETPTR:	.BLKW	1		;get buffer pointer
+BYTCNT: .BLKW   1		;blk byte count
+DTBCNT:	.BLKW	1		;byt cnt copy out from d buff (mod 76)
+FILCNT:	.BLKW	1		;byt cnt copy from t buff to cir buff
+BBFCNT:	.BLKW	1		;t buff to cir buff byt cnt (mod 74)
+TEMPTR:	.BLKW	1		;temp buff pointer
+DATA:	.BLKW	1		;data to be copied to cir buff
+SHIFT:  .BLKW   1		;number of bit shift
+SAVE:   .BLKW   1		;byte save reg
+DASPAR:	.BLKW	SD.END/2	;direct-access parameter message
+DASADR:	.BLKW	1		;window buffer pointer
+DASRWC:	.BLKW	1		;residual word count
+CMD:	.BLKB	1		;cmd byte for each blk	
+BUFFER:	.BLKB	BUFMAX		;circular buffer
+	.EVEN
+TMPBUF:	.BLKW	37.		;temp buffer
+	.BLKW	REGEND/2+10	;process stack
+FAXEND	=	.		;end of fax extension
+	.IF	DF,HDLC
+;
+; Hdlc device registers
+;
+.	=	0	
+RDBASR:	.BLKW	1		;receive data and status register
+TDBCSR:	.BLKW	1		;transmit data and status register
+SAMCR:	.BLKW	1		;parameter register
+DLSR:	.BLKW	1		;data length select regsiter
+RCASR:	.BLKW	1		;receive control and status register
+TSAMCR:	.BLKW	1		;transmit control and status register
+	.IFF
+;
+; Duv-11 device registers
+;
+.	=	0
+RXCSR:	.BLKW	1		;control/status register
+PARCSR	=	.		;parameter register (write only)
+RXDBUF:	.BLKW	1		;input buffer (read only)
+TXCSR:	.BLKW	1		;output control/status register
+TXDBUF:	.BLKW	1		;output buffer
+	.ENDC
+;
+; Errors record parameters
+;
+;	Parerr(r3): total report hardware errors
+;	Parure(r3): unreport hardware errors
+;	Parerr(r3): trx or rcv register underrun or overrun
+;	Parovf(r3): cir buffer overflow in receiving, it does not report on
+;		    parerr, or parure
+	.PAGE
+;
+; Procedure segment
+;
+; Supervisor-state procedure
+; Dsects: r2 = dev, r3 = par, r4 = reg, r5 = psa
+;
+; The program operates using a large circular buffer which
+; Can be used for input or output, but not at the same time.
+; This buffer allows for the delay in dcn input/output and device
+; Latencies.
+;
+; A transmission from the 450 begins with one sec of mark-hold followed
+; By a number of 585-bit blocks, each of which begins with a 24-bit
+; Sync code and terminates with a 12-bit crc. this program uses the
+; Duv-11 sync feature by looking at the first eight bits of the first
+; Block. the full 24-bit sync code is:
+;
+;		111001,000110,000110,111001
+;
+; Transmitted t0-the-right (note this is four 6-bit bytes in upright and
+; Inverted code: uiiu).
+;
+	.PSECT	$KERI,RO,I
+;
+; Initialization
+;
+FAXNIT:	ADD	STATE(R5),PC	;clear air turbulence
+	BR	FAXT0		;0 idle
+	BR	FAXT0		;1 input data
+	BR	FAXT1		;2 transmit mark hold
+	BR	FAXT0		;3 transmit data
+	BR	FAXT2B		;4 wait for ack
+	BR	FAXT2A		;5 wait for header 2 or nxt blk input
+	BR	FAXT0E		;6 ack for one page recorded
+	BR	FAXT0H		;7 wait for next page int.
+;
+FAXT2A:	CLRB	CMD(R5)		;timer int., dacom aborts trx
+	BIS	#DACERR+EOFBIT,STATUS(R5)	;set error
+	BR	FAXT0		;re-set up revr, wake up process
+;
+FAXT2B:	BIT	#HDRBIT,STATUS(R5)	;if cir buff underflow, w.f.ack
+	BNE	FAXT2		;no, hdr1 sent out, w. f. ack
+	INC	PARURE(R3)	;yes, set unreport error cnt
+	BR	FAXT0		;br to reset rcvr
+;
+FAXT2:	BIS	#TOTERR,STATUS(R5) ;ack timout, indicate error
+FAXT0:	CLR	STATE(R5)	;exit to state 0 (idle)
+	JSR	PC,RESYN1	;set up rcvr, sync 1
+	CMPB	#70,CMD(R5)	;is hdr1 input done ?
+	BEQ	FAXT0A		;yes, br
+	JMP	FAXR33		;no, jmp to wake up process
+;
+FAXT0A:	MOV	#5*2,STATE(R5)	;enter state 5, w for hdr2 input
+FAXT0B:	MOV	#MAKDLY,R0	;set timer for dacom abortion
+	JMP	.STIM
+;
+FAXT0E:	MOV	#7*2,STATE(R5)	;enter state 7,w f nxt page
+	JSR	PC,RESYN1	;set up rcvr, syn1
+	BR	FAXT0B		;br to set timer, w f n page
+;
+FAXT0H:	BIS	#EOFBIT,STATUS(R5)	;fax did not snd nxt page
+				;set eof for last page
+	BR	FAXT0		;br to state 0
+;
+FAXT1:	MOV	#3*2,STATE(R5)	;mark hold timeout. exit to state 3
+	.IF	DF,HDLC	
+	CLR	TDBCSR(R2)	;tsom=0, teom=0
+	MOV	#043400,SAMCR(R2) ;ps=1, ss=0, idle=0
+	MOV	#000155,TSAMCR(R2) ;xmt enable, etc
+	.IFF
+	MOV	#000130,TXCSR(R2) ;tx inteb,send,half duplex
+	.ENDC
+	JMP	FAXR33		;br to wake up process
+;
+; Read circular buffer
+;
+FAXSIR:	BIS	#WATBIT,STATUS(R5) ;put process in wait state
+	JSR	PC,.WAIT
+	JMP	FAXR32		;go look for wakeup conditions
+;
+; Input interrupt
+;
+	.IF	DF,HDLC
+FAXINR:	MOV	RDBASR(R2),R1	;get receive data and status
+	MOV	RCASR(R2),R0	;get receive control and status
+	.IFF
+FAXINR:	MOV	RXCSR(R2),R0	;get receive status
+	MOV	RXDBUF(R2),R1	;get receive data
+	.ENDC
+	BPL	1$		;branch if no error
+	BIS	#LSDERR,STATUS(R5) ;set lost data
+	INC	PARERR(R3)
+1$:	ADD	STATE(R5),PC	;clear air turbulence
+	BR	FAXR0		;0 idle
+	BR	FAXR0D		;1 input data
+	BR	FAXR00		;2 transmit mark hold
+	BR	FAXT0		;3 transmit data
+	BR	FAXR0A		;4 wait for ack
+	BR	FAXR0C		;5 wait for hdr2 input or next blk
+	BR	FAXR0B		;6 ack for one page recorded
+	BR	FAXR0B		;7 wait for next page int
+;
+FAXR00:	JMP	FAXX2		;2 transmit mark hold	
+;
+FAXR0D:	JMP	FAXR20		;1 input data
+;
+FAXR0A:	.CTIM		;fax acked, flush out timer
+	BR	FAXT0		;br to init the rcvr
+;
+FAXR0B:	MOV	#3*2,MODE(R5)	;multi-page mode, input su blk
+	CLR	STATE(R5)	;enter state 0
+FAXR0C:	.CTIM			;nxt blk or hdr2 int.,flush timer
+;
+	.IF	DF,HDLC
+FAXR0:	BIT	#004000,R0	;state 0, is carrier up
+	NOP			;
+	CLR	DLSR(R2)	;yes,set data length 8 bits
+	.IFF
+FAXR0:	BIT	#010000,R0	;state 0, is carrier up
+	NOP			;
+	.ENDC
+	ADD	MODE(R5),PC
+	BR	FAXR6		;mode 0
+	BR	FAXR14		;mode 1, looking for data blk
+	BR	FAXR2		;mode 2, inputting text
+	BR	FAXR6		;mode 3, multi-page, input hdr2 su blk
+;
+FAXR2:	MOVB	R1,R0		;mode 2, put data in r0
+	BICB	#DATMAK,R0	;check is this data blk
+	BEQ	FAXR4		;no, br
+	MOVB	#71,CMD(R5)	;yes, set cmd field
+	BR	FAXR18		;
+;
+FAXR4:	JSR	PC,INCPUT
+	BEQ	FAXR34		;br if empty
+	MOVB	#2,@R0		;set len=2
+	JSR	PC,INCPUT	;get nxt ptr
+	BEQ	FAXR34
+	MOVB	#72,@R0		;set cmd=72
+	MOV	#1*2,STATE(R5)	;set input state
+	BIS	#FLUSH,STATUS(R5)	;input done, set flush flag
+	JMP	FAXR32
+;
+FAXR6:	JSR	PC,SYCHK	;mode 0, chk sycod 1,2,3
+	ADD	BYTCNT(R5),PC	;chk return condition
+	BR	FAXR8		;bytcnt=0, not matched at all
+	BR	FAXR38		;bytcnt=2, matched syn 1,2
+	BR	FAXR38		;bytcnt=3+(1), all matched
+	BR	FAXR12		;r1 contents 1 st byte after syncodes
+;
+FAXR8:	CLR	BYTCNT(R5)	;clr bytcnt
+	JSR	PC,RESYN1	;resyn
+	MOV	#TOTDLY,R0	;set watch dog timer for nxt blk int.
+	MOV	#5*2,STATE(R5)	;enter state 5, w.f.nxt blk int
+	JMP	.STIM		;set timer
+;
+FAXR12:	MOVB	#70,CMD(R5)	;set cmd field
+	BR	FAXR18
+;
+FAXR14:	JSR	PC,SYCHK	;mode 1, chk syn 1,2,3
+	ADD	BYTCNT(R5),PC	;
+	BR	FAXR8		;bytcnt=0, not matched at all
+	BR	FAXR38		;bytcnt=2, matched syn 1, 2
+	BR	FAXR38		;bytcnt=3+(1), all matched
+	BR	FAXR16		;r1 contents 1 st byte after syncodes
+;
+FAXR16:	MOVB	R1,R0		;put data in r0
+	BICB	#DATMAK,R0	;check data blk
+	BEQ	FAXR8		;not data blk, br
+	MOV	#2*2,MODE(R5)	;set text mode
+	MOVB	#71,CMD(R5)	;yes, data blk, set field
+FAXR18:	MOV	#1*2,STATE(R5)	;exit to state 1, input data
+	JSR	PC,INCPUT
+	BEQ	FAXR34
+	MOVB	#76.,@R0	;store missing codes
+	JSR	PC,INCPUT
+	BEQ	FAXR34
+	MOVB	CMD(R5),@R0
+	JSR	PC,INCPUT
+	BEQ	FAXR34
+	MOVB	#SYCOD1,@R0
+	JSR	PC,INCPUT
+	BEQ	FAXR34
+	MOVB	#SYCOD2,@R0
+	JSR	PC,INCPUT
+	BEQ	FAXR34
+	MOVB	#SYCOD3,@R0
+	JSR	PC,INCPUT
+	BEQ	FAXR34
+	MOVB	R1,@R0		;store the first byte
+	MOV	#6,BYTCNT(R5)	;set bytcnt=6
+	BR	FAXR32
+;
+	.IF	DF,HDLC
+FAXR20:	BIT	#004000,R0	;state 1, is carrier up ?
+	.IFF
+FAXR20:	BIT	#010000,R0	;state 1, is carrier up?
+	.ENDC
+	BEQ	FAXR40		;no, br
+	BIT	#FLUSH,STATUS(R5)	;yes, is flush flag set?
+	BNE	FAXR38		;yes, rtn
+	INC	BYTCNT(R5)	;no, inc bytcnt
+	CMP	#76.,BYTCNT(R5)	;bytcnt=76 ?
+	BNE	FAXR28		;no, br
+	CLR	BYTCNT(R5)	;yes, reset cnt
+	BICB	#376,R1		;stash tailing zero
+	ADD	MODE(R5),PC
+	BR	FAXR22		;mode 0, inputting hdr1 su blk
+	BR	FAXR22		;mode 1, searching for data blk
+	BR	FAXR24		;mode 2, inputting data blk
+	BR	FAXR23		;mode 3, multi-page, input hdr2 su blk
+;
+FAXR22:	MOV	#1*2,MODE(R5)	;set mode 1, looking for data blk
+	BIS	#FLUSH,STATUS(R5)	;set flush flag, flush input
+	BR	FAXR28
+;
+FAXR34:	BIS	#OVFERR,STATUS(R5)	;set buff overflow
+	INC	PAROVF(R3)
+FAXR38:	RTS	PC
+;
+FAXR23:	MOV	#1*2,MODE(R5)	;set mode 1, look for data blk
+	JSR	PC,INCPUT		;store a byte
+	BEQ	FAXR34
+	MOVB	R1,@R0
+	BR	FAXR8			;look ffor data blk
+;
+FAXR24:	CLR	STATE(R5)	;set state 0, for resync
+	JSR	PC,RESYN3	;use syn3 for resync
+FAXR28:	JSR	PC,INCPUT	;get ptr
+	BEQ	FAXR34
+	MOVB	R1,@R0		;store data
+FAXR32:	BIT	#EOFBIT,STATUS(R5)	;is input done ?
+	BNE	FAXR33		;yes
+	MOV	PUTPTR(R5),R0	;no, compute bytes in buff
+	SUB	GETPTR(R5),R0
+	BGE	2$
+	ADD	#BUFMAX,R0
+2$:	CMP	R0,#RECMAX	;is chunk full ?
+	BLO	FAXR38		;br, if no
+FAXR33:	BIT	#WATBIT,STATUS(R5)	;is process waiting ?
+	BEQ	FAXR38		;br, if not
+	BIC	#WATBIT,STATUS(R5)	;yes, wake it up
+	JMP	.SKED
+;
+FAXR40:	CMPB	#71,CMD(R5)	;is txt already received
+	BNE	FAXR42		;no
+;***	MOV	BYTCNT(R5),BYTCNT(R5)	;test bytcnt content
+;***	BEQ	FAXR41		;zero, i.e. complete blks
+;***	JMP	FAXT2A		;carrier off in middle of a blk,set error
+;
+FAXR41:	JSR	PC,FLGCLR	;reset flags, parameters
+	MOV	#6*2,STATE(R5)	;enter state 6, ack f one page recorded
+FAXR42:	BIC	#FLUSH,STATUS(R5)	;clear flush flag
+	MOV	#ACKDLY,R0	;set ack timer interval
+	BR	FAXX1		;br to send mark hold for ack
+;
+;
+; Write circular buffer
+;
+FAXSIX:	BIS	#WATBIT,STATUS(R5) ;put proc in wait state
+	JSR	PC,.WAIT
+	ADD	STATE(R5),PC	;clear air turbulence
+	BR	FAXX0		;0 idle
+	BR	FAXX0		;1 input data
+	BR	FAXR38		;2 transmit mark hold
+	BR	FAXR38		;3 transmit data
+	BR	FAXR38		;4 wait for ack
+	BR	FAXX0A		;5 wait for header 2 or next blk input
+	BR	FAXR38		;6 ack for one page
+	BR	FAXR38		;7 wait next page int
+;
+FAXX0A:	.CTIM			;flush out timer
+FAXX0:	MOV	#2*2,STATE(R5)	;state 0. exit to state 2
+	.IF	DF,HDLC
+	MOV	#000044,TSAMCR(R2) ;dtr and clock on
+	MOV	#002000,RCASR(R2) ;enable carrier detect interrupt
+	MOV	RCASR(R2),R0
+FAXX2:	BIT	#004000,R0	;is carrier up
+	BNE	FAXR38		;branch if yes
+	MOV	PARMRK(R3),R0	;no. send mark ***** to be modified **
+FAXX1:	MOV	#001000,RCASR(R2) ;reset regs
+	MOV	#000400,TDBCSR(R2) ;tsom=1
+	MOV	#000054,TSAMCR(R2) ;dtr, rts
+	MOV	#043400,SAMCR(R2) ;ps=1, idle=0, ss=0, syncod=000
+	BIS	#000041,TSAMCR(R2) ;transmit enable
+	.IFF
+	MOV	#000042,RXCSR(R2)
+	MOV	RXCSR(R2),R0
+FAXX2:	BIT	#010000,R0	;is carrier up
+	BNE	FAXR38		;branch if yes
+	BIT	#HDRBIT,STATUS(R5)	;had mark hold sent out once ?
+	BEQ	FAXX2B		;no, br to send mark
+	MOV	#000006,RXCSR(R2)	;req to snd, term rdy
+	JMP	FAXT1		;yes, skip send mark, jmp to trx data
+FAXX2B:	MOV	#MAKDLY,R0	;send mark hold.
+FAXX1:	MOV	#000006,RXCSR(R2) ;send ack
+	MOV	#000001,TXCSR(R2)	;set break
+	.ENDC
+	JMP	.STIM
+;
+; Output interrupt
+;
+	.IF	DF,HDLC
+FAXINX:	MOV	TSAMCR(R2),R1	;get transmit status
+	.IFF
+FAXINX:	MOV	RXCSR(R2),R0	;get modem status
+	MOV	TXCSR(R2),R1	;get transmit status
+	.ENDC
+	BPL	60$		;branch if no error
+	BIS	#LSDERR,STATUS(R5) ;set lost data
+	INC	PARERR(R3)
+60$:	BIT	#001000,R0	;is data set ready ?
+	BNE	61$		;yes, br
+	JMP	FAXT2A		;no, jmp to set dacom error
+;
+61$:	JSR	PC,INCGET	;get ptr
+	BEQ	FAX21A		;br, if empty buffer
+	.IF	DF,HDLC	
+      	MOVB	@R0,TDBCSR(R2)	;trx a byte	
+	.IFF
+      	MOVB	@R0,TXDBUF(R2)	;trx a byte, fly
+	.ENDC
+	BIT	#HDRBIT,STATUS(R5)	;is header done ?
+	BNE	3$		;yes, br
+	INC	BYTCNT(R5)	;no, inc trx bytcnt
+	CMP	#585.,BYTCNT(R5)	;trx 585 bytes already ?
+	BNE	3$		;no, br
+	BIS	#HDRBIT,STATUS(R5)	;set note, header 1 sent out
+	BR	FAX21		;yes, br to wait for ack
+;
+3$:	MOV	PUTPTR(R5),R0	;compute bytes in buffer
+	SUB	GETPTR(R5),R0
+	BGE	2$
+	ADD	#BUFMAX,R0
+2$:	CMP	R0,#BUFMAX-RECMAX
+	BLO	FAX19A
+FAX19B:	RTS	PC		;	
+;
+FAX19A:	BIT	#WATBIT,STATUS(R5)	;is process waiting
+	BEQ	FAX19B			;branch if not	
+	BIC	#WATBIT,STATUS(R5)	;yes, wake it up
+	JMP	.SKED			;
+;
+FAX21A:	BIC	#HDRBIT,STATUS(R5)	;clr hdrbit
+FAX21:	MOV	#4*2,STATE(R5)	;end of file. exit to state 4
+	.IF	DF,HDLC
+	MOV	#043400,SAMCR(R2) ;ps=1, ss=0, idle=0, syncod=000
+	MOV	#TOTDLY,R0	;give machine a chance
+	MOV	#000044,TSAMCR(R2) ;wait for ack
+	MOV	#000121,RCASR(R2) ;receive mode
+	.IFF
+	MOV	#036000,PARCSR(R2)
+	MOV	#TOTDLY,R0	;give the machine a chance
+	MOV	#000002,RXCSR(R2) ;wait for ack
+	BIS	#000120,RXCSR(R2)
+	CLR	TXCSR(R2)
+	.ENDC
+	JMP	.STIM
+	.PAGE
+;
+; Subroutine to increment get pointer
+;
+INCGET:	MOV	GETPTR(R5),R0	;increment get pointer
+	CMP	R0,PUTPTR(R5)	;is buffer empty
+	BEQ	FAX50		;branch if yes
+	INC	R0		;no. increment it
+	CMP	R0,#BUFMAX	;did pointer wrap around
+	BLO	7$		;branch if no
+	CLR	R0		;yes. reset
+7$:	MOV	R0,GETPTR(R5)
+	BR	FAX51
+;
+; Subroutine to increment put pointer
+;
+INCPUT:	MOV	PUTPTR(R5),R0	;increment put pointer
+	INC	R0
+	CMP	R0,#BUFMAX	;did pointer wrap around
+	BLO	7$		;branch if no
+	CLR	R0		;yes. reset
+7$:	CMP	R0,GETPTR(R5)	;did it overflow buffer
+	BEQ	FAX50		;branch if yes
+	MOV	R0,PUTPTR(R5)	;no. stash pointer
+FAX51:	ADD	R5,R0
+	ADD	#BUFFER,R0
+	RTS	PC
+;
+FAX50:	CLR	R0	;buffer empty or  full
+	RTS	PC
+;
+;
+; Subroutine to set up rcvr, and use sycod1 as sync search
+;
+	.IF	DF,HDLC
+RESYN1:	MOV	#001000,RCACSR(R2)	;master reset
+	MOV	#000044,TSAMCR(R2)	;dtr and fax clock on
+	MOV	#003000,DLSR(R2)	;data len=6 bits
+	MOV	#043400+SYNCOD,SAMCR(R2)	;ps=1,ss=0,idle=0
+	MOV	#000101,RCACSR(R2)	;enable receiver
+	.IFF
+RESYN1:	MOV	#036000+SYCOD1,PARCSR(R2)	;internal sync, w len=8
+	MOV	#000002,RXCSR(R2)	;data term rdy
+	BIS	#000120,RXCSR(R2)	;rx inteb, sch sync
+	CLR	TXCSR(R2)
+	.ENDC
+	RTS	PC
+;
+;
+; Subroutine to set up rcvr, and use sycod3 as sync search
+;
+	.IF	DF,HDLC
+RESYN3:	MOV	#001000,RCACSR(R2)	;master reset
+	MOV	#000044,TSAMCR(R2)	;dtr and fax clock on
+	MOV	#003000,DLSR(R2)	;data len=6 bits
+	MOV	#043400+SYCOD,SAMCR(R2)	;ps=1,ss=0,idle=0
+	MOV	#000101,RCASR(R2)	;enable receiver
+	.IFF
+RESYN3:	MOV	#036000+SYCOD3,PARCSR(R2)	;internal sync,w len=8
+	MOV	#000002,RXCSR(R2)	;data term rdy
+	BIS	#000120,RXCSR(R2)	;rx inteb, sch sync
+	CLR	TXCSR(R2)
+	.ENDC
+	RTS	PC
+;
+; Routine sychk
+;
+; Subroutine to check sync2 and sync3
+;
+; Input:			output:
+;	R1=data				r1=data, no changed
+;					bytcnt=0	,if not matched
+;					bytcnt=2	,if match sycod2
+;					bytcnt=3+(1)	,if match sycod2,sycod3
+;					bytcnt=6	,r1 contents 1 st
+;							 byte data after syncs
+;
+SYCHK:	CMP	#0,BYTCNT(R5)	;bytcnt=0 ?
+	BEQ	1$		;br, if yes
+	CMP	#2,BYTCNT(R5)	;bytcnt=2 ?
+	BNE	4$		;no, br
+	CMPB	#SYCOD3,R1	;check sycod3
+	BNE	3$		;br if not matched
+	MOV	#4,BYTCNT(R5)	;match, set bytcnt=3+(1)
+	RTS	PC
+;
+1$:	CMPB	#SYCOD2,R1	;check sycod2
+	BNE	3$		;br, if not match
+	MOV	#2,BYTCNT(R5)	;match sycod2, set bytcnt=2
+	RTS	PC
+;
+3$:	CLR	BYTCNT(R5)	;not match any, reset bytcnt
+	RTS	PC
+;
+4$:	CMP	#4,BYTCNT(R5)	;is sycod3 matched already ?
+	BNE	3$		;no, br to re-sync
+	MOV	#6,BYTCNT(R5)	;yes, this is 1 st byte data
+	RTS	PC
+;
+;
+; Subroutine of shifting the 74th byte of each block	
+; And or the shifted byte with the saved byte	
+; And storing the new byte in the save reg.	
+;
+; Input:				output:
+;  r1    =data                           r1    =changed
+;  shift =bit shift no.                  shift =shift one more bit
+;  save  =saved byte			 save  =new saved byte
+;  shflag=shift flag			 shflag=new shift falg
+;
+SHSAVE:	BIC	#177776,R1		;clr high order and trash bits
+	BIT	#SHFLAG,STATUS(R5)	;is shflag on ?	
+	BNE	10$			;yes, branch	
+	BIS	#SHFLAG,STATUS(R5)	;no, set shift flag
+	MOVB	R1,SAVE(R5)		;store data in save
+	MOV	#100000,SHIFT(R5)	;set shift 1 bit
+	BR	12$			;		
+;
+10$:	BIS	SHIFT(R5),R1		;put shift on high order byte
+	CLC				;reset carry bit
+11$:	ASL	R1			;rotate 1 bit left
+	BCC	11$			;rotate again if carry not set
+	BISB	R1,SAVE(R5)		;or shifted data with save
+	CLC				;clear carry
+	ROR	SHIFT(R5)		;adjust shift bits no.
+12$:	RTS	PC			;	
+;
+;
+;
+; Subroutine of trx byte shifting adjustment	
+;
+; Input:				output:
+;  r1    =data				 r1    =shifted data
+;  shift =shift bits no.		 shift =no change
+;  save  =saved byte			 save  =new saved byte
+;
+BITSHF:	BIC	#177400,R1		;clr high order byte
+	BIS	SHIFT(R5),R1		;put shift on high order byte
+	CLC				;clear carry
+20$:	ASL	R1			;shift 1 bit to left
+	BCC	20$			;shift again if carry is clr
+	BIS	SAVE(R5),R1		;or saved byte & shifted byte
+	MOV	R1,SAVE(R5)		;move tailing part of byte to save
+	SWAB	SAVE(R5)		;put save data in low order byte
+	BIC	#177400,SAVE(R5)	;clr high order junk
+	RTS	PC			;	;
+;
+	.PAGE
+;
+;
+;	Routine hdrgtr
+;
+;	This routine copies the setup block from the d. buffer
+;	Into the temp buffer, and call the sublk routine to
+;	Generate the necessary setup blocks for the headers.
+;	The generated setup blocks are stored in the cir. buffer.
+;
+;	If fields check error occurs, it sets federr on
+;	The status(r5).
+;	
+;	Output: carry set  - to evoke wrbuf
+;		carry clear- to copy byte from d. buffer.
+;
+HDRGTR:	INC	DTBCNT(R5)	;inc d buff to temp buff byt cnt
+	CMP	#77.,DTBCNT(R5)	;to generate setup blk ?
+	BNE	30$		;no, br
+	JSR	PC,SUBLK	;yes, generate more su blks.
+	BCC	39$		;chk rtn condition,car clr is txtflg set
+	MOV	#76.,DTBCNT(R5)	;car set, not all su generated, set path
+	SEC			;set carry, for a note
+	RTS	PC
+;
+30$:	MOVB	@DASADR(R5),R0	;place data from d buff to r0
+	CMP	#1,DTBCNT(R5)	;is len field chk needed ?
+	BNE	31$		;no, br
+	CMP	#76.,R0		;yes, chk len field
+	BEQ	39$		;correct len field, br
+	BR	36$		;incorrect len, br
+;
+31$:	CMP	#2,DTBCNT(R5)	;is cmd field chk needed ?
+	BNE	34$		;no, br
+	CMP	#70,R0		;yes, chk cmd
+	BNE	36$		;incorrect field, br to re-try
+	MOV	R5,TEMPTR(R5)	;yes, correct field,set t.buff ptr
+	ADD	#TMPBUF-1,TEMPTR(R5)
+	BR	39$
+;
+34$:	INC	TEMPTR(R5)	;get temp buff addr.
+	MOVB	R0,@TEMPTR(R5)	;store data in temp buff
+	BR	39$
+;
+36$:	CLR	DTBCNT(R5)	;re-try to search su blk from d buff
+39$:	CLC			;clear carry
+	RTS	PC
+;
+;
+;
+; Routine sublk
+;
+; This subroutine generates the setup blocks for the headers.
+;
+; Output:	carry set	-cir. buffer is full.
+;		carry clear	-all setup blks generated in cir buff,
+;				-set txtflg.
+;
+SUBLK:	MOV	R1,-(SP)	;push r1
+19$:	JSR	PC,INCPUT	;get cir buff put ptr
+	BEQ	28$		;br, if cir buff is full
+20$:	MOV	R5,TEMPTR(R5)	;get temp buff addr
+	INC	BBFCNT(R5)	;inc buff to buff byt cnt
+	ADD	#TMPBUF-1,TEMPTR(R5)
+	ADD	BBFCNT(R5),TEMPTR(R5)
+	MOVB	@TEMPTR(R5),R1	;get data from temp buff
+	CMP	#74.,BBFCNT(R5)	;last byt of the temp buff ?
+	BNE	24$		;br, not the last byt
+	CLR	BBFCNT(R5)	;yes, clr bbfcnt
+	JSR	PC,SHSAVE	;routine for shift and save
+	BIT	#400,SHIFT(R5)	;shift 8 bits ?
+	BEQ	20$		;no,br
+	CLR	SHIFT(R5)	;yes, reset shift bits
+	BIC	#SHFLAG,STATUS(R5)	;clear shift flag
+	MOVB	SAVE(R5),R1	;yes, get the save byte
+	BR	26$
+;
+24$:	BIT	#SHFLAG,STATUS(R5)	;bit shift flag on ?
+	BEQ	26$		;no, br
+	JSR	PC,BITSHF	;yes, bit shift
+26$:	MOVB	R1,@R0		;store in cir buff
+	INC	FILCNT(R5)	;inc the setup blks byt cnt
+	CMP	#1170.,FILCNT(R5)	;is all setup blk generated ?
+	BNE	19$		;no, generate more
+	BIS	#TXTFLG,STATUS(R5)	;yes, set txtflg
+	CLR	DTBCNT(R5)	;
+	MOV	(SP)+,R1	;pop r1
+	CLC			;clr carry, as a note, all su blk generated
+	RTS	PC
+;
+28$:	MOV	(SP)+,R1	;pop r1
+	SEC			;set carry, as a note, buff is full
+	RTS	PC
+;
+;
+; Routine txtcop
+;
+; This subroutine copies txt (data blocks) from d buffer
+; To cir buffer, it also strips off the fields, and performs the
+; Bit shifting adjustment.
+;
+; Parameters used:	shflag,txtflg,lasblk,federr
+;			save(r5),data(r5),dtbcnt(r5),faxadr(r5)
+;			shift(r5).
+; Output:	
+;	Carry set:	store data(r5) to cir buffer.
+;	Carry clr:	get next byte from d buffer.
+;
+TXTCOP:	MOV	DATA(R5),DATA(R5)	;check sign bit
+	BMI	481$		;neg, last data has not been sent out
+	MOV	R1,-(SP)	;pos, push r1 content into stack
+	INC	DTBCNT(R5)	;inc d buff copy byt cnt
+	MOVB	@DASADR(R5),R1	;get data from d buff
+	CMP	#1,DTBCNT(R5)	;dtbcnt(mod 76)=1 ?
+	BNE	43$		;br, if not
+	CMPB	#76.,R1		;is this len field ?
+	BEQ	49$		;yes, br
+	CMPB 	#2,R1		;no, is len=2 ?
+	BNE	41$		;no, br
+	JSR	PC,FLGCLR	;yes, len=2, one image file copied,
+				;reset parameters
+	BR	49$
+;
+41$:	BIS	#FEDERR,STATUS(R5)	;no, set field chk error
+	BR	49$
+;
+43$:	CMP	#2,DTBCNT(R5)	;is dtbcnt(mod 76)=2 ?
+	BNE	45$		;no, br
+	CMPB	#71,R1		;yes, is data=cmd=71 ?
+	BEQ	49$		;br, if yes
+	BIS	#LASBLK,STATUS(R5)	;no, must be last blk
+	BR	49$
+;
+45$:	CMP	#76.,DTBCNT(R5)	;dtbcnt=76 ?
+	BEQ	47$		;yes, br
+	BIT	#SHFLAG,STATUS(R5)	;no, is shift flag on ?
+	BEQ	46$		;no br
+	JSR	PC,BITSHF	;yes, routine bit shift
+46$:	MOVB	R1,DATA(R5)	;store in data reg
+	BR	48$
+;
+47$:	CLR	DTBCNT(R5)	;set dtbcnt=0
+	JSR	PC,SHSAVE	;routine shift and save data
+	BIT	#LASBLK,STATUS(R5)	;is this last blk ?
+	BEQ	470$		;no, br
+	JSR	PC,FLGCLR	;yes, reset flags and parameters
+	BR	471$
+;
+470$:	BIT	#400,SHIFT(R5)	;not last blk, 8 bits shifted ?
+	BEQ	49$		;br, if not
+	CLR	SHIFT(R5)	;yes, reset shift bit number
+	BIC	#SHFLAG,STATUS(R5)	;reset shift flag
+471$:	MOVB	SAVE(R5),DATA(R5)	;copy the save data
+48$:	MOV	(SP)+,R1	;pop r1
+481$:	BIC	#177400,DATA(R5)	;clr high order byte(bit 15)
+	SEC			;set carry, as a note, store data to cir buff
+	RTS	PC
+;
+49$:	MOV	(SP)+,R1	;pop r1
+	CLC			;clear carry, as a note to get next byte from d buff
+	RTS	PC
+;
+;
+; Subroutine to clear flag & status for restart
+;
+FLGCL1:	CLR	PUTPTR(R5)
+	CLR	GETPTR(R5)
+	CLR	DATA(R5)
+	CLR	STATUS(R5)
+;
+FLGCLR:	CLR	STATE(R5)
+	CLR	MODE(R5)
+	CLR	SHIFT(R5)
+	CLR	CMD(R5)
+	CLR	BYTCNT(R5)
+	CLR	DTBCNT(R5)
+	CLR	FILCNT(R5)
+	CLR	BBFCNT(R5)
+	BIC	#SHFLAG+LASBLK+TXTFLG+FLUSH,STATUS(R5)
+	RTS	PC
+;
+;
+	.PAGE
+;
+; Process-state procedure
+; Dsects: r2 = dev, r3 = par, r5 = psa
+;
+	.PSECT	$SUPI,RO,I
+;
+; Fax handler process
+; Uses direct-access parcels and interfaces with user process
+;
+FAXINI:	MOV	#INTR,R1	;allocate input interrupt vector
+	.SETV
+	ADD	#4,R0		;allocate output interrupt vector
+	MOV	#INTX,R1
+	.SETV
+	EMT	INIT		;enable interrupts
+FAX10:	MOV	R5,R2		;wait for parameter message
+	ADD	#DASPAR,R2
+	.GETDA	R2
+	MOV	SD.CNT(R2),DASRWC(R5)
+FAX33A:	MOV	SD.ADR(R2),R1	;map buffer into virtual window
+	MOV	#100000,R0
+	BISB	SD.DST(R2),R0
+	.WIND
+	MOV	R1,DASADR(R5)
+	MOV	DASRWC(R5),R1
+	CMP	R1,#512.	;include only what will fit in window
+	BLOS	1$
+	MOV	#512.,R1
+1$:	SUB	R1,DASRWC(R5)
+	ASL	R1		;convert to byte count
+	BEQ	FAX20		;branch on null words
+FAX45:	BIT	#OVFERR+UNFERR+TOTERR+FEDERR+DACERR,STATUS(R5) ;is error lurking
+	BNE	FAX20		;branch if yes
+	CMPB	#BC.WRT+CHNCTL,SD.CTL(R2) ;no. is this input
+	BNE	FAX40		;branch if yes
+	BIT	#TXTFLG,STATUS(R5)	;copying data blks to cir buff ?
+	BNE	FAX45A		;yes, br
+	JSR	PC,HDRGTR	;no, still copying hdrs to cir buff.
+	BCS	FAX47		;rtn condition, br if cir buff is full
+	CMP	#76.,DTBCNT(R5)	;clr carry, is one su blk copied ?
+	BEQ	FAX45		;yes, br back to generate more su blks
+	BR	FAX46		;no,br to get next byte
+;
+FAX45A:	JSR	PC,TXTCOP	;routine to copy txt (data blk) to c buff
+	BCC	FAX46		;get next byte, if car clr
+	JSR	PC,INCPUT	;carry on, any space in cir buff ?
+	BEQ	FAX47A		;no br
+	MOVB	DATA(R5),@R0	;yes, put data into cir buff
+	BR	FAX46		;get next byte
+;
+FAX47A:	BIS	#100000,DATA(R5)	;set neg, data has not been sent
+FAX47:	EMT	WRBUF		;start and wait if nexessary
+	BR	FAX45
+;
+FAX40:	JSR	PC,INCGET	;is more left in buffer
+	BEQ	FAX48		;branch if no
+	MOVB	@R0,@DASADR(R5)	;yes. stash it
+FAX46:	INC	DASADR(R5)
+	INC	SD.ADR(R2)
+	DEC	R1
+	BNE	FAX45
+	BR	FAX33A
+;
+FAX48:	BIT	#EOFBIT,STATUS(R5) ;is this last byte
+	BNE	53$		;branch if yes
+	EMT	RDBUF		;no. wait for more
+	BR	FAX45
+;
+53$:	BIC	#EOFBIT,STATUS(R5) ;input end of file
+	BISB	#BR.EOF,SD.CTL(R2) ;note for rmon
+54$:	CLRB	@DASADR(R5)	;zero-fill remainder of block
+	INC	DASADR(R5)
+	INC	SD.ADR(R2)
+	DEC	R1
+	BNE	54$
+	BR	FAX20
+;
+FAX20:	MOV	STATUS(R5),R0	;are any error bits set
+	BIC	#^C<OVFERR+UNFERR+TOTERR+FEDERR+DACERR>,R0
+	BEQ	2$		;branch if no
+	BIC	R0,STATUS(R5)	;yes. reset them
+	MOV	R0,ERRORS(R5)	;save for diagnostic
+	JSR	PC,FLGCL1	;reset flags and parameters
+	BISB	#BR.ERR,SD.CTL(R2) ;note for rmon
+	INC	PARHRD(R3)	;set total report hardware error
+2$:	.PUTDA	R2		;send reply message
+	JMP	FAX10
+	.PAGE
+;
+; Data segment
+;
+	.PSECT	$KERD,RO,D
+;
+; Process header
+;
+FAXPAT:	.PAT	FAXEND,FAXINI,PRI4,<0,FAXNIT,FAXNIT,FAXSIR,FAXINR,FAXSIX,FAXINX>
+;
+	.END
+                                                                                                                                                               

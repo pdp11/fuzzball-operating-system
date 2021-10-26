@@ -1,0 +1,717 @@
+	.TITLE	UDP	UDP user/server process
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn - udp user/server process
+;
+; External symbols
+;
+	.GLOBL	RDASC,RDDEC,RDOCT,HASH,PRIDNT,GETARG ;utility routines
+	.GLOBL	CHAIN,FLAGS,CTRL,HELP,NETAST,ERRLVL,TTOBUF
+	.GLOBL	NAMREQ,DOMREQ,TIMREQ,TFTREQ,NTPREQ,STAREQ ;server links
+	.GLOBL	TFTOUT,NTPSND,CLEAR ;timeout entries
+	.GLOBL	SETUP		;initialization
+;
+; Entry symbols
+;
+	.GLOBL	NETDAT,NETSIG,INIT,KWKTBL,COM00
+	.GLOBL	GETPKT,FLOPKT,SNDPKT,FREPKT
+	.GLOBL	PARPTR,COMPTR,OPNBLK
+	.GLOBL	NTPTAB,NTPEND,NTPCNT,NTPADR,NTPSYS,NTPSKW ;ntp data
+	.GLOBL	NTPPTR,NTPSTR,NTPDSP,NTPENC ;current clock source
+	.GLOBL	NTPHID,NTPKID	;encryption key id, ntp clock id
+	.GLOBL	CMMD,BLOCK,MAXBLK,RETRY,TFTDST,TFTSRC,TIMER ;tftp state
+	.GLOBL	STAPTR		;statistics pointer
+	.GLOBL	STATS		;write statistics
+	.GLOBL	UDPDST,UDPSRC	;address/port fields
+	.GLOBL	SHOW,SHOW1	;show ntp status
+	.GLOBL	KEYS		;key table pointer (16x8 octets))
+	.GLOBL	KEYSKD		;schedule pointer (16x48 octets)
+	.GLOBL	COM20,COM21,COM25,COM26,COM27,COM28 ;display strings
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.PSA,.SUP ;dcnlib definitions
+	.MCALL	.KWTAB,.MSG,.BOOT ;dcnlib macros
+	.MCALL	$DFIH,$DFUH,$DFNH,$DFSIG ;moslib definitions
+	.MCALL	DFCON,OPNBLK,ADDR,CALL,FORMAT,NTPTAB ;netlib macros
+	.MCALL	.GTJB,.DSTAT,.SETTO,.MRKT,.CMKT,.EXIT,.SPND,.RSUM ;rt11 macros
+	.MCALL	.LOOKU,.READW,.WRITW
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.PSA			;define process storage area
+	.SUP			;define host process par areas
+	$DFIH			;define internet header
+	$DFUH			;define user datagram header
+	$DFNH			;define network time header
+	$DFSIG			;define interprocess signals
+	DFCON			;define connection block
+	NTPTAB			;define ntp tables
+;
+; Module definitions
+;
+; Assembly parameters
+;
+RTPSIZ	=	256.		;rtp control block size
+TIMPRT	=	37.*400		;time server port
+NAMPRT	=	42.*400		;name server port
+DOMPRT	=	53.*400		;domain name server port
+TFTPRT	=	69.*400		;tftp server port
+NTPPRT	=	123.*400	;ntp server port
+CLIPRT	=	133.*400	;statistics server port
+MAXKEY	=	16.		;max number of encryption keys
+;
+; Status flags (flags)
+;
+OPXBIT	=	100000		;connection open bit
+;
+	.PSECT	$BOSI,RO,I
+;
+; Poll timeout (one-second timeout)
+;
+POLL:	TST	TIMER		;is tftp countdown complete
+	BEQ	1$		;branch if no
+	DEC	TIMER
+	BNE	1$		;branch if no
+	JSR	PC,TFTOUT	;yes. process event
+1$:	MOV	NTPTPT,R4	;scan neigbor table
+	ADD	#NG.LEN,R4
+	CMP	R4,NTPEND	;is this end of table
+	BLO	2$		;branch if no
+	MOV	NTPTAB,R4	;yes. from the top
+2$:	MOV	R4,NTPTPT
+	CLR	-(SP)
+3$:	TSTB	NG.FLG(R4)	;is association mobilized
+	BEQ	4$		;branch if no
+	DEC	NG.TIM(R4)	;yes. decrement peer timer
+	BGE	4$		;branch if unarmed
+	TST	@SP		;armed. is this the first timeout
+	BNE	4$		;branch if yes
+	MOV	R4,@SP		;no. call timeout routine
+	JSR	PC,NTPSND
+4$:	ADD	#NG.LEN,R4	;advance to next entry
+	CMP	R4,NTPEND	;is this end of table
+	BLO	5$		;branch if no
+	MOV	NTPTAB,R4	;yes. from the top
+5$:	CMP	R4,NTPTPT	;has entire table been scanned
+	BNE	3$		;branch if no
+	MOV	(SP)+,R0	;yes. was there a timeout
+	BEQ	6$		;branch if no
+	MOV	R0,NTPTPT	;yes. remember where it was
+6$:	.MRKT	#MRKBLK,#TIME,#POLL,#1 ;yes. reset poll timeout
+	RTS	PC
+;
+; Net completion routine
+;
+NETSUB:	JSR	PC,NETAST	;net trap
+	RTS	PC
+;
+; Process net signals
+;
+NETSIG:	CMPB	#SG.CC,R0	;yes. is this close complete
+	BNE	1$		;branch if no
+	BIC	#OPXBIT,FLAGS	;yes. mark connection closed
+	.RSUM
+1$:	RTS	PC
+;
+; Process net packet
+;
+NETDAT:	MOV	R0,PKTPTR	;save for later
+	MOV	R0,R1
+	MOV	R1,R2
+	ADD	PH.OFS(R1),R2
+	MOV	PH.LNG(R1),R0	;is length valid
+	CMP	R0,#UH.LEN
+	BLO	10$		;branch if no
+	MOV	IH.DST(R1),UDPDST ;yes. save address fields
+	MOV	IH.DST+2(R1),UDPDST+2
+	MOV	UH.DST(R2),UDPDST+4
+	MOV	IH.SRC(R1),UDPSRC
+	MOV	IH.SRC+2(R1),UDPSRC+2
+	MOV	UH.SRC(R2),UDPSRC+4
+	BIT	#IH.MF+IH.OFF,IH.FRG(R1) ;is this fragmented
+	BEQ	1$		;branch if no
+	FORMAT	#COM06,#UDPSRC	;invalid fragment
+	BR	12$
+;
+; R0 = udp length, r1 = packet pointer, r2 = udp header pointer
+;
+1$:	CMP	UDPDST+4,#NAMPRT ;is this name request
+	BNE	2$		;branch if no
+	JSR	PC,NAMREQ	;yes. send name reply
+	RTS	PC
+;
+2$:	CMP	UDPDST+4,#DOMPRT ;is this domain name request
+	BNE	3$		;branch if no
+	JSR	PC,DOMREQ	;yes. send domain name reply
+	RTS	PC
+;
+3$:	CMP	UDPDST+4,#TIMPRT ;is this time request
+	BNE	6$		;branch if no
+;
+; Note: this code disables UDP/TIME service from primary servers
+; not on the same network
+;
+	CMPB	UDPSRC,UDPDST	;is this same network
+	BNE	4$		;branch if no
+	CMPB	UDPSRC,#128.
+	BLO	5$		;branch if yes
+	CMPB	UDPSRC+1,UDPDST+1
+	BNE	4$		;branch if no
+	CMPB	UDPSRC,#192.
+	BLO	5$		;branch if yes
+	CMPB	UDPSRC+2,UDPDST+2
+	BEQ	5$		;branch if yes
+4$:	MOV	COMPTR,R0	;no. is this a primary server
+	CMPB	CLKSTR(R0),#1
+	BLOS	12$		;branch if yes
+5$:	JSR	PC,TIMREQ	;no. send time reply
+	RTS	PC
+;
+6$:	CMP	UDPDST+4,#TFTPRT ;is this file request
+	BNE	7$		;branch if no
+	JSR	PC,TFTREQ	;yes. send file reply
+	RTS	PC
+;
+7$:	CMP	UDPDST+4,#NTPPRT ;is this network time request
+	BNE	9$		;branch if no
+	CMP	R0,#NT.STA	;is length valid
+	BLOS	10$		;branch if no
+	MOVB	NT.STA(R2),-(SP) ;yes. is this ntp control message
+	BICB	#^CNX.MOD,@SP
+	CMPB	(SP)+,#NX.CTL
+	BLO	8$		;branch if no
+	JSR	PC,STAREQ	;yes. send ntp monitor reply
+	RTS	PC
+;
+8$:	JSR	PC,NTPREQ	;send network time reply
+	RTS	PC
+;
+9$:	CMP	UDPDST+4,#CLIPRT ;is this statistics request
+	BNE	11$		;branch if no
+	JSR	PC,STAREQ	;yes. send statistics reply
+	RTS	PC
+;
+10$:	FORMAT	#COM07,#UDPSRC	;invalid length
+	BR	12$
+;
+11$:	TSTB	UDPDST+4	;who is that varmit
+	BNE	12$		;branch if old duplicate
+	FORMAT	#COM09,#UDPSRC	;unrecognized request
+12$:	JSR	PC,FREPKT	;free ip packet
+	RTS	PC
+;
+; Getpkt (snd) get packet buffer
+; returns r0 = status, r1 = packet pointer
+;
+GETPKT:	CALL	CTRL,#CM.GET,#PKTPTR,OPNBLK+CONPTR ;get packet
+	BR	FLO1
+;
+; Flopkt (snd) get packet buffer - flow controlled
+; returns r0 = status, r1 = packet pointer
+;
+FLOPKT:	CALL	CTRL,#CM.FLO,#PKTPTR,OPNBLK+CONPTR ;get packet
+FLO1:	TST	R0
+	BEQ	2$		;branch if okay
+	CMP	R0,#PK.RES
+	BEQ	1$		;branch if insufficient resources
+	JSR	PC,PRIDNT	;buzzards. squawk to the log
+1$:	SEC
+	RTS	PC
+;
+2$:	MOV	PKTPTR,R1	;remember where it is
+	CLC
+	RTS	PC
+;
+; Sndpkt (snd) send packet
+; r0 = length of ip data area, r2 = udp header pointer
+;
+SNDPKT:	MOV	R1,-(SP)	;save
+	MOV	PKTPTR,R1	;set length
+	MOV	R0,PH.LNG(R1)
+	MOV	UDPDST,IH.SRC(R1) ;restore address fields
+	MOV	UDPDST+2,IH.SRC+2(R1)
+	MOV	UDPDST+4,UH.SRC(R2)
+	MOV	UDPSRC,IH.DST(R1)
+	MOV	UDPSRC+2,IH.DST+2(R1)
+	MOV	UDPSRC+4,UH.DST(R2)
+	CMP	IH.SRC(R1),IH.DST(R1) ;are addresses looped
+	BNE	1$		;branch if no
+	CMP	IH.SRC+2(R1),IH.DST+2(R1)
+	BNE	1$		;branch if no
+	CMP	UH.SRC(R2),UH.DST(R2)
+	BNE	1$		;branch if yes (invalid address)
+	FORMAT	#COM08,#UDPSRC	;invalid address
+	JSR	PC,FREPKT	;free ip packet
+	BR	2$
+;
+1$:	CALL	CTRL,#CM.UDP,R1,OPNBLK+CONPTR ;send udp packet
+	TST	R0
+	BEQ	2$		;branch if ok
+	JSR	PC,PRIDNT	;display message
+2$:	CLR	PKTPTR
+	MOV	(SP)+,R1	;evas
+	RTS	PC
+;
+; Subroutine to discard buffer
+;
+FREPKT:	CALL	CTRL,#CM.FRE,PKTPTR,OPNBLK+CONPTR ;discard packet
+	CLR	PKTPTR		;mark free
+	RTS	PC
+;
+; Initialization
+;
+INIT:	.MSG	<#^RLOG>	;switch to log process
+	MOV	#3,ERRLVL
+	FORMAT	#HERALD,CHAIN	;from the top
+	.DSTAT	#UDPBLK,#HOSPTR	;set host process parameter pointer
+	MOV	UDPBLK+4,R3
+	MOV	R3,COMPTR
+	.GTJB	#ARGBLK,#UDPBLK,#-1 ;get process parameters
+	MOV	UDPBLK+16,PARPTR
+	ADD	#PAROPT,PARPTR
+	MOV	#STOBGN,R0	;clear storage
+1$:	CLR	(R0)+
+	CMP	R0,#STOEND
+	BLO	1$
+	MOV	@#50,R4		;allocate ntp neighbor table
+	TST	(R4)+
+	MOV	R4,NTPTAB
+	MOV	R4,NTPTPT
+	MOV	@#54,R0
+	.SETTO
+2$:	MOV	R4,R2		;allocate next entry
+	ADD	#NG.LEN,R2
+	CMP	R2,@#50
+	BHI	4$		;branch if cant
+	MOV	R2,NTPEND	;save high limit
+3$:	CLR	-(R2)		;clear block
+	CMP	R2,R4
+	BHI	3$		;branch if done
+	JSR	PC,CLEAR	;initialize entry
+	ADD	#NG.LEN,R4
+	BR	2$
+;
+4$:	CLR	STABLK		;initialize block pointers
+	CLR	STAPTR
+	.LOOKU	#ARGBLK,#3,#STANAM ;open statistics file
+	BCC	5$		;branch if okay
+	FORMAT	#COM01		;unable to open statistics file
+	BR	9$
+;
+5$:	MOV	R0,TEMP		;save size for log
+6$:	.READW	#ARGBLK,#3,#STABUF,#256.,STABLK ;read next block
+	BCS	7$		;branch if error
+	TST	STABUF		;search for first free block
+	BEQ	8$		;branch if found (nul)
+	CMP	STABUF,#32
+	BEQ	8$		;branch if found (sub)
+	INC	STABLK
+	BR	6$
+;
+7$:	FORMAT	#COM02		;statistics file full
+	BR	9$
+;
+8$:	FORMAT	#COM05,#STOBGN	;block numbers
+	MOV	#STABUF,STAPTR	;file positioned okay
+9$:	BIT	#CHNBIT,FLAGS	;is this chain
+	BEQ	10$		;branch if no
+	JSR	PC,SETUP	;yes. initialize
+	JSR	PC,CONN		;open connection
+10$:	.MRKT	#ARGBLK,#TIME,#POLL,#1 ;set poll timeout
+	RTS	PC
+;
+; Unrecognized command
+;
+NTFD:	FORMAT	#COM04		;unrecognized command
+	RTS	PC
+;
+; Show (sho) show neighbor status
+; (segment of command language interpreter)
+; Arg1 = entry id
+;
+SHOW:	JSR	PC,RDDEC	;get entry id
+	TST	R0		;from upstairs
+	BNE	SHOW1		;branch if present
+	FORMAT	#COM20		;missing. display header
+	CLR	ARGBLK
+	MOV	NTPTAB,R4	;display neighbor
+1$:	CMP	R4,NTPEND
+	BHIS	4$		;branch if done
+	TSTB	NG.FLG(R4)	;count non-mobilized entries
+	BNE	2$
+	INC	ARGBLK
+2$:	TST	NG.SRC(R4)
+	BEQ	3$		;branch if empty
+	FORMAT	#COM26,R4	;display entry
+	MOV	NG.PST(R4),R0
+	BIC	#^C7,R0
+	CLR	ARGBLK+2
+	MOVB	COM25(R0),ARGBLK+2
+	FORMAT	#COM27,#ARGBLK+2
+	FORMAT	#COM28,R4
+3$:	ADD	#NG.LEN,R4	;advance to next entry
+	BR	1$
+;
+4$:	FORMAT	#COM21,#ARGBLK	;display max id
+	RTS	PC
+;
+SHOW1:	MOV	NTPTAB,R4	;find entry
+1$:	CMP	R4,NTPEND
+	BHIS	6$		;branch if done
+	TST	NG.SRC(R4)	;is this neighbor used
+	BEQ	2$		;branch if no
+	CMP	R0,NG.IDN(R4)	;yes. is this one requested
+	BEQ	3$		;branch if yes
+2$:	ADD	#NG.LEN,R4	;no. advance to next entry
+	BR	1$
+;
+3$:	FORMAT	#COM22,R4	;display useful stuff
+	CMPB	NG.STR(R4),#1	;is this ntp
+	BLOS	4$		;branch if no
+	FORMAT	#COM24,R4	;yes. ip address
+	BR	5$
+;
+4$:	FORMAT	#COM23,R4	;alpha string
+5$:	FORMAT	#COM30,R4	;display filter
+	RTS	PC
+;
+6$:	FORMAT	#COM29		;entry not found
+	RTS	PC
+;
+; NID (ntp) define keys, etc.
+; (segment of command language interpreter)
+; arg1 = key id, arg2 = ntp clock id, arg3 = max peers,
+; arg4 = max clock skew, arg5 = encryption delay
+;
+NID:	JSR	PC,RDDEC	;1 get encryption key id
+	BEQ	1$		;branch if missing
+	MOVB	R0,NTPKID	;store it
+	JSR	PC,RDDEC	;2 get ntp clock id
+	BEQ	1$		;branch if missing
+	MOVB	R0,NTPHID	;store it
+	JSR	PC,RDDEC	;3 get max peers on same net
+	BEQ	1$		;branch if missing
+	MOV	R0,NTPSKW+10	;store it
+	JSR	PC,RDDEC	;4 get min dispersion
+	BEQ	1$		;branch if missing
+	MOV	R0,NTPSKW	;store it
+	JSR	PC,RDDEC	;5 get min clocks
+	BEQ	1$		;branch if missing
+	MOV	R0,NTPSKW+2	;store it
+	JSR	PC,RDDEC	;6 get max distance
+	BEQ	1$		;branch if missing
+	MOV	R0,NTPSKW+4	;store it
+	JSR	PC,RDDEC	;7 get encryption delay
+	BEQ	1$		;branch if missing
+	MOV	R0,NTPSKW+6	;store it
+1$:	RTS	PC
+;
+; NTP (ntp) define neighbor
+; (segment of command language interpreter)
+; arg1 = neighbor ip address, arg2 = flags/mode
+;
+NTP:	JSR	PC,RDDEC	;get neighbor address
+	BEQ	4$		;branch if missing
+	MOV	NTPTAB,R4	;find new neighbor
+1$:	CMP	R4,NTPEND
+	BHIS	4$		;branch if none
+	TSTB	NG.FLG(R4)	;is this neighbor mobilized
+	BEQ	3$		;branch if no
+2$:	ADD	#NG.LEN,R4	;yes. advance to next entry
+	BR	1$
+;
+3$:	MOVB	R0,NG.SRC(R4)	;save neighbor address
+	JSR	PC,RDDEC
+	MOVB	R0,NG.SRC+1(R4)
+	JSR	PC,RDDEC
+	MOVB	R0,NG.SRC+2(R4)
+	JSR	PC,RDDEC
+	MOVB	R0,NG.SRC+3(R4)
+	MOV	COMPTR,R0	;save local address
+	ADD	#PARIDS,R0
+	ADD	@R0,R0
+	MOV	(R0)+,NG.DST(R4)
+	MOV	(R0)+,NG.DST+2(R4)
+	MOV	#NTPPRT,NG.DST+4(R4) ;save ports	
+	MOV	#NTPPRT,NG.SRC+4(R4)
+	INC	NTPCNT		;create new association identifier
+	MOV	NTPCNT,NG.IDN(R4)
+	MOV	NTPCNT,NG.TIM(R4) ;skew initial timer preset to avoid bunching
+	BIC	#^C77,NG.TIM(R4)
+	MOVB	#NX.VER*10+NC.SAM,NG.FLG(R4) ;assume symmetric active mode
+	MOV	#NX.CFG+NX.MAC,NG.PST(R4) ;assume authenticated
+	JSR	PC,RDOCT	;get new status
+	BEQ	4$		;branch if missing
+	MOV	R0,NG.PST(R4)	
+	JSR	PC,RDOCT	;get new mode
+	BEQ	4$		;branch if missing
+	MOVB	R0,NG.FLG(R4)
+4$:	RTS	PC
+;
+; FLAG (set) set ntp flags
+; arg1 = entry id, arg2 = flags
+;
+FLAG:	JSR	PC,RDDEC	;get entry id
+	BEQ	4$		;branch if missing
+	MOV	NTPTAB,R4	;find entry
+1$:	CMP	R4,NTPEND
+	BHIS	4$		;branch if not found
+	CMP	R0,NG.IDN(R4)
+	BEQ	3$		;branch if found
+2$:	ADD	#NG.LEN,R4	;advance to next entry
+	BR	1$
+;
+3$:	JSR	PC,RDOCT	;get flags/mode
+	BEQ	1$		;branch if missing
+	MOV	R0,NG.PST(R4)
+4$:	RTS	PC
+;
+; CRYP (set) set encyption keys
+; arg1 = key id, arg2 = key (16 hex digits)
+;
+CRYP:	JSR	PC,RDDEC	;get key id
+	BEQ	5$		;branch if none
+	CMP	R0,#MAXKEY
+	BHIS	5$		;branch if out of range
+	ASH	#3,R0		;point to key
+	ADD	KEYS,R0
+	MOV	R0,R1
+1$:	JSR	PC,RDASC	;read first nibble
+	BEQ	5$		;branch if eor
+	BCS	1$		;branch if special
+	BMI	2$		;branch if digit
+	ADD	#10.-'A,R0	;letter. convert to bcd
+2$:	BIC	#^C17,R0	;convert to binary
+	ASH	#4,R0
+	MOVB	R0,@R1
+3$:	JSR	PC,RDASC	;read second nibble
+	BEQ	5$		;branch if eor
+	BCS	3$		;branch if special
+	BMI	4$		;branch if digit
+	ADD	#10.-'A,R0	;letter. convert to bcd
+4$:	BIC	#^C17,R0	;convert to binary
+	BISB	R0,(R1)+
+	BR	1$
+;
+5$:	RTS	PC
+;
+; Quit (qui) leave the game
+; (segment of command language interpreter)
+; (no arguments)
+;
+QUIT:	JSR	PC,ABOR		;abort pending operation
+	.EXIT			;return to cli
+;
+; Boot (qui) leave the planet
+; (segment of command language interpreter)
+; (no arguments, none whatsoever)
+;
+BOOT:	.BOOT			;crawl up the bootstrap
+;
+; Connect (conn) open passive connection
+; (segment of command language interpreter)
+; (no arguments)
+;
+CONN:	CALL	CTRL,#CM.OPN,#OPNBLK+CONPAR,OPNBLK+CONPTR ;open connection
+	TST	R0
+	BEQ	1$		;branch if ok
+	JSR	PC,PRIDNT	;print reason for failure
+	RTS	PC
+;
+1$:	BIS	#OPXBIT,FLAGS	;declare in progress
+	RTS	PC
+;
+; Abort (abo) abort pending operation
+; (segment of command language interpreter)
+; (no arguments)
+;
+ABOR:	BIT	#OPXBIT,FLAGS	;is connection open
+	BEQ	1$		;branch if no
+	CALL	CTRL,#CM.CLS,#0,OPNBLK+CONPTR ;ip close
+	FORMAT	#COM03		;net transfer aborted
+	.SPND			;wait for connection to close
+1$:	RTS	PC
+;
+; Verbose (ver) be very noisy
+; (segment of command language interpreter)
+; arg = error level
+;
+VERB:	JSR	PC,RDDEC	;set error level
+	MOV	R0,ERRLVL
+	RTS	PC
+;
+; Output (out) change console device output
+; (segment of command language interpreter)
+; Arg = output device name
+;
+OUTP:	JSR	PC,HASH		;get new name
+	BEQ	1$		;branch if missing
+	.MSG
+	RTS	PC
+;
+1$:	.MSG	<#^RTT >	;default to "tt"
+	RTS	PC
+;
+; Subroutine to update statistics file pointer and write block
+;
+STATS:	ADD	#20,STAPTR	;update pointer
+	CMP	STAPTR,#STABUF+512. ;is block full
+	BLO	1$		;branch if no
+	.WRITW	#ARGBLK,#3,#STABUF,#256.,STABLK ;yes. write block
+	BCS	2$		;branch if error
+	INC	STABLK		;update pointers
+	MOV	#STABUF,STAPTR
+1$:	RTS	PC
+;
+2$:	FORMAT	#COM02		;statistics file full
+	CLR	STAPTR
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+; Command table for kwik
+;
+KWKTBL:	.KWTAB	<HEL>,HELP	;send help information
+	.KWTAB	<SHO>,SHOW	;show neighbor status
+	.KWTAB	<NID>,NID	;define encryption key id, ntp clock id
+	.KWTAB	<NTP>,NTP	;define neighbor
+	.KWTAB	<FLA>,FLAG	;set ntp flags
+	.KWTAB	<QUI>,QUIT	;leave the game
+	.KWTAB	<BOO>,BOOT	;leave the planet
+	.KWTAB	<ABO>,ABOR	;abort operation
+	.KWTAB	<VER>,VERB	;set error level
+	.KWTAB	<OUT>,OUTP	;select log device
+	.KWTAB	<CON>,CONN	;open passive connection
+	.KWTAB	<KEY>,CRYP	;set encryption keys
+	.KWTAB	<   >,NTFD	;end of table
+;
+HOSPTR:	.RAD50	/HOS/		;name of host process
+TIME:	.WORD	0,1*60.		;poll timeout (1 sec)
+STANAM:	.RAD50	'DK STATS DAT'	;statistics file name
+KEYS:	.WORD	KEYTAB		;key table pointer
+KEYSKD:	.WORD	TTOBUF		;key schedule pointer (768 octets)
+;
+; NTP clock type encoding
+;
+NTPENC:	.ASCII	'UNSP'		;0 unspecified or unknown
+	.ASCII	'ATOM'		;1 atom (cesium, hydrogen, etc.)
+	.ASCII	'GPS '		;2 global position system
+	.ASCII	'LORC'		;3 loran-c
+	.ASCII	'WWVB'		;4 longwave (dcf77/msf/wwvb)
+	.ASCII	'WWV '		;5 shortwave (chu/wwv/wwvh)
+	.ASCII	'GOES'		;6 satellite (goes)
+	.ASCII	'DCN '		;7 dcn (local net)
+	.ASCII	'NTP '		;8 udp/ntp
+	.ASCII	'UDP '		;9 udp/time
+	.ASCII	'MAN '		;10 eyeball-and-wristwatch
+	.ASCII	'NIST'		;11 nist modem
+;
+; Text strings
+;
+HERALD:	.ASCIZ	'?UDP-I-NAME/TIME/TFTP Server (29-Jul-90 Version) ^LD'
+COM00:	.ASCIZ	'?UDP-^+'
+COM01:	.ASCIZ	'?UDP-W-Unable to open statistics file DK:STATS.DAT'
+COM02:	.ASCIZ	'?UDP-W-Statistics file full'
+COM03:	.ASCIZ	'?UDP-F-Net transfer aborted'
+COM04:	.ASCIZ	'?UDP-F-Unrecognized command'
+COM05:	.ASCII	'?UDP-I-Current block ^I'<STABLK-STOBGN>
+	.ASCIZ	' max blocks ^I'<TEMP-STOBGN>
+COM06:	.ASCIZ	'?UDP-F-Invalid fragment ^C'<0>
+COM07:	.ASCIZ	'?UDP-F-Invalid length ^C'<0>
+COM08:	.ASCIZ	'?UDP-F-Invalid address ^C'<0>' ^XI'<UDPDST-UDPSRC+4>
+COM09:	.ASCIZ	'?UDP-F-Unrecognized request ^C'<0>' ^XI'<UDPDST-UDPSRC+4>
+COM20:	.ASCII	'AdrID	Address		Str Pol	Sta Rch	Delay	Offset	Weight	Update^/'
+	.ASCIZ	'------------------------------------------------------------------------'
+COM21:	.ASCIZ	'^BI'<0>' free'
+COM26:	.ASCIZ	'^I'<NG.IDN>'^+'
+COM27:	.ASCIZ	' ^A'<0>'^+'
+COM28:	.ASCII	' ^C'<NG.SRC>'	^BI'<NG.STR>'   ^BI'<NG.MPI>
+	.ASCII	'	^BH'<NG.STA>'  ^BH'<NG.SRG>'	^SI'<NG.DLY>'	^SMI'<NG.OFS+2>
+	.ASCIZ	'	^I'<NG.WGT>'	^+T'<NG.UPD+2>
+COM22:	.ASCII	'EntryID: ^I'<NG.IDN>'  Host address: ^C'<NG.DST>
+	.ASCII	' ^XI'<NG.DST+4>'  peer address: ^C'<NG.SRC>' ^XI'<NG.SRC+4>'^/'
+	.ASCII	'Peer status: ^XH'<NG.PST>'  keyID: ^BI'<NG.KEY>
+	.ASCII	'  mode: ^BH'<NG.STA>'  poll: ^SBI'<NG.HPI>
+	.ASCII	'  stratum: ^BI'<NG.STR>'  precision: ^SBI'<NG.PRE>'^/'
+	.ASCII	'Offset: ^SMI'<NG.OFS+2>'  delay: ^SI'<NG.DLY>
+	.ASCII	'  disp: ^I'<NG.DSP>'  root delay: ^SMI'<NG.ERR>
+	.ASCII	'  root disp: ^SMI'<NG.DRF>'^/'
+	.ASCIZ	'Reference clock ID: ^+'
+COM23:	.ASCIZ	'^A'<NG.RID>'^+'
+COM24:	.ASCIZ	'^C'<NG.RID>'^+'
+COM30:	.ASCII	'  timestamp: ^+D'<NG.REF>' ^+T'<NG.REF+2>'^/'
+	.ASCII	'Host mode: ^BH'<NG.FLG>'  poll: ^SBI'<NG.MPI>
+	.ASCII	'  flash: ^BH'<NG.BIT>'  filter: ^BI'<NG.SIZ>
+	.ASCII	'  sent: ^I'<NG.SND>'  rcvd: ^I'<NG.RCV>
+	.ASCII	'  supr: ^I'<NG.PMT>'^/'
+	.ASCII	'Offset	^SMI'<NG.FLT+2>'	^SMI'<NG.FLT+14>
+	.ASCII	'	^SMI'<NG.FLT+26>'	^SMI'<NG.FLT+40>
+	.ASCII	'	^SMI'<NG.FLT+52>'	^SMI'<NG.FLT+64>
+	.ASCII	'	^SMI'<NG.FLT+76>'	^SMI'<NG.FLT+110>'^/'
+	.ASCII	'Delay	^SI'<NG.FLT+6>'	^SI'<NG.FLT+20>
+	.ASCII	'	^SI'<NG.FLT+32>'	^SI'<NG.FLT+44>
+	.ASCII	'	^SI'<NG.FLT+56>'	^SI'<NG.FLT+70>
+	.ASCII	'	^SI'<NG.FLT+102>'	^SI'<NG.FLT+114>'^/'
+	.ASCII	'Disp	^I'<NG.FLT+10>'	^I'<NG.FLT+22>
+	.ASCII	'	^I'<NG.FLT+34>'	^I'<NG.FLT+46>
+	.ASCII	'	^I'<NG.FLT+60>'	^I'<NG.FLT+72>
+	.ASCIZ	'	^I'<NG.FLT+104>'	^I'<NG.FLT+116>
+COM29:	.ASCIZ	'?UDP-W-Entry not found'
+COM25:	.ASCII	' x.-+#*7'	;tattletales
+	.EVEN
+;
+	.PSECT	$DATA,RW,I
+;
+OPNBLK:	OPNBLK	0,UDP,UDPBLK,RTPSIZ,NETSUB,P.UDP,300 ;open block
+NTPPTR:	.WORD	0		;ntp pointer (sys.peer)
+NTPDSP:	.WORD	0		;ntp delay
+NTPCNT:	.WORD	0		;current entry identifier
+NTPSKW:	.WORD	10.,3.,1000.,0,20. ;ntp data
+NTPSYS:	.BYTE	0,20+NS.RST	;(word-aligned) system status word	
+NTPADR:	.BYTE	0,0,0,0		;ntp address
+NTPKID:	.BYTE	0		;encryption key id
+NTPHID:	.BYTE	0		;ntp clock hid
+NTPSTR:	.BYTE	0		;ntp stratum
+	.EVEN
+;
+	.PSECT	$ERAS,RW,I
+;
+PARPTR:	.BLKW	1		;udp process parameter pointer
+COMPTR:	.BLKW	1		;host process parameter pointer
+NTPTAB:	.BLKW	1		;beginning of ntp neighbor table
+NTPEND:	.BLKW	1		;end of ntp neighbor table
+NTPTPT:	.BLKW	1		;ntp neighbor table pointer
+;
+STOBGN	=	.		;beginning of erasable storage
+;
+; Tftp state variables
+;
+CMMD:	.BLKW	1		;command code
+BLOCK:	.BLKW	1		;file block
+MAXBLK:	.BLKW	1		;max block
+RETRY:	.BLKW	1		;retry count
+TFTDST:	.BLKW	6		;destination address/port
+TFTSRC:	.BLKW	6		;source address/port
+TIMER:	.BLKW	1		;timout counter
+MRKBLK:	.BLKW	5		;timer-tinterrupt argument block
+;
+; Variables
+;
+TEMP:	.BLKW	1		;temp
+PKTPTR:	.BLKW	1		;packet buffer pointer
+STABLK:	.BLKW	1		;statistics file block
+STAPTR:	.BLKW	1		;statistics buffer pointer
+ARGBLK:	.BLKW	5		;rt-11 argument block
+UDPDST:	.BLKW	6		;destination address/port
+UDPSRC:	.BLKW	6		;source address/port
+KEYTAB:	.BLKW	MAXKEY*4	;encryption key table
+STABUF:	.BLKW	256.		;statistics file buffer
+UDPBLK:	.BLKW	RTPSIZ/2	;udp connection block
+STOEND	=	.		;end of erasable storage
+;
+	.END
+                                                                                                                                                                                                                                                                                                                                                                                                                                                   

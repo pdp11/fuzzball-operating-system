@@ -1,0 +1,948 @@
+	.TITLE	XNET	DCN/XNET USER PROCESS
+	.SBTTL	SYSTEM AND MODULE DEFINITONS
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn basic operating system - dcn/xnet user process
+;
+; This program is an internet debugger and patch facility. it operates
+; With the xnet-4 protocol and is compatible with the xnet4 user program
+; Resident on arpanet tops-20 and tenex hosts and with the pdp11 internet
+; Bootstrap. the program operates with a virtual-memory file image of
+; The target machine. this file can be patched and displayed and selected
+; Portions of it can be exchanged with the target machine. in addition,
+; A remote user program can manipulate this image in the same manner
+; As if it represented the real storage and this program were the xnet
+; Bootstrap.
+;
+; External symbols
+;
+	.GLOBL	RDASC,RDOCT,RDDEC,GETARG,PROCT,PRBYT
+	.GLOBL	FLAGS,OPNBLK,CTRL,HELP,NETAST,ERRLVL
+	.GLOBL	TTOBUF,PRTPTR,PRIDNT,GTHOST,RNAME,NAMRST
+;
+; Entry symbols
+;
+	.GLOBL	NETDAT,NETSIG,INIT,KWKTBL,COM00
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR	;dcn definitions
+	.MCALL	.KWTAB,.GCLK	;dcn macros
+	.MCALL	$DFIH,$DFSIG	;moslib definitions
+	.MCALL	DFCON,OPNBLK,ADDR,CALL,GETARG ;netlib definitions
+	.MCALL	ENTER,LOOK,FORMAT
+	.MCALL	.EXIT,.PRINT,.CSISP ;rt-11 macros
+	.MCALL	.LOOKU,.ENTER,.READW,.WRITW,.CLOSE,.PURGE,.SPND,.RSUM
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	$DFIH			;define internet header
+	$DFSIG			;define interprocess signals
+	DFCON			;define connection block
+;
+; Module definitions
+;
+; Xnet version 4 header
+;
+.	=	0
+XH.PRT:	.BLKW	1		;port number
+XH.SEQ:	.BLKW	1		;sequence number
+XH.CHK:	.BLKW	1		;xnet checksum
+XH.CMD:	.BLKB	1		;command
+NOPCMD	=	000		;no op command
+DBGCMD	=	001		;debug command
+DEPCMD	=	004		;deposit command
+STACMD	=	005		;start command
+EXACMD	=	006		;examine command
+REGCMD	=	007		;deposit register command
+CRPCMD	=	014		;create process command
+LODCMD	=	071		;load me command
+XH.PID:	.BLKB	1		;process id
+XH.AR1:	.BLKW	1		;argument 1
+XH.AR2:	.BLKW	1		;argument 2
+XH.LEN	=	.		;xnet header length
+;
+; Assembly parameters
+;
+RTPSIZ	=	256.		;rtp control block size
+CACSIZ	=	1024.		;cache size (words)
+PKTMAX	=	128.		;max packet data area size
+;
+; Status flags (flags)
+;
+OPXBIT	=	100000		;connection open bit
+CHGBIT	=	040000		;cache changed
+VLDBIT	=	020000		;cache valid
+XFRBIT	=	010000		;xnet transfer in progress
+ACKBIT	=	004000		;xnet waiting for ack
+	.PAGE
+	.SBTTL	NET PROCESSING
+;
+	.PSECT	$BOSI,RO,I
+;
+; Net completion routine
+;
+NETSUB:	JSR	PC,NETAST
+	RTS	PC
+;
+; Process net signals
+;
+NETSIG:	CMPB	R0,#SG.EST	;is this open
+	BNE	2$		;branch if no
+	BITB	#300,OPNBLK+CONFLG ;yes. is this active
+	BNE	1$		;branch if no
+	JSR	PC,PACKET	;yes. send initial packet
+1$:	RTS	PC
+;
+2$:	CMPB	R0,#SG.CC	;no. is this close complete
+	BNE	3$		;branch if no
+	BIC	#OPXBIT,FLAGS	;yes. mark connection closed
+	.RSUM
+	RTS	PC
+;
+3$:	JSR	PC,ABOR		;stop data transfer
+	RTS	PC
+;
+; Create and initialize packet
+;
+PACKET:	CALL	CTRL,#CM.GET,#TEMP,OPNBLK+CONPTR ;allocate ip packet
+	TST	R0		;was it successful
+	BEQ	1$		;branch if yes
+	JSR	PC,PRIDNT	;no. print comment
+	RTS	PC
+;
+1$:	MOV	TEMP,R0		;position pointer
+	BIS	#XFRBIT,FLAGS	;mark operation in progress
+;
+; Process net packet
+;
+NETDAT:	MOV	R0,R1		;get packet pointer
+	MOV	PH.OFS(R1),R2	;get xnet header pointer
+	ADD	R1,R2
+	MOV	R2,DATPTR
+	ADD	#XH.LEN,DATPTR
+	MOV	PH.LNG(R1),DATCNT
+	SUB	#XH.LEN,DATCNT	;is packet valid
+	BMI	1$		;branch if no
+	BIT	#IH.MF+IH.OFF,IH.FRG(R1)
+	BEQ	2$		;branch if yes
+1$:	FORMAT	#COM13		;format error
+	JMP	DISCRD
+;
+2$:	MOV	XH.PRT(R2),AX.PRT ;save xnet header
+	MOV	XH.SEQ(R2),AX.SEQ
+	MOV	XH.CMD(R2),AX.CMD
+	MOV	XH.AR1(R2),AX.AR1
+	MOV	XH.AR2(R2),AX.AR2
+	TST	IH.FL(R1)	;is this new packet
+	BNE	PKT4		;branch if no
+	MOVB	#100,AX.CMD	;yes. record as ack
+	CLR	COUNT		;initialize transfer
+	CMPB	TX.CMD,#EXACMD	;is this data-transfer command
+	BEQ	PKT5		;branch if yes
+	CMPB	TX.CMD,#DEPCMD
+	BEQ	PKT5		;branch if yes
+	CMPB	TX.CMD,#REGCMD	;no. is this deposit state vector
+	BNE	4$		;branch if no
+	MOV	TX.AR1,STOPTR	;yes. set transfer parameters
+	ADD	#REGBLK,STOPTR
+	MOV	TX.AR2,STOCNT
+	ASR	STOCNT
+3$:	TST	STOCNT
+	BEQ	4$
+	MOV	@STOPTR,@DATPTR	;copy registers into packet
+	ADD	#2,STOPTR
+	ADD	#2,DATPTR
+	DEC	STOCNT
+	BR	3$
+;
+4$:	JMP	SEND		;no. force send
+;
+PKT4:	MOV	PH.TIM(R1),RX.TIM ;save timestamp
+	MOV	PH.TIM+2(R1),RX.TIM+2
+	JSR	PC,CHKSUM	;verify checksum
+	TST	R0
+	BNE	PKT7		;branch if bad
+	BITB	#100,AX.CMD	;good. is this our ack
+	BEQ	PKT8		;branch if no
+;
+; Packet acks one we presumably sent
+;
+	CMP	AX.PRT,TX.PRT	;is it really ours
+	BNE	PKT7		;branch if no
+	CMP	AX.SEQ,TX.SEQ
+	BNE	PKT7		;branch if no
+	INC	TX.SEQ		;advance sequence number
+	BIC	#ACKBIT,FLAGS
+	BITB	#200,AX.CMD	;can he do that
+	BNE	PKT6		;branch if no
+PKT5:	MOV	TX.AR1,STOPTR	;initialize storage pointers
+	MOV	COUNT,STOCNT
+	ADD	COUNT,TX.AR1	;update argument pointers
+	SUB	COUNT,TX.AR2
+	CMPB	TX.CMD,#EXACMD	;is this examine command
+	BEQ	DEPOST		;branch if yes
+	CMPB	TX.CMD,#DEPCMD	;no. is this deposit command
+	BNE	PKT6		;branch if no
+	MOV	TX.AR1,STOPTR
+	MOV	TX.AR2,STOCNT
+	CMP	STOCNT,#PKTMAX	;compute words this pkt
+	BLOS	EXAMIN
+	MOV	#PKTMAX,STOCNT
+	BR	EXAMIN
+;
+PKT6:	BIC	#XFRBIT+ACKBIT,FLAGS ;mark operation complete
+	FORMAT	#COM05,R2	;strange thing
+PKT7:	JMP	DISCRD		;discard packet
+;
+; Packet received from remote xnet user
+;
+PKT8:	MOV	AX.SEQ,R0	;is this first command
+	BNE	2$		;branch if no
+	MOV	R0,RX.SEQ	;yes. initialize port and sequence
+	MOV	AX.PRT,RX.PRT
+2$:	CMP	AX.PRT,RX.PRT	;is packet valid
+	BNE	PKT7		;branch if no
+	SUB	RX.SEQ,R0
+	BEQ	1$		;branch if yes
+	BPL	PKT7		;future packet. discard it
+	BR	REPLY		;old packet. ack it
+;
+1$:	INC	RX.SEQ		;advance sequence number
+	MOV	AX.CMD,RX.CMD	;copy header fields
+	MOV	AX.AR1,RX.AR1
+	MOV	AX.AR2,RX.AR2
+	MOV	RX.AR1,STOPTR	;save pointers
+	BIC	#1,STOPTR
+	MOV	RX.AR2,STOCNT
+	MOVB	RX.CMD,R0	;fetch command
+	CMPB	R0,#LODCMD	;is it load-me from robustness card
+	BEQ	PKT6		;branch if yes
+	CMPB	R0,#20		;no. is it legal
+	BHIS	ERROR		;branch if no
+	BIC	#^C17,R0	;yes. do the deed
+	ASL	R0
+	ADD	R0,PC
+	BR	NOTE		;0 no op
+	BR	NOTE		;1 debug
+	BR	NOTE		;2 end debug
+	BR	ERROR		;3 halt process
+	BR	DEPOST		;4 deposit
+	BR	NOTE		;5 start
+	BR	EXAMIN		;6 examine
+	BR	NOTE		;7 deposit register
+	BR	ERROR		;10 set breakpoint
+	BR	ERROR		;11 remove breakpoint
+	BR	ERROR		;12 single step
+	BR	ERROR		;13 proceed from breakpoint
+	BR	NOTE		;14 create process
+	BR	ERROR		;15 destroy process
+	BR	ERROR		;16 reply to xio output
+	BR	ERROR		;17 reply to xio input
+;
+EXAMIN:	JSR	PC,INIPKT	;initialize packet
+	CMP	DATCNT,STOCNT	;is packet long enough
+	BLO	ERROR		;branch if no
+	ASR	STOCNT
+1$:	TST	STOCNT		;is transfer complete
+	BEQ	DATA		;branch if yes
+	JSR	PC,HIT		;no. load cache
+	BCS	ERROR		;branch if error
+	MOV	@R0,@DATPTR	;copy it
+	ADD	#2,STOPTR
+	ADD	#2,DATPTR
+	DEC	STOCNT
+	BR	1$
+;
+DEPOST:	TST	IH.FL(R1)	;is packet long enough
+	BEQ	REPLY		;branch if first transmission
+	CMP	DATCNT,STOCNT	;is packet long enough
+	BLO	ERROR		;branch if no
+	ASR	STOCNT
+1$:	TST	STOCNT		;yes. is transfer complete
+	BEQ	REPLY		;branch if yes
+	JSR	PC,HIT		;no. load cache
+	BCS	ERROR		;branch if error
+	MOV	@DATPTR,@R0	;copy it
+	BIS	#CHGBIT,FLAGS	;dirty cache
+	ADD	#2,STOPTR
+	ADD	#2,DATPTR
+	DEC	STOCNT
+	BR	1$
+;
+ERROR:	BITB	#100,AX.CMD	;is this from user
+	BEQ	1$		;branch if yes
+	BIC	#XFRBIT+ACKBIT,FLAGS ;no. mark complete
+	BR	DISCRD
+;
+1$:	BISB	#200,AX.CMD
+NOTE:	FORMAT	#COM05,R2	;trace message
+REPLY:	JSR	PC,INIPKT	;initialize reply packet
+DATA:	BITB	#100,AX.CMD	;is this from user
+	BNE	1$		;branch if no
+	MOV	AX.PRT,XH.PRT(R2) ;yes. copy header fields
+	MOV	AX.SEQ,XH.SEQ(R2)
+	MOV	AX.CMD,XH.CMD(R2)
+	MOV	AX.AR1,XH.AR1(R2)
+	MOV	AX.AR2,XH.AR2(R2)
+	BISB	#100,XH.CMD(R2)	;set ack bit
+	BR	SND1
+;
+1$:	TST	TX.AR2		;data-transfer command
+	BEQ	2$		;branch if done
+	BIT	#XFRBIT,FLAGS	;are we still in business
+	BNE	SEND		;branch if yes
+	BR	DISCRD
+;
+2$:	BIC	#XFRBIT+ACKBIT,FLAGS ;mark complete
+	FORMAT	#COM39		;operation complete
+DISCRD:	CALL	CTRL,#CM.FRE,R1,OPNBLK+CONPTR ;free ip packet
+	RTS	PC
+;
+SEND:	MOV	TX.PRT,XH.PRT(R2) ;copy header fields
+	MOV	TX.SEQ,XH.SEQ(R2)
+	MOV	TX.CMD,XH.CMD(R2)
+	MOV	TX.AR1,XH.AR1(R2)
+	MOV	TX.AR2,XH.AR2(R2)
+	CMP	XH.AR2(R2),DATMAX ;limit at max packet size
+	BLOS	4$
+	MOV	DATMAX,XH.AR2(R2)
+4$:	MOV	XH.AR2(R2),COUNT ;save count for ack
+	BIS	#ACKBIT,FLAGS
+SND1:	MOV	DATPTR,PH.LNG(R1) ;compute length
+	SUB	R2,PH.LNG(R1)
+	CLR	XH.CHK(R2)
+	JSR	PC,CHKSUM	;compute checksum
+	MOV	R0,XH.CHK(R2)
+	MOV	R1,-(SP)	;yes. insert current tod in pkt
+	.GCLK
+	MOV	R0,TX.TIM	;save timestamp for later
+	MOV	R1,TX.TIM+2
+	MOV	(SP)+,R1
+	CALL	CTRL,#CM.SND,R1,OPNBLK+CONPTR ;send ip packet
+	TST	R0
+	BEQ	5$		;branch if ok
+	JSR	PC,PRIDNT	;print reason for failure
+5$:	RTS	PC
+;
+; Subroutine to initialize packet
+;
+INIPKT:	CALL	CTRL,#CM.INI,R1,OPNBLK+CONPTR ;init ip packet
+	MOV	PH.OFS(R1),R2	;set pointers
+	ADD	R1,R2
+	MOV	R2,DATPTR	;reset packet pointer
+	ADD	#XH.LEN,DATPTR
+	MOV	PH.LNG(R1),DATCNT ;compute data count
+	SUB	#XH.LEN,DATCNT
+	RTS	PC
+;
+; Subroutine to compute xnet checksum
+; R1 = packet pointer
+;
+CHKSUM:	MOV	R1,-(SP)	;save few
+	MOV	R2,-(SP)
+	CLR	R0
+	MOV	PH.LNG(R1),R2	;get data pointers
+	ADD	PH.OFS(R1),R1
+	CMP	R2,#XH.LEN	;is packet long enough
+	BLO	3$		;branch if no
+	CLR	-(SP)		;yes. complete checksum
+	ASR	R2
+	ROL	@SP
+1$:	ADD	(R1)+,R0	;accumulate checksum
+	ADC	R0
+	DEC	R2
+	BNE	1$
+	TST	@SP
+	BEQ	4$
+	MOVB	(R1)+,@SP
+4$:	ADD	(SP)+,R0
+	ADC	R0
+	TST	R0		;clean up complement
+	BEQ	2$
+3$:	COM	R0
+2$:	MOV	(SP)+,R2	;restore few
+	MOV	(SP)+,R1
+	RTS	PC
+	.PAGE
+	.SBTTL	COMMAND INTERPRETATION
+;
+; Initialization
+;
+INIT:	CALL	GTHOST,#AREA,#0,#0 ;display herald
+	FORMAT	#HERALD,#AREA
+	MOV	#STOBGN,R0	;clear storage
+1$:	CLR	(R0)+
+	CMP	R0,#STOEND
+	BLO	1$
+	MOV	R0,@#50
+	MOV	#^RRCV,RX.HDR
+	MOV	#^RXMT,TX.HDR
+	MOV	#^RACK,AX.HDR
+	MOV	#RTPSIZ+<CACSIZ*2>,R0 ;allocate storage
+	JSR	PC,NAMRST
+	MOV	R0,OPNBLK+CONPTR
+	MOV	#RTPSIZ,OPNBLK+CONFMT
+	ADD	#RTPSIZ,R0
+	MOV	R0,FILBUF
+	MOV	#PKTMAX,DATMAX
+	RTS	PC
+;
+; Unrecognized command
+;
+NTFD:	FORMAT	#COM29		;unrecognized command
+	RTS	PC
+;
+; Show (sho) show xnet status
+; (segment of command language interpreter)
+; (no arguments)
+;
+SHOW:	MOV	FLAGS,ARGBLK	;move under umbrella
+	FORMAT	#COM24,#STOBGN
+	FORMAT	#COM25,#OPNBLK
+	FORMAT	#COM26,#STOBGN
+	FORMAT	#COM01,#RX.OFS
+	FORMAT	#COM01,#TX.OFS
+	FORMAT	#COM01,#AX.OFS
+	RTS	PC
+;
+; Quit (qui) leave the game
+; (segment of command language interpreter)
+; (no arguments)
+;
+QUIT:	JSR	PC,DSCN		;close connection
+	JSR	PC,CLOS		;close file
+	.EXIT			;no. exit to cli
+	.PAGE
+	.SBTTL	.	COMMANDS TO CONNECT/DISCONNECT REMOTE MACHINE
+;
+; Conn (con) open xnet connection
+; (segment of command language interpreter)
+; Arg1 = host name (assume listening if missing), arg1 = max packet size
+;
+CONN:	JSR	PC,DSCN		;close connection
+	BISB	#300,OPNBLK+CONFLG ;presume passive
+	CLR	OPNBLK+CONRMT
+	CLR	OPNBLK+CONRMT+2
+	MOV	#256.,OPNBLK+CONSIZ
+	GETARG	#ARG		;get host name
+	TSTB	ARG		;is argument missing
+	BEQ	2$		;branch if yes
+	CALL	RNAME,#ARG,#OPNBLK+CONRMT,#0 ;get address
+	TST	R0
+	BEQ	1$		;branch if ok
+	JSR	PC,PRIDNT	;print reason for failure
+	RTS	PC
+;
+1$:	BICB	#300,OPNBLK+CONFLG ;found. set active
+2$:	JSR	PC,RDDEC	;get max packet size
+	BEQ	3$		;branch if missing
+	MOV	R0,OPNBLK+CONSIZ
+3$:	CALL	CTRL,#CM.OPN,#OPNBLK+CONPAR,OPNBLK+CONPTR ;open connection
+	TST	R0
+	BEQ	5$		;branch if ok
+	JSR	PC,PRIDNT	;print reason for failure
+	RTS	PC
+;
+5$:	BIS	#OPXBIT,FLAGS	;open. initialize command/arguments
+	CLR	TX.CMD
+	CLR	TX.AR1
+	CLR	TX.AR2
+	.GCLK			;set initial port/sequence numbers
+	MOV	R1,TX.PRT
+	CLR	TX.SEQ
+6$:	RTS	PC
+;
+; Local (con) set local address for multiply-homed hosts
+; (segment of command language interpreter)
+; Arg1 = host name (default primary address)
+;
+LOCL:	JSR	PC,DSCN		;close connection
+	CLR	OPNBLK+CONLCL
+	CLR	OPNBLK+CONLCL+2
+	GETARG	#ARG		;get host name
+	TSTB	ARG		;is argument missing
+	BEQ	1$		;branch if yes
+	CALL	RNAME,#ARG,#OPNBLK+CONLCL,#TEMP ;no. get address
+	TST	R0
+	BEQ	1$		;branch if found
+	JSR	PC,PRIDNT	;print reason for failure
+1$:	RTS	PC
+;
+; Dscn (dsc) close xnet connection
+; (segment of command language interpreter)
+; (no arguments) returns r1 = connection block pointer
+;
+DSCN:	JSR	PC,ABOR		;stop data transfer
+	BIT	#OPXBIT,FLAGS	;is connection open
+	BEQ	1$		;branch if no
+	CALL	CTRL,#CM.CLS,#0,OPNBLK+CONPTR ;ip close
+	.SPND
+1$:	RTS	PC
+;
+; Abor (sto) abort net transfer
+; (segment of command language interpreter)
+; (no arguments)
+;
+ABOR:	BIT	#XFRBIT+ACKBIT,FLAGS ;is transfer in progress
+	BEQ	1$		;branch if no
+	BIC	#XFRBIT+ACKBIT,FLAGS ;yes. rugpuller
+	FORMAT	#COM03		;net transfer aborted
+1$:	RTS	PC
+;
+; TOS (opt) set type-of-service internet option
+; (segment of command language interpreter)
+; Arg1 = type-of-service
+;
+STOS:	JSR	PC,RDOCT	;get type-of-service
+	MOVB	R0,OPNBLK+CONOPT
+	RTS	PC
+;
+; Route (opt) set source-route internet option
+; (segment of command language interpreter)
+; Arg1 ... = host names
+;
+ROUT:	JSR	PC,DSCN		;close connection
+	MOV	#OPNBLK+CONOPT+1,R2 ;get options pointer
+	CLRB	(R2)+		;reset total option length
+	MOVB	R0,(R2)+	;option code
+	CLRB	(R2)+		;length
+	MOVB	#4,(R2)+	;route pointer
+1$:	GETARG	#ARG		;get host name
+	TSTB	ARG
+	BEQ	3$		;branch if missing
+	CALL	RNAME,#ARG,R2,#TEMP ;get host address
+	TST	R0
+	BEQ	2$		;branch if found
+	JSR	PC,PRIDNT	;print reason for failure
+	BR	1$
+;
+2$:	ADD	#4,R2		;advance to next field
+	BR	1$
+;
+3$:	SUB	#OPNBLK+CONOPT+2,R2 ;compute length
+	CMP	R2,#3
+	BLOS	4$		;branch if null route
+	MOVB	R2,OPNBLK+CONOPT+1
+	MOVB	R2,OPNBLK+CONOPT+3
+4$:	RTS	PC
+;
+; Verbose (ver) be very noisy
+; (segment of command language interpreter)
+; arg = error level
+;
+VERB:	JSR	PC,RDDEC	;set error level
+	MOV	R0,ERRLVL
+	RTS	PC
+	.PAGE
+	.SBTTL	.	COMMANDS TO OPEN/CLOSE FILES
+;
+; Create (cre) create file
+; (segment of command language interpreter)
+; Arg = file name
+;
+CREA:	JSR	PC,CLOS		;close previous file
+	GETARG	#ARG		;get file name and size
+	ENTER	#ARG,#FILNAM,#0
+	BCS	CRE3		;branch if error
+	MOV	FILMAX,R0	;compute upper storage limit
+	CMP	R0,#120.	;(default to 170000)
+	BLOS	1$
+	MOV	#120.,R0
+1$:	SWAB	R0
+	ASL	R0
+	MOV	R0,STOLIM
+	BIC	#VLDBIT+CHGBIT,FLAGS ;invalidate cache
+	CLR	STOPTR
+2$:	JSR	PC,HIT		;load cache
+	BCS	CRE5		;branch if error
+	CLR	@R0		;zero file
+	BIS	#CHGBIT,FLAGS	;dirty cache
+	ADD	#2,STOPTR
+	CMP	STOPTR,STOLIM	;is range filled
+	BLO	2$		;branch if no
+	SUB	#2,STOPTR	;leave ball inbounds
+	BR	OPN1
+;
+CRE5:	JSR	PC,PURG		;purge file
+	RTS	PC
+;
+CRE3:	FORMAT	#COM32		;invalid file specification
+	RTS	PC
+;
+; Open (opn) open file
+; (segment of command language interpreter)
+; Arg = file name
+;
+OPNFIL:	JSR	PC,CLOS		;clse previous file
+	GETARG	#ARG		;get file name
+	LOOK	#ARG,#FILNAM,#0
+	BCS	OPN2		;branch if error
+	MOV	FILMAX,R0	;compute upper storage limit
+	CMP	R0,#160
+	BLOS	1$
+	MOV	#160,R0
+1$:	SWAB	R0
+	ASL	R0
+	MOV	R0,STOLIM
+	BIC	#VLDBIT+CHGBIT,FLAGS ;invalidate cache
+OPN1:	FORMAT	#COM43,#STOBGN	;file open [file]
+	RTS	PC
+;
+OPN2:	FORMAT	#COM35		;file not found
+	RTS	PC
+;
+; Close (clo) close file
+; (segment of command language interpreter)
+; (no arguments)
+;
+CLOS:	TST	STOLIM		;is file open
+	BEQ	PRG3		;branch if no
+	BIT	#VLDBIT,FLAGS	;is it dirty
+	BEQ	4$		;branch if no
+	BIC	#VLDBIT,FLAGS	;yes. force write/readback
+	JSR	PC,HIT
+4$:	.CLOSE	#0		;close file
+	FORMAT	#COM08		;file closed
+	BR	PRG2
+;
+; Purge (prg) purge open file
+; (segment of command language interpreter)
+; (no arguments)
+;
+PURG:	TST	STOLIM		;is file open
+	BEQ	PRG3		;branch if no
+	.PURGE	#0		;close file
+	FORMAT	#COM06		;file purged
+PRG2:	CLR	STOLIM		;leave no traces
+	BIC	#VLDBIT+CHGBIT,FLAGS
+PRG3:	RTS	PC
+	.PAGE
+	.SBTTL	.	COMMANDS TO OPERATE ON LOCAL FILE
+;
+; Display (disp) display current file
+; (segment of command language interpreter)
+; Arg1 = starting address, arg2 = number of words
+;
+DISP:	JSR	PC,RDOCT	;get starting address
+	BIC	#1,R0		;really mean words
+	MOV	R0,STOPTR
+	JSR	PC,RDOCT	;compute size (words)
+	MOV	R0,STOCNT
+	BNE	1$		;force to one
+	INC	STOCNT
+1$:	MOV	#TTOBUF,PRTPTR
+	MOV	STOPTR,R0	;get current address
+	JSR	PC,PROCT	;output it
+	MOV	#8.,R2		;set loop count
+	MOV	#' ,R0		;print space
+	JSR	PC,PRBYT
+2$:	MOV	#' ,R0		;print space
+	JSR	PC,PRBYT
+	JSR	PC,HIT		;load cache
+	BCS	DSP1		;branch if error
+	MOV	@R0,R0		;print word
+	JSR	PC,PROCT	;print it
+	ADD	#2,STOPTR
+	DEC	STOCNT
+	BEQ	3$
+	DEC	R2
+	BNE	2$
+	CLRB	@PRTPTR
+	CLR	PRTPTR
+	FORMAT	#TTOBUF
+	BR	1$
+;
+3$:	CLRB	@PRTPTR
+	CLR	PRTPTR
+	FORMAT	#TTOBUF
+DSP1:	RTS	PC
+;
+; Alter (alt) alter current file
+; (segment of command language interpreter)
+; Arg1 = starting address, arg2... = contents
+;
+ALTE:	JSR	PC,RDOCT	;get starting address
+	MOV	R0,STOPTR
+1$:	JSR	PC,RDOCT	;get new value
+	BEQ	DSP1		;branch if missing
+	MOV	R0,R2
+	JSR	PC,HIT		;load cache
+	BCS	DSP1		;branch if error
+	MOV	R2,@R0		;stash word
+	BIS	#CHGBIT,FLAGS	;dirty cache
+	ADD	#2,STOPTR
+	BR	1$
+	.PAGE
+	.SBTTL	.	COMMANDS TO OPERATE ON REMOTE MACHINE
+;
+; Length (lng) set maximum packet size
+; (segment of command language interpreter)
+; Arg = max data bytes in deposit packet
+;
+LENG:	JSR	PC,RDDEC	;get max word count
+	BNE	1$		;branch if given
+	MOV	#PKTMAX,R0	;default at max
+1$:	CMP	R0,#2		;minimum is two
+	BHIS	3$
+	MOV	#2,R0
+3$:	CMP	R0,#PKTMAX	;maximum is pktmax
+	BLOS	2$
+	MOV	#PKTMAX,R0
+2$:	MOV	R0,DATMAX
+	RTS	PC
+;
+; Xnet (cmd) send arbitrary command
+; (segment of command language interpreter)
+; Arg1 = xnet command, arg2 = xnet arg1, arg3 = xnet arg2
+;
+COMM:	JSR	PC,RDOCT	;get command
+	BNE	1$		;branch if there
+	MOV	#DBGCMD,R0	;default to debug
+1$:	BIC	#^C77,R0	;avoid setting ack bit
+	BR	DEP3
+;
+; Start (sta) start target execution
+; (segment of command language interpreter)
+; (no arguments)
+;
+STAR:	MOV	#STACMD,R0	;set command
+	BR	DEP3
+;
+; Examine (exa) examine from target
+; (segment of command language interpreter)
+; Arg1 = starting address, arg2 = number of words
+;
+EXAM:	MOV	#EXACMD,R0	;set command
+	BR	DEP3
+;
+; Deposit (dep) deposit to target
+; (segment of command language interpreter)
+; Arg1 = starting address, arg2 = number of words
+;
+DEPO:	MOV	#DEPCMD,R0	;set command
+DEP3:	MOV	R0,TX.CMD	;stash command
+	JSR	PC,RDOCT	;get starting address
+	BEQ	REST		;branch if missing
+	BIC	#1,R0		;really mean words
+	MOV	R0,TX.AR1
+	JSR	PC,RDOCT	;compute size (bytes)
+	ASL	R0
+	BNE	1$		;force zero to two
+	MOV	#2,R0
+1$:	MOV	R0,TX.AR2
+	BR	REST
+;
+; Register (reg) initialize state vector
+; (segment of command language interpreter)
+; Arg1 = starting register, arg2... = contents
+;
+REGS:	JSR	PC,RDOCT	;get register number
+	BEQ	REST		;branch if missing
+	MOV	R0,R1
+	ASL	R1
+	MOV	#REGCMD,TX.CMD	;initialize command
+	MOV	R1,TX.AR1
+	CLR	TX.AR2
+	ADD	#REGBLK,R1
+2$:	CMP	R1,#9.*2+REGBLK	;is this reasonable
+	BHIS	REST		;branch if no
+	JSR	PC,RDOCT	;yes. get contents
+	BEQ	REST
+	MOV	R0,(R1)+
+	ADD	#2,TX.AR2
+	BR	2$
+;
+; Restart (res) restart xnet command
+; (segment of command language interpreter)
+;
+REST:	JSR	PC,PACKET	;send packet
+	RTS	PC
+	.PAGE
+	.SBTTL	SUBROUTINES
+;
+; Hit (hit) load cache
+; Stoptr = virtual address, returns r0 = real address
+;
+HIT:	MOV	STOPTR,R0	;is this correct segment
+	ASH	#-9.,R0
+	BIC	#^C174,R0
+	CMP	R0,FILBLK
+	BEQ	3$		;branch if yes
+	BIC	#VLDBIT,FLAGS	;no. no longer valid
+3$:	BIT	#VLDBIT,FLAGS	;is segment valid
+	BNE	2$		;branch if yes
+	BIT	#CHGBIT,FLAGS	;no. is it dirty
+	BEQ	4$		;branch if no
+	BIC	#CHGBIT,FLAGS	;no. just forget it never wrote
+	.WRITW	#ARGBLK,#0,FILBUF,FILCNT,FILBLK ;write cache buffer
+	BCC	4$		;branch if no error
+	FORMAT	#COM34		;file write error
+	BR	6$
+;
+4$:	MOV	STOPTR,R0	;reset cache number
+	CMP	R0,STOLIM	;is it out of bounds
+	BHIS	5$		;branch if yes
+	ASH	#-9.,R0
+	BIC	#^C174,R0
+	MOV	R0,FILBLK
+	.READW	#ARGBLK,#0,FILBUF,#CACSIZ,FILBLK ;read cache buffer
+	BCS	1$		;branch if error
+	MOV	R0,FILCNT	;save length
+	BIS	#VLDBIT,FLAGS	;mark cache valid
+2$:	MOV	STOPTR,R0	;map address
+	CMP	R0,STOLIM	;is it out of bounds
+	BHIS	5$		;branch if yes
+	BIC	#^C<CACSIZ*2-1>,R0
+	ADD	FILBUF,R0
+	CLC
+	RTS	PC
+;
+5$:	FORMAT	#COM31		;invalid address
+	BR	6$
+;
+1$:	FORMAT	#COM33		;file read error
+6$:	SEC
+	RTS	PC
+	.PAGE
+	.SBTTL	TABLES, TEXT STRINGS AND VARIABLES
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+; Command table for kwik
+;
+KWKTBL:	.KWTAB	<HEL>,HELP	;send help information
+	.KWTAB	<SHO>,SHOW	;show xnet status
+	.KWTAB	<QUI>,QUIT	;leave the game
+	.KWTAB	<CON>,CONN	;open xnet connection
+	.KWTAB	<LOC>,LOCL	;set local address
+	.KWTAB	<DSC>,DSCN	;close xnet connection
+	.KWTAB	<ABO>,ABOR	;abort net transfer
+	.KWTAB	<TOS>,STOS	;set type-of-service
+	.KWTAB	<ROU>,ROUT	;set source route
+	.KWTAB	<VER>,VERB	;set error level
+;
+	.KWTAB	<CRE>,CREA	;create file
+	.KWTAB	<OPE>,OPNFIL	;open file
+	.KWTAB	<CLO>,CLOS	;close file
+	.KWTAB	<PUR>,PURG	;purge open file
+;
+	.KWTAB	<DIS>,DISP	;display current file
+	.KWTAB	<ALT>,ALTE	;alter current file
+	.KWTAB	<XNE>,COMM	;send arbitrary command
+	.KWTAB	<LEN>,LENG	;set max packet size
+	.KWTAB	<STA>,STAR	;start execution
+	.KWTAB	<EXA>,EXAM	;examine from target storage
+	.KWTAB	<DEP>,DEPO	;deposit in target storage
+	.KWTAB	<REG>,REGS	;initialize state vector
+	.KWTAB	<RES>,REST	;restart xnet command
+	.KWTAB	<   >,NTFD	;end of table
+;
+; Miscellaneous tables and chairs
+;
+DEFTYP:	.RAD50	'BINBINBINBIN'	;default file extensions
+;
+; Text strings for xnet protocol
+;
+HERALD:	.ASCIZ	'^A'<0>' XNET User Process (25-Mar-86 Version) ^LD ^LT'
+COM00:	.ASCIZ	'?XNET-^+'
+COM43:	.ASCIZ	'?XNET-I-File open ^F'<FILNAM-STOBGN>'[^I'<FILMAX-STOBGN>']'
+COM08:	.ASCIZ	'?XNET-I-File closed'
+COM06:	.ASCIZ	'?XNET-F-File purged'
+COM39:	.ASCIZ	'?XNET-I-Operation complete'
+COM05:	.ASCII	'?XNET-I-Message ^K'<XH.PRT>' ^K'<XH.SEQ>' ^K'<XH.CMD>
+	.ASCIZ	' ^K'<XH.AR1>' ^K'<XH.AR2>
+COM24:	.ASCIZ	'Flags: ^K'<ARGBLK-STOBGN>'  host: ^+'
+COM25:	.ASCII	'(^R'<CONIDN>') ^C'<CONRMT>
+	.ASCIZ	'  max size: ^I'<CONSIZ>'  protocol: ^BI'<CONPRO>
+COM26:	.ASCII	'Cache pointer: ^K'<STOPTR-STOBGN>'  limit: ^K'<STOLIM-STOBGN>
+	.ASCIZ	'  file: ^F'<FILNAM-STOBGN>'[^I'<FILMAX-STOBGN>']'
+COM01:	.ASCIZ	'^R'<0>' ^K'<2>' ^K'<4>' ^K'<6>' ^K'<10>' ^K'<12>' ^+T'<14>
+;
+; Text strings for error conditions
+;
+COM13:	.ASCIZ	'?XNET-F-Format error'
+COM29:	.ASCIZ	'?XNET-F-Unrecognized command'
+COM32:	.ASCIZ	'?XNET-F-Invalid file specification'
+COM31:	.ASCIZ	'?XNET-F-Invalid address'
+COM35:	.ASCIZ	'?XNET-F-File not found'
+COM33:	.ASCIZ	'?XNET-F-File read error'
+COM34:	.ASCIZ	'?XNET-F-File write error'
+COM03:	.ASCIZ	'?XNET-F-Net transfer aborted'
+	.EVEN
+;
+	.PSECT	$DATA,RW,I
+;
+; Xnet connection data
+;
+OPNBLK:	OPNBLK	0,XNT,,,NETSUB,P.XNP,,,,256. ;open block
+;
+	.PSECT	$ERAS,RW,I
+STOBGN	=	.		;beginning of erasable storage
+;
+; File control block
+;
+FILNAM:	.BLKW	4		;file name
+FILMAX:	.BLKW	1		;max blocks
+FILBUF:	.BLKW	1		;buffer pointer
+FILCNT:	.BLKW	1		;word count
+FILBLK:	.BLKW	1		;block number
+;
+STOPTR:	.BLKW	1		;virtual storage pointer
+STOLIM:	.BLKW	1		;virtual storage limit
+STOCNT:	.BLKW	1		;virtual storage count (words)
+;
+; Variables
+;
+TEMP:	.BLKW	1		;temporary
+COUNT:	.BLKW	1		;count for ack update
+DATPTR:	.BLKW	1		;xnet packet data pointer
+DATCNT:	.BLKW	1		;xnet packet data count
+DATMAX:	.BLKW	1		;max deposit count
+REGBLK:	.BLKW	9.		;registers r0-r5,sp,pc,ps
+ARGBLK:	.BLKW	5		;rt-11 argument block
+AREA:	.BLKW	39.		;scratch area
+ARG:	.BLKB	40.		;argument buffer
+	.EVEN
+;
+; Receive xnet header
+;
+RX.OFS	=	.		;format offset
+RX.HDR:	.BLKW	1		;label
+RX.PRT:	.BLKW	1		;xh.prt port number
+RX.SEQ:	.BLKW	1		;xh.seq sequence number
+RX.CMD:	.BLKW	1		;xh.cmd command/pid
+RX.AR1:	.BLKW	1		;xh.ar1 argument 1
+RX.AR2:	.BLKW	1		;xh.ar2 argument 2
+RX.TIM:	.BLKW	2		;timestamp
+;
+; Transmit xnet header
+;
+TX.OFS	=	.		;format offset
+TX.HDR:	.BLKW	1		;label
+TX.PRT:	.BLKW	1		;xh.prt port number
+TX.SEQ:	.BLKW	1		;xh.seq sequence number
+TX.CMD:	.BLKW	1		;xh.cmd command/pid
+TX.AR1:	.BLKW	1		;xh.ar1 argument 1
+TX.AR2:	.BLKW	1		;xh.ar2 argument 2
+TX.TIM:	.BLKW	2		;timestamp
+;
+; Acknowledgment xnet header
+;
+AX.OFS	=	.		;format offset
+AX.HDR:	.BLKW	1		;label
+AX.PRT:	.BLKW	1		;xh.prt port number
+AX.SEQ:	.BLKW	1		;xh.seq sequence number
+AX.CMD:	.BLKW	1		;xh.cmd command/pid
+AX.AR1:	.BLKW	1		;xh.ar1 argument 1
+AX.AR2:	.BLKW	1		;xh.ar2 argument 2
+AX.TIM:	.BLKW	2		;timestamp
+;
+	.PSECT	$STOR,RW,I
+STOEND	=	.		;end of erasable storage
+;
+	.END
+                                                                                                                                                                                                                                                                                                                                                                     

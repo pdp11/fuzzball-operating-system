@@ -1,0 +1,448 @@
+	.TITLE	DOMSRV	Domain name server
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn - domain name server
+;
+; This program is an internet domain name server allegedly compatible
+; with rfc-883.
+;
+; External symbols
+;
+	.GLOBL	XNAME,XADDR,GETPKT,SNDPKT,FREPKT ;utility routines
+	.GLOBL	OPNBLK		;connection block
+;
+; Entry symbols
+;
+	.GLOBL	DOMREQ		;domain-name request
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR	;dcnlib definitions
+	.MCALL	$DFIH,$DFUH,$DFSIG ;moslib definitions
+	.MCALL	DFCON,DFSRV,CALL,FORMAT ;netlib macros
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	$DFIH			;define internet header
+	$DFUH			;define user datagram header
+	$DFSIG			;define interprocess signals
+	DFCON			;define connection block
+	DFSRV			;define service bits
+;
+; Module definitions
+;
+; Header section format
+;
+;	                                1  1  1  1  1  1 
+;	  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5 
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+;	|                      ID                       |
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+;	|QR|   Opcode  |AA|TC|RD|RA|        |   RCODE   |
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+;	|                    QDCOUNT                    |
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+;	|                    ANCOUNT                    |
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+;	|                    NSCOUNT                    |
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+;	|                    ARCOUNT                    |
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+; 
+; ID	A 16 bit identifier assigned by the program that generates any kind of
+;	query.  This identifier is copied into all replies and can be used by
+;	the requestor to relate replies to outstanding questions.
+; 
+; QR	A one bit field that specifies whether this message is a query (0), or
+;	a response (1).
+; 
+; OPCODE A four bit field that specifies kind of query in this message.  This
+;	value is set by the originator of a query and copied into the
+;	response.  The values are:
+; 	0  a standard query (QUERY)
+; 	1  an inverse query (IQUERY)
+; 	2  an completion query allowing multiple answers (CQUERYM)
+; 	3  an completion query requesting a single answer (CQUERYU)
+; 	4-15 reserved for future use
+; 
+; AA	Authoritative Answer - this bit is valid in responses, and specifies
+;	that the responding name server is an authority for the domain name in
+;	the corresponding query.
+; 
+; TC	TrunCation - specifies that this message was truncated due to length
+;	greater than 512 characters. This bit is valid in datagram messages
+;	but not in messages sent over virtual circuits.
+; 
+; RD	Recursion Desired - this bit may be set in a query and is copied into
+;	the response.  If RD is set, it directs the name server to pursue the
+;	query recursively.  Recursive query support is optional.
+; 
+; RA	Recursion Available - this be is set or cleared in a response, and
+;	denotes whether recursive query support is available in the name
+;	server.
+; 
+; RCODE	Response code - this 4 bit field is set as part of responses.  The
+;	values have the following interpretation:
+; 	0  No error condition
+; 	1  Format error - The name server was unable to interpret the query.
+; 	2  Server failure - The name server was unable to process this query
+;	   due to a problem with the name server.
+; 	3  Name Error - Meaningful only for responses from an authoritative
+;	   name server, this code signifies that the domain name referenced in
+;	   the query does not exist.
+; 	4  Not Implemented - The name server does not support the requested
+;	   kind of query.
+; 	5  Refused - The name server refuses to perform the specified
+;	   operation for policy reasons.  For example, a name server may
+;	   not wish to provide the information to the particular requestor, or
+;	   a name server may not wish to perform a particular operation (e.g.
+;	   zone transfer) for particular data.
+; 	6-15 Reserved for future use.
+; 
+; QDCOUNT an unsigned 16 bit integer specifying the number of entries in the
+;	question section.
+; 
+; ANCOUNT an unsigned 16 bit integer specifying the number of resource records
+;	in the answer section.
+; 
+; NSCOUNT an unsigned 16 bit integer specifying the number of name server
+;	resource records in the authority records section.
+; 
+; ARCOUNT an unsigned 16 bit integer specifying the number of resource records
+;	in the additional records section.
+; 
+; Question section format
+;
+;	                                1  1  1  1  1  1 
+;	  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5 
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+;	|                                               |
+;	/                     QNAME                     /
+;	/                                               /
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+;	|                     QTYPE                     |
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+;	|                     QCLASS                    |
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+;
+; QNAME	a variable number of octets that specify a domain name. This field
+;	uses the compressed domain name format described in the RFC-883. This
+;	field can be used to derive a text string for the domain name. Note
+;	that this field may be an odd number of octets; no padding is used.
+; 
+; QTYPE	a two octet code which specifies the type of the query. The values for
+;	this field include all codes valid for a TYPE field, together with
+;	the following additions:
+;	252 (AXFR)	request for a transfer of an entire zone of authority
+;	253 (MAILB)	request for mailbox-related records (MB, MG or MR)
+;	254 (MAILA)	request for mail agent RRs (MD and MF)
+;	255 (*)		request for all records
+; 
+; QCLASS a two octet code that specifies the class of the query:
+;	1 (IN)		the ARPA Internet
+;	2 (CS)		the computer science network (CSNET)
+;	255 (*)		any class
+; 
+; Resource record format
+; 
+;	                                1  1  1  1  1  1 
+;	  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5 
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+;	|                                               |
+;	/                                               /
+;	/                      NAME                     /
+;	|                                               |
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+;	|                      TYPE                     |
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+;	|                     CLASS                     |
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+;	|                      TTL                      |
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+;	|                   RDLENGTH                    |
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--|
+;	/                     RDATA                     /
+;	/                                               /
+;	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+; 
+; NAME	a compressed domain name to which this resource record pertains.
+; 
+; TYPE	two octets containing one of the RR type codes:
+;	1 (A)		host address
+;	2 (NS)		authoritative name server
+;	3 (MD)		mail destination
+;	4 (MF)		mail forwarder
+;	5 (CNAME)	canonical name for an alias
+;	6 (SOA)		marks the start of a zone of authority
+;	7 (MB)		mailbox domain name
+;	8 (MG)		mail group member
+;	9 (MR)		mail rename domain name
+;	10 (NULL)	null RR
+;	11 (WKS)	well known service description
+;	12 (PTR)	domain name pointer
+;	13 (HINFO)	host information
+;	14 (MINFO)	mailbox or mail list information
+; 
+; CLASS	two octets which specify the class of the data in the RDATA field:
+;	1 (IN) the ARPA Internet
+;	2 (CS) the computer science network (CSNET)
+; 
+; TTL	a 32 bit unsigned integer that specifies the time interval (in
+;	seconds) that the resource record may be cached before it should be
+;	discarded.  Zero values are interpreted to mean that the RR can only
+;	be used for the transaction in progress, and should not be cached.
+;	For example, SOA records are always distributed with a zero TTL to
+;	prohibit caching.  Zero values can also be used for extremely volatile
+;	data.
+; 
+; RDLENGTH an unsigned 16 bit integer that specifies the length in octets of
+;	the RDATA field.
+; 
+; RDATA	a variable length string of octets that describes the resource.  The
+;	format of this information varies according to the TYPE and CLASS of
+;	the resource record. For example, the if the TYPE is A and the CLASS
+;	is IN, the RDATA field is a 4 octet ARPA Internet address.
+;
+; Domain name header format
+;
+.	=	UH.LEN
+HD.ID:	.BLKW	1		;query id
+HD.OP:	.BLKB	1		;operation code and flags
+OP.QUE	=	0*10		;standard query (QUERY)
+OP.INV	=	1*10		;inverse query (IQUERY)
+OP.CQM	=	2*10		;completion query, multiple answers (CQUERYM)
+OP.CQS	=	3*10		;completion query, single answer (CQUERYU)
+OP.AA	=	004		;authoritative answer bit
+OP.TC	=	002		;truncation bit
+OP.RD	=	001		;recursion desired bit
+HD.RSP:	.BLKB	1		;response code and flags
+OP.RA	=	200		;recursion available bit
+OR.OK	=	000		;no error condition
+OR.FMT	=	001		;format error
+OR.BUG	=	002		;server failure
+OR.NAM	=	003		;unknown name
+OR.NYP	=	004		;not implemented
+OR.REF	=	005		;refused
+HD.QCT:	.BLKW	1		;count of question entries
+HD.ACT:	.BLKW	1		;count of answer records
+HD.NCT:	.BLKW	1		;count of authority records
+HD.RCT:	.BLKW	1		;count of additional records
+HD.LEN	=	.		;length of header
+;
+CL.ANY	=	255.		;code for ANY CLASS (*)
+RR.ANY	=	255.		;code for ANY RECORD (*)
+;
+	.PSECT	$BOSI,RO,I
+;
+; Domain-name request
+; R0 = udp length, r1 = packet pointer, r2 = udp header pointer
+;
+DOMREQ:	CMP	R0,#HD.LEN	;is format valid
+	BLO	1$		;branch if no
+	MOVB	HD.OP(R2),DOMOP
+	BGE	2$		;branch if yes
+1$:	JSR	PC,FREPKT	;no. free packet buffer
+	RTS	PC
+;
+2$:	FORMAT	#COM81		;domain name request from [host]
+	MOV	HD.ID(R2),DOMID
+	MOV	R2,R3
+	ADD	#UH.LEN,R3
+	MOV	R2,R1
+	ADD	#HD.LEN,R1
+	SWAB	HD.QCT(R2)	;is there a question field
+	BEQ	3$		;branch if no
+	JSR	PC,SKPNAM	;yes. decode question (query)
+	FORMAT	#COM82,#TEMP
+3$:	SWAB	HD.ACT(R2)	;is there an answer field
+	BEQ	4$		;branch if no
+	JSR	PC,SKPNAM	;yes. decode answer (inverted query)
+	ADD	#6,R1
+	MOVB	(R1)+,RDATA	;presume address
+	MOVB	(R1)+,RDATA+1
+	MOVB	(R1)+,RDATA+2
+	MOVB	(R1)+,RDATA+3
+	FORMAT	#COM83,#TEMP
+4$:	JSR	PC,FREPKT	;free packet buffer
+	JSR	PC,GETPKT	;get reply packet
+	BCC	5$		;branch if can
+	RTS	PC		;else give up
+;
+5$:	MOV	R1,R2		;construct pointers
+	ADD	PH.OFS(R2),R2
+	MOV	R2,R3
+	ADD	#UH.LEN,R3
+	MOV	DOMID,(R3)+	;(hd.id)
+	MOVB	DOMOP,@R3	;(hd.op)
+	BISB	#200,(R3)+
+	MOVB	#OR.NYP,(R3)+	;(hd.rsp)
+	CLR	(R3)+		;(hd.qct)
+	CLR	(R3)+		;(hd.act)
+	CLR	(R3)+		;(hd.nct)
+	CLR	(R3)+		;(hd.rct)
+	MOVB	DOMOP,R0	;is this inverted query
+	BIC	#^C170,R0
+	CMPB	R0,#OP.INV
+	BHI	10$		;branch if no (not implemented)	
+	BNE	6$		;branch if no (normal query)
+	CMP	QCLASS,#1	;yes. is this host address (a)
+	BNE	9$		;branch if no
+	MOVB	NAMCOD,HD.RSP(R2) ;yes. presume not found
+	CMP	QTYPE,#1	;is this arpa internet (ip)
+	BNE	9$		;branch if no
+	CALL	XADDR,#QNAME,#RDATA,#TEMP1 ;yes. get address
+	TST	R0
+	BEQ	6$		;branch if ok
+	MOVB	NAMCOD(R0),HD.RSP(R2) ;error. stash code
+	BR	9$
+6$:	ADD	#1*400,HD.QCT(R2) ;insert question field
+	JSR	PC,ENCOD
+	MOVB	DOMOP,R0	;is this normal query
+	BIC	#^C170,R0
+	CMPB	R0,#OP.QUE
+	BNE	9$		;branch if no
+	CMP	QCLASS,#1	;yes. is this arpa internet (ip)
+	BEQ	7$		;branch if yes
+	CMP	QCLASS,#CL.ANY	;no. is this any class (*)
+	BNE	10$		;no, so we can't be of any help
+	MOV	#1,QCLASS	;yes. change it to IP class
+7$:	MOVB	NAMCOD,HD.RSP(R2) ;presume not found
+	CMP	QTYPE,#1	;is this host address (a)
+	BEQ	8$		;branch if yes
+	CMP	QTYPE,#RR.ANY	;no. is this any record (*)
+	BNE	10$		;no, so we can't be of any help
+	MOV	#1,QTYPE	;yes. change it to host address RR type
+8$:	CALL	XNAME,#QNAME,#RDATA,#TEMP1 ;yes. get address
+	TST	R0
+	BEQ	9$		;branch if ok
+	MOVB	NAMCOD(R0),HD.RSP(R2) ;error. stash code
+	BR	10$
+;
+9$:	ADD	#1*400,HD.ACT(R2) ;insert answer field
+	JSR	PC,ENCOD
+	MOVB	TTL+1,(R3)+	;ttl
+	MOVB	TTL,(R3)+
+	MOVB	TTL+3,(R3)+
+	MOVB	TTL+2,(R3)+
+	CLRB	(R3)+		;rdlen
+	MOVB	#4,(R3)+
+	MOVB	RDATA,(R3)+	;rdata
+	MOVB	RDATA+1,(R3)+
+	MOVB	RDATA+2,(R3)+
+	MOVB	RDATA+3,(R3)+
+10$:	MOV	R3,R0		;send packet
+	SUB	R2,R0
+	JSR	PC,SNDPKT
+11$:	RTS	PC
+;
+; Subroutine to encode name field
+; R3 = header pointer
+;
+ENCOD:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	#QNAME,R2	;point to name string
+1$:	CLRB	(R3)+		;insert count field
+	MOV	R3,R1
+2$:	MOVB	(R2)+,R0	;is this end of name
+	BEQ	4$		;branch if yes
+	CMPB	R0,#'.		;no. is this domain delimiter
+	BEQ	3$		;branch if yes
+	MOVB	R0,(R3)+	;no. copy char
+	BR	2$
+;
+3$:	MOV	R3,R0		;domain delimiter. insert length
+	SUB	R1,R0
+	MOVB	R0,-(R1)
+	BR	1$
+;
+4$:	MOV	R3,R0		;insert length
+	SUB	R1,R0
+	MOVB	R0,-(R1)
+	CLRB	(R3)+		;backstop
+	MOVB	QTYPE+1,(R3)+	;type
+	MOVB	QTYPE,(R3)+
+	MOVB	QCLASS+1,(R3)+	;class
+	MOVB	QCLASS,(R3)+
+	MOV	(SP)+,R2	;evas
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to decode name field
+; R1 = field pointer, r3 = header pointer
+;
+SKPNAM:	MOV	R2,-(SP)	;save
+	MOV	#QNAME,R2	;decode name string
+	JSR	PC,SKP1
+	MOVB	(R1)+,QTYPE+1	;type
+	MOVB	(R1)+,QTYPE
+	MOVB	(R1)+,QCLASS+1	;class
+	MOVB	(R1)+,QCLASS
+	MOV	(SP)+,R2	;evas
+	RTS	PC
+;
+SKP1:	MOVB	(R1)+,R0	;get initial count
+1$:	TSTB	R0		;examine count
+	BEQ	4$		;branch if end of field
+	BMI	3$		;branch if real count
+2$:	MOVB	(R1)+,(R2)+	;copy label
+	SOB	R0,2$
+	MOVB	(R1)+,R0	;get next count
+	BEQ	4$		;branch if end of field
+	MOVB	#'.,(R2)+	;flag for next label	
+	BR	1$
+;
+3$:	BIC	#^C77,R0	;pointer. munge away
+	SWAB	R0
+	BISB	(R1)+,R0
+	MOV	R1,-(SP)
+	MOV	R0,R1
+	ADD	R3,R1
+	JSR	PC,SKP1
+	MOV	(SP)+,R1
+4$:	CLRB	(R2)+		;backstop
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+TTL:	.WORD	0,60.*60.	;time-to-live (one hour, in seconds)
+;
+; Response-code table
+;
+NAMCOD:	.BYTE	OR.OK		;0 listening...
+	.BYTE	OR.BUG		;1 connection open error
+	.BYTE	OR.BUG		;2 invalid parameters
+	.BYTE	OR.REF		;3 insufficient resources
+	.BYTE	OR.REF		;4 gateway down
+	.BYTE	OR.REF		;5 host down
+	.BYTE	OR.REF		;6 net error
+	.BYTE	OR.FMT		;7 invalid name syntax
+	.BYTE	OR.REF		;8 name server not responding
+	.BYTE	OR.OK		;9 name not found
+	.BYTE	OR.NAM		;10 name does not exist
+;
+; Text strings
+;
+COM81:	.ASCIZ	'?UDP-I-Domain name request ^C'<IH.SRC>'^+'
+COM82:	.ASCIZ	' for ^A'<QNAME-TEMP>' ty ^I'<QTYPE-TEMP>' cl ^I'<QCLASS-TEMP>
+COM83:	.ASCIZ	' for ^C'<RDATA-TEMP>' ty ^I'<QTYPE-TEMP>' cl ^I'<QCLASS-TEMP>
+	.EVEN
+;
+	.PSECT	$ERAS,RW,I
+;
+; Variables
+;
+TEMP:	.BLKW	1		;temp
+TEMP1:	.BLKW	1		;washwater
+DOMID:	.BLKW	1		;request id
+QTYPE:	.BLKW	1		;question type
+QCLASS:	.BLKW	1		;question class
+RDATA:	.BLKW	2		;resource data (ip address)
+DOMOP:	.BLKB	1		;operation code and flags
+QNAME:	.BLKB	256.		;question name
+	.EVEN
+;
+	.END
+                                                                                                                                                                                                                                                                                                                                                    

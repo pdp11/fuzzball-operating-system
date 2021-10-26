@@ -1,0 +1,451 @@
+ 
+
+
+
+
+
+	RT-11 V05.1 UNSUPPORTED UTILITIES
+	=================================
+
+	This file  describes  the  following unsupported  utilities  dis-
+        buted with RT-11 V05.01:
+
+	CONFIG
+	CONSOL
+	DATIME
+	LET
+	RTMON
+	SPLIT
+	SPEED
+	VBGEXE
+
+
+
+
+
+1	CONFIG
+	------
+	CONFIG is an unsupported program  that lets you determine certain
+	system  characteristics.  You  can  use  the  CONFIG  program  to 
+	determine whether  a  handler is  installed,  whether  a  certain
+	location exists in a system, or whether the contents of a certain
+	match a specific value.
+
+	To determine whether  a handler is installed,  type the following
+	command:
+
+		.RUN CONFIG dev:
+
+	The variable dev: can be  a physical or  logical device name.  If
+	the handler is installed,  USERRB  (memory location 53  in system
+	communications area) is set to 1 for success.  If the  handler is
+	not installed, USERRB is set to 4 for error.
+
+	To check  only  physical device names (and ignore logical names),
+	use the /P option:
+
+		.RUN CONFIG dev:/P
+
+	For example, the following CONFIG  command determines whether the
+	LS handler is installed.   Since the option /P is included in the
+	command, CONFIG searches for only physical LS and not for devices
+	whose logical name is LS.
+
+		.RUN CONFIG LS:/P
+
+	To check  information about memory locations,  type the following
+	command:
+
+		.RUN CONFIG /option[/option...]
+
+
+
+				     - 2 -
+
+
+	The  variable  option  represents one  or more  of the  following
+	options:
+
+	       Option			Purpose
+
+		/A:addr		Determines  whether  memory location addr
+				exists.  Useful for finding  out how much
+				memory a  system includes.   If a read of
+				location addr succeeds, USERRB is  set to
+				1. If a read causes a trap, USERRB is set
+				to 10 (for severe error).
+
+		/B		Use with /A operations  to perform a byte
+				operation instead of a word operation.
+
+		/M:mask		Use with /A and /V:contents  to test bits
+				within the memory location specified with
+				/A.   The variable mask represents  a bit
+				mask that specifies which bits to test.
+
+		/R:offset	Use with /A to specify locations based on
+				an  offset  from  the beginning  of  RMON
+				(offset)  rather  than  an  actual memory
+				address (addr).
+				
+
+		/V:c		Use with  /A  to verify that the contents
+				of the specified location equal the value
+				contents. If the contents of the location
+				match the value contents,  USERRB  is set
+				to 1. If they do not match, USERRB is set
+				to 4.  If accessing  the location  causes
+			 	a trap (the  location  does  not  exist),
+				USERRB is set to 10.
+
+	The following command asks CONFIG  to determine whether  location
+	177776 exists,  and tests whether  the  high eight bits match the
+	value 1040.
+
+		.RUN CONFIG /A:177776/V:104000/M:177400
+
+
+
+2	CONSOL
+	------
+	The CONSOL utility changes the system console on systems that do
+	not include multi-terminal support.  To use the  CONSOL utility,
+	type  RUN  CONSOL.   CONSOL  requires  no  further  commands  or
+	interaction.
+
+	Depending  on your  hardware configuration,  it may be necessary
+	to  edit CONSOL.MAC to reflect the correct CSR and vector of the
+	new  system  console.   In  this  case,  you  must  also rebuild
+	(reassemble and relink) CONSOL.SAV.
+
+
+
+
+				     - 3 -
+
+
+
+3	DATIME
+	------
+	The DATIME utility is usually used in startup  command files to
+	force  entry  of the  current date and time.  The two versions,
+	DATIME.COM  (an IND  control file  procedure) and DATIME.SAV (a
+	runnable save image), perform the same function. You can modify
+	DATIME.COM yourself,  but  DATIME.COM  requires  that  the file
+	IND.SAV be  on the  system disk.  Therefore, when  running from
+	small media, you may need to use DATIME.SAV.
+
+	To use  DATIME, include  one of the following  commands  in your
+	startup command file.
+
+			.IND DATIME
+
+	or
+
+			.R DATIME
+
+
+
+
+
+
+
+4	LET
+	---
+	The LET utility enables character and string  substitution when
+	used with the single-line editor (SL). This  provides a  faster
+	method of terminal input.
+
+	To enable LET, type the following command:
+
+		.SET SL LET,KMON (assumes SL is neither loaded nor ON)
+
+	To define a  substitution, type  a  LET  command that equates a
+	symbol with a character string. For example, the following line
+	equates the symbol # with the string DX:MYPROG.MAC:
+
+		.LET _#=DX:MYPROG.MAC
+
+	Now, whenever you type "#", SL replaces it with "DX:MYPROG.MAC".  
+        So, if you type:
+
+		.MACRO #
+
+	this is what appears:
+
+		.MACRO DX:MYPROG.MAC
+
+	The "_" symbol tells SL that  you are defining  a symbol, so  SL
+        will  not  try  to  substitute  a  string for the character that
+	follows.
+
+
+
+
+				     - 4 -
+
+
+
+	The following summarizes all LET functions:
+
+		.LET /HELP	! display help summary
+
+		.LET /LIST	! display current character assignments
+
+		.LET x/DELETE	! delete the assignment for "x"
+
+		.LET /DELETE	! delete all assignments with an
+				! "Are you sure?" question.
+
+		.LET /DEL:ALL	! delete all assignments without
+				! requesting confirmation
+
+		.LET x=string	! assign the string contents to x
+
+
+
+
+	You  can  have  up  to  5  symbols  defined  concurrently.  Each
+        character string can include up to 14 characters.
+
+	Hint:  In  your  startup  file, delete  all  currently  assigned
+	characters and  define  those you will need for the work you are
+	doing.  For example:
+
+		.LET /DELETE:ALL
+		.LET #=LET.MAC
+		.LET $=LET
+		.LET ;=:
+		.LET \=
+
+	This sequence  would assign LET.MAC to # and LET to $.  It would
+	also cause SL to translate ; to :  and \  to  nothing.  (By this
+	example, you may have guessed at the author's "shiftless" typing
+	habits.)
+
+
+
+5	RTMON
+	-----
+	The RTMON utility,  which  runs  as  a foreground job,  provides
+	a  real-time  display of system  activity.  It requires a VT100,
+	VT200 or PC300 series terminal or system.  RTMON runs only under
+	monitors that include system job support.
+
+	To use RTMON, type FRUN RTMON in response to the monitor prompt.
+	RTMON  requires no  further  commands but  will  respond to some
+	control characters, such as  ^W  to  refresh  the screen and  ^Z
+	to clear the screen and suspend RTMON.
+
+	For best results, use  a separate terminal for  the RTMON display
+	(this is possible only under monitors that include multi-terminal
+	support).
+
+
+				     - 5 -
+
+6	SPEED
+	-----
+	SPEED is an unsupported program  that lets you set  the baud  rate
+	and other parameters of PDT-11 I/O ports.  You specify CSI options
+	in  a command  line to  set the  parameters.  SPEED can be used to
+	change the parameters of PDT systems only.
+
+	You can use the following options to set parameters:
+
+		Option			Purpose
+
+		  /C:n		Select character length (5, 6, 7, or 8
+				bits)
+		  /D		Disable parity checking
+		  /E:n		Enable parity, n=0=even, n=1=odd
+		  /H		Display summary of SPEED options
+		  /M		Select modem port and set asynchronous
+				mode
+		  /P		Select printer port
+		  /S:dddd.	Set baud rate to dddd(decimal)
+		  /T:n		Select terminal n (0, 1, 2 or 3)
+
+ 
+
+	Each SPEED command line must include a device specification option
+	(/M, /P, or /T).  You can  set parameters for only one device on a
+	single SPEED command line.
+
+	You can set PDT-11 I/O port parameters using SPEED in your startup
+        file.  	For example, the following lines, when added to a start-up
+	command file,  set  the optional cluster  port 1 to 1200 baud with
+	parity disabled, set the optional  cluster port 2 to 600 baud with
+	odd parity, and set the printer port to 2400 baud.
+
+		.SPEED /T:1/S:1200./D
+		.SPEED /T:2/S:600./E:1
+		.SPEED /P/S:2400.
+
+	Do not set the  baud rate above 2400  for a cluster port, or above
+	9600 for  the console.  4800 baud is  recommended for the  console
+	port if you use a screen editor such as KED.  Some early PDTs  are
+        restricted to 2000 and 4800 for cluster ports and the console port
+	respectively. See the PDT-11 hardware documents for details on the
+	use of I/O ports.
+
+	In  general, PDT-11  port defaults are  no parity, eight bits  per
+	character, and and one stop bit. The power-up speeds are:
+
+		Modem Port:	1200 baud (asynchronous)
+		Console:	9600 baud or autobaud
+		Printer:	1200 baud
+		Cluster port:	300 baud
+
+
+
+
+
+					- 6 -
+
+
+
+
+7	SPLIT
+	-----
+	The SPLIT utility divides a file  along block  boundaries you specify
+	and  copies  each  segment  to a  separate  file.  SPLIT is primarily
+	intended for dividing HELP.SAV into its component parts  HELP.TXT and
+	HELP.EXE, and for producing SYSMAC.MAC from SYSMAC.SML.  However, you
+	can use SPLIT to split other files as well.
+
+	To divide a file, type a command with the following syntax:
+
+		.SPLIT [outfil1,outfil2,outfil3,...]=infil/option
+
+	In the  command, infil  represents  the  file  you want to split, and
+	outfil represents the files to which the input file divisions will be
+	sent. You can specify up to three output files, and you can omit file
+	file specifications by marking the missing specification's place with
+	commas.  The variable option represents one of the following options:
+
+		 Option				Function
+
+	     /B:n[:m]		Defines the boundaries along which to  divide
+				the input file; n and m  represent  the block
+				number  (octal)  of  the  beginning  of  each
+				division,  starting  with  the  second.  (The
+				beginning of the first division is  block 0.)
+				Therefore, you specify one less boundary than
+				the  number  of  divisions  you   want.   For
+				example, to  divide  a  file into three parts
+				you must specify two boundary block numbers.
+
+	    /H			Displays HELP information.  Use  this  option
+				by itself,  without  specifying  any input or
+				output files.
+
+	    /2			Divides the input file in half.
+
+
+	For example, the following command  divides HELP.SAV into its
+	component parts, HELP.EXE and HELP.TXT.
+
+		.SPLIT HELP.EXE,,HELP.TXT=HELP.SAV/B:7:12
+
+	SPLIT writes blocks 0-6 (octal) of HELP.SAV to the file HELP.EXE,
+	discards blocks 7-11 (no second file specification is given in the
+	command line) and writes from block 12 (octal) to the end of HELP.SAV
+	to the file HELP.TXT.
+
+	The next example writes from block 4 to the end of the file SYSMAC.SML
+	to the file SYSMAC.MAC.
+
+		.SPLIT ,SYSMAC.MAC=SYSMAC.SML/B:4
+
+
+
+					- 7 -
+
+
+
+					NOTE
+
+			The values used for n and m in the two
+			preceding examples (splitting HELP.SAV
+			and SYSMAC.SML) may change.  Refer  to
+			CUSTOM.TXT  on  your  distribution kit
+			for the current boundary  values.   In
+			CUSTOM.TXT,    the   boundary    value
+			variables for splitting  HELP.SAV  are
+			..HLP1 and ..HLP2;  The boundary value
+			variable  for splitting  SYSMAC.SML is
+			..SYSM.
+
+
+	The next example divides the file BOTH.SAV in half on a block
+	boundary sends the resulting sections to files ONE.SAV and TWO.SAV.
+
+		.SPLIT ONE.SAV,TWO.SAV=BOTH.SAV/2
+
+	The following command requests SPLIT help information.
+
+		.SPLIT /H
+
+	Note that when you split an ASCII file, division along block
+	boundaries is likely to divide the file in mid-sentence.
+
+
+
+
+8	VBGEXE
+	------
+	VBGEXE, the virtual run utility,  creates a pseudo SJ/FB environ-
+	ment that appears to  extend  the  amount of low memory available
+	under the XM monitor. VBGEXE lets you execute, without relinking,
+        many  well-behaved programs as if they were operating under SJ or
+	FB.
+
+	If you are running under the  XM  monitor and there is not enough
+        low memory for your program to execute,   try using VBGEXE.   The
+	following example shows how to execute a program using VBGEXE:
+
+			.R VBGEXE<ret>
+			Program? MACRO<ret>    ! Run MACRO using VBGEXE
+			*		       ! This is MACRO's prompt.
+
+	You can also execute  VBGEXE  as a foreground or system job,  and
+	even assign it to its own terminal.  In addition, if your monitor
+	includes system  job  support,  you  can  use  the  /NAME  option
+	to specify the program you want VBGEXE to run.   For example, the
+	following command tells VBGEXE to execute BASIC at terminal 1.
+
+			.SRUN SY:VBGEXE.SAV/NAME:BASIC/TERM:1
+
+
+
+
+					- 8 -
+
+
+
+
+	Note that it may be  more  convenient  to  create  a  UCL command
+	called "V" by defining V :== R VBGEXE and then simple enter:
+
+			.V<ret>
+			Program?
+
+
+	The following restrictions apply to the programs VBGEXE can run:
+
+		o The program root (or the entire program if not overlaid
+		  must be larger than 4KW. *
+
+		o The program itself cannot be virtual. *
+
+		o You cannot .CHAIN to or from the VBGEXE environment.
+
+		o Programs that use  .PEEK, .POKE, .GVAL, .PVAL, or  other
+		  programmed  requests   that  access  the  RT-11  monitor
+		  directly may not  operate  correctly because they bypass
+                  VBGEXE's pseudo-monitor.
+
+	* Normally,  programs  with  these  attibutes  can be run directly
+	  and you will not need to use V to run them.
+                                                                                                                                                                         

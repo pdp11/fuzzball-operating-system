@@ -1,0 +1,1117 @@
+	.TITLE	CWV	RADIO TERMINAL
+	.SBTTL	SYSTEM AND MODULE DEFINITIONS
+	.NLIST	BEX
+;
+; Pdp11/dcn basic operating system - radio terminal
+; (requires drv11 interface to w3hcf station interface)
+;
+; The cwv module samples the receiver detector output through
+; The station interface every two milliseconds. it performs a matched-
+; Filtering operation, where the integration time of the filter is
+; Set equal to the minimum expected baud interval.
+; It then either decodes the intervals directly (rtty) or sends
+; Them to the morse decoder process (rtlg) as selected.
+;
+; This module is an extension of the asynchronous output process.
+; It receives input from extended interrupts, encodes and
+; Transmits either rtty or rtlg using the w3hcf station interface.
+; The character encoding and decoding, as well as the radio channel
+; Accessing procedures, conform to those established by the
+; Computer-radio access protocol (c-rap).
+;
+; Conditional assembly switches
+;
+DRV11	=	1		;1: drv11 present
+;DT2785	=	170400		;DTI 2785 A/D D/A converter csr
+;
+; External symbols
+;
+	.GLOBL	IORINI,IOXINI,.WAIT,.SKED
+	.GLOBL	MORTAB,BDLASC,BDFASC,BDCASC,ASCBDT,MORBDT,BDTMOR
+;
+; Entry symbols
+;
+	.GLOBL	CWRPAT,CWXPAT
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.PSA,.TTD,.CWD,.PAT ;dcnlib definitions
+	.MCALL	.SETV		;dcnlib macros
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.PSA			;define process data areas
+	.TTD			;define asynch i/o data areas
+	.LIST	ME
+	.CWD			;define morse/rtty data areas
+	.NLIST	ME
+;
+; Module definitions
+;
+IDLDLY	=	1.*500.		;short transmit timeout (2-ms units)
+IDNDLY	=	30.*31./16.	;station-id warning (.512-sec units)
+FLTMAX	=	64.		;max filter interval (2-ms units)
+ASTCON	=	4.		;asynch autostart time constant
+ASHAFC	=	5.		;asynch freq lock gain
+ASSCON	=	5.		;synch autostart time constant
+AFCONS	=	6.		;afc (open loop) time constant
+PADCON	=	6.		;character estimate time constant
+DATMSK	=	000777		;mask for cw samples
+TXTBIT	=	040000		;morse data bit
+;
+; Character codes
+;
+SPC	=	04		;baudot space
+FIG	=	33		;baudot figures shift
+LTR	=	37		;baudot letters shift
+;
+; Status bits (cwxsts)
+;
+CASBIT	=	000001		;fig shift (cwr)
+FFGBIT	=	000002		;first-fig flag for developing nations (cwr)
+JAMBIT	=	000004		;control shift (cwr)
+LTRBIT	=	000010		;ltr shift (cwx)
+FIGBIT	=	000020		;fig shift (cwx)
+SKDBIT	=	000040		;schedule (cwx)
+RDYBIT	=	000100		;output ready bit
+BZYBIT	=	000200		;output busy bit
+;
+; Process save area extension (cwr)
+;
+.	=	TTREND
+	.EVEN
+CWRBUF:	.BLKW	1		;input char for tio
+CWXPRG:	.BLKW	1		;station control program counter
+CWXSTA:	.BLKW	1		;output state
+CWXPTR:	.BLKW	1		;operand pointer
+CWXSRG:	.BLKW	2		;output shift register (4 bytes)
+CWXSRL:	.BLKW	1		;line shift register
+CWXCNT:	.BLKW	1		;output-interrupt countdown
+CWXFCC:	.BLKW	1		;station identification timer
+CWXTOT:	.BLKW	1		;utility timer
+CWXSCN:	.BLKW	1		;scan counter
+CWXSTS:	.BLKW	1		;status bits
+CWXSEL:	.BLKW	1		;unit select mask
+CWRSTS:	.BLKW	1		;status bits (testable)
+CWRSCA:	.BLKW	1		;matched filter integration time
+CWRPAD:	.BLKW	1		;character interval counter
+CWRPHA:	.BLKW	1		;survivor index
+CWRIDX:	.BLKW	1		;min distance survivor index
+CWRLIM:	.BLKW	1		;start bit pulse gate
+CWRINP:	.BLKW	1		;input interface data
+CWRSIG:	.BLKW	1		;matched filter summing junction
+CWRELT:	.BLKW	1		;current element length (rtlg)
+CWRSWS:	.BLKW	1		;last element length and type (rtlg)
+CWRACT:	.BLKW	1		;receive state (rtty)
+CWRCNT:	.BLKW	2		;baud interval counter
+CWRCOR:	.BLKW	2		;phase error integral
+CWRVAL:	.BLKW	1		;minimum path weight (rtty)
+CWRSRV:	.BLKW	1		;maximum-likelihood character (rtty)
+CWRMOP:	.BLKW	1		;moore char phase
+CWRMOX:	.BLKW	1		;moore min distance
+CWRMIX:	.BLKW	1		;phase pointer for moore
+CWXBUF:	.BLKW	1		;output buffer/code (ascii)
+CWXSRC:	.BLKB	1		;output bit counter
+CWXDLT:	.BLKB	1		;.512-sec countdown
+CWRHST:	.BLKB	1		;zero-crossing integrator (rtlg)
+CWRMOB:	.BLKB	1		;temp shift reg used by moore
+CWRBFS:	.BLKB	1		;temp buffer for viterbi survivor
+CWRBFI:	.BLKB	1		;temp buffer for baudot input
+CWRPTR:	.BLKB	1		;matched filter pointer (offset)
+CWRFLT:	.BLKB	FLTMAX		;matched filter
+	.EVEN
+CWRVTB:	.BLKW	BAUMAX*2	;bit phase weights/shift registers
+CWRMOO:	.BLKW	8.*2		;moore char phase weights/shift registers
+	.BLKW	REGEND/2+30	;process stack
+CWREND	=	.		;end of cwr extension
+;
+; Process save area extension (cwx)
+;
+.	=	TTXEND
+	.EVEN
+	.BLKW	REGEND/2+6	;process stack
+CWXEND	=	.		;end of cwv extension
+	.IF	DF,DRV11	;conditional assembly for drv11
+;
+; Device registers (drv11)
+;
+.	=	0
+DRVSTA:	.BLKW	1		;control/status register
+DRVOUT:	.BLKW	1		;output buffer
+DRVINP:	.BLKW	1		;input buffer
+	.ENDC
+	.IF	DF,DT2785	;conditional assembly for a/d converter
+;
+; Device registers (dti 2785)
+;
+.	=	DT2785
+DTICSR:	.BLKW	1		;control/status register
+DTIADC:	.BLKW	1		;analog/digital converter input
+DTIDA1:	.BLKW	1		;digital/analog converter 1
+DTIAD2:	.BLKW	1		;digital/analog converter 2
+	.ENDC
+	.PAGE
+	.SBTTL	INPUT SAMPLE PROCESSING
+;
+; Procedure segments
+;
+; Supervisor-state procedure
+; Dsects: r2 = dev, r3 = par, r4 = reg, r5 = psa
+;
+	.PSECT	$KERI,RO,I
+;
+; Note: the following signal conventions are used in this program:
+; Rtty		rtlg		sample value
+; Mark		key-up		negative
+; Space		key-down	positive
+;
+; Input sample processing (ism)
+;
+; The following sections are called as the result of a drv11 interrupt
+; Driven by a 500hz clock. they perform filtering and threshold
+; Computation for radiotelegraph and radioteletype signals.
+;
+; Input initialization
+;
+ISMINI:	MOVB	PARSCA+1(R3),CWRSCA(R5) ;initialize matched filter
+	BIS	#TKLBIT,PARMOD(R3) ;force freq load/fcc ident
+	.IF	DF,DRV11	;conditional assembly for drv11
+	MOV	#101,DRVSTA(R2)	;enable drv11
+	.ENDC
+	.IF	DF,DT2785	;conditional assembly for a/d converter
+	MOV	#120,@#DT2785
+	.ENDC
+	MOV	#INTR,R1	;get device enabled
+	.SETV
+OTPASY:	RTS	PC
+;
+; Input start operation
+;
+ISMSIO:	MOV	CWRBUF(R5),@R4	;is char ready
+	BEQ	1$		;branch if no
+	CLR	CWRBUF(R5)	;yes. shortcut
+	RTS	PC
+;
+1$:	JMP	.WAIT		;wait for char
+;
+; Input device interrupt
+;
+ISMINT:	MOV	R4,-(SP)	;save for later
+	BIT	#TKLBIT,PARMOD(R3) ;is somebody fooling with options
+	BEQ	1$		;branch if no
+	BIC	#TKLBIT,PARMOD(R3) ;yes. reset tickle bit
+	BIS	#FCCBIT,CWRSTS(R5) ;force freq load/fcc ident
+	CLR	PARDET(R3)	;reset carrier integrator
+	CLR	PARSQL(R3)	;reset autostart integrator
+	CLR	PARSNC(R3)	;reset synch lock integrator
+	MOV	PARPGM(R3),CWXPRG(R5) ;initialize program counter
+1$:
+	.IF	DF,DRV11	;conditional assembly for drv11
+	MOV	DRVINP(R2),CWRINP(R5) ;read and reset input interface
+	.ENDC
+	.IF	DF,DT2785	;conditional assembly for a/d converter
+	CLR	CWRINP(R5)
+	TST	@#DT2785+DTIADC
+	BMI	2$
+	BIS	#DETBIT,CWRINP(R5)
+	.ENDC
+2$:	DECB	CWXDLT(R5)	;decrement .512-sec timer
+	BNE	3$		;branch if no overflow
+	DEC	CWXFCC(R5)	;overflow. decrement stn ident timer
+	BNE	3$		;branch if nonzero
+	BIS	#FCCBIT,CWRSTS(R5) ;zero. set indicator
+3$:	DEC	CWXTOT(R5)	;decrement utility timer
+	BNE	4$		;branch if nonzero
+	BIS	#CNTBIT,CWRSTS(R5) ;zero. set indicator
+4$:	BIT	#CARBIT,CWRINP(R5) ;is carrier up
+	BNE	6$		;branch if no (signal loss high)
+	CMP	PARDET(R3),PARCAR(R3) ;yes. is carrier integrator high
+	BHIS	5$		;branch if yes
+	INC	PARDET(R3)	;no. up the integrator
+	BR	FILTER
+;
+5$:	MOV	PARCAR(R3),PARDET(R3) ;high. make sure not too high
+	BIS	#XQTBIT,CWRSTS(R5) ;so indicate
+	BR	FILTER
+;
+6$:	TST	PARDET(R3)	;carrier down. is integrator low
+	BEQ	7$		;branch if yes
+	DEC	PARDET(R3)	;no. down the integrator
+	BR	FILTER
+;
+7$:	BIC	#XQTBIT,CWRSTS(R5) ;low. so indicate
+;
+; Matched filter
+;
+FILTER:	MOV	#-1,R0		;establish input data
+	BIT	#MUTBIT,CWRSTS(R5) ;is receiver disabled
+	BNE	1$		;branch if yes
+	BIT	#DETBIT,CWRINP(R5) ;no. is demodulator output space
+	BNE	1$		;branch if no
+	NEG	R0		;yes. invert input
+1$:	INCB	CWRPTR(R5)	;increment pointer
+	MOVB	CWRPTR(R5),R1	;compute filter pointer
+	ADD	R5,R1
+	MOVB	CWRSCA(R5),R4	;get current length
+	DEC	R4		;what cell is this
+	CMPB	CWRPTR(R5),R4
+	BLO	4$		;branch if not last or last+1
+	BHI	2$		;branch if last+1
+	CMPB	CWRSCA(R5),PARSCA+1(R3) ;last. is filter too long
+	BLOS	4$		;branch if no
+	DECB	CWRSCA(R5)	;yes. decrement length
+	MOVB	CWRFLT(R1),R4	;correct accumulator
+	SUB	R4,CWRSIG(R5)
+	BR	3$
+;
+2$:	CMPB	CWRSCA(R5),PARSCA+1(R3) ;last+1 cell. is filter too short
+	BHIS	3$		;branch if no
+	INCB	CWRSCA(R5)	;yes. increment length
+	CLRB	CWRFLT(R1)	;clear last cell
+	BR	4$
+;
+3$:	MOV	R5,R1		;reset to beginning of buffer
+	CLRB	CWRPTR(R5)
+4$:	MOVB	CWRFLT(R1),R4	;subtract last element
+	SUB	R4,CWRSIG(R5)
+	ADD	R0,CWRSIG(R5)	;add new element
+	MOVB	R0,CWRFLT(R1)	;save new element in buffer
+	BIT	#RTGBIT,PARMOD(R3) ;is rtty mode set
+	BEQ	TTIASY		;branch if yes
+	.PAGE
+	.SBTTL	RADIOTELEGRAPH INPUT
+;
+; This section determines sample counts (intervals) between zero
+; Crossings and sends them to the input (morse decoder) process.
+;
+TGINPT:	INC	CWRELT(R5)	;increment interval length
+	CMP	CWRELT(R5),#DATMSK ;is interval too long
+	BLOS	1$		;branch if no
+	MOV	#DATMSK,CWRELT(R5) ;yes. limit it
+1$:	MOV	CWRSIG(R5),R0	;get sign
+	TST	CWRSWS(R5)	;is this mark state
+	BPL	2$		;branch if no
+	TST	R0		;yes. is this mark
+	BPL	4$		;branch if no
+	MOV	PARSTC(R3),R0	;yes. compute 14 baud times
+	ASH	#3,R0
+	SUB	PARSTC(R3),R0
+	CMP	CWRELT(R5),R0	;is interval too long
+	BNE	3$		;branch if no
+	BIS	#TXTBIT,CWRSWS(R5) ;yes. mark so won't get it twice
+	ASR	R0		;compute 7 baud times
+	BIS	#TXTBIT,R0	;send to ttr process
+;	MOVB	PARMON(R3),R1
+;	.SEND
+	BR	3$
+;
+2$:	TST	R0		;space state. is this space
+	BMI	4$		;branch if no
+3$:	TSTB	CWRHST(R5)	;yes. decrement integrator
+	BEQ	7$
+	DECB	CWRHST(R5)
+	BR	7$
+;
+4$:	INCB	CWRHST(R5)	;increment integrator
+	MOVB	PARSCA+1(R3),R1	;get hysteresis point
+	ASR	R1
+	CMPB	CWRHST(R5),R1	;integrator overflow
+	BLO	7$		;branch if no
+	CLRB	CWRHST(R5)	;yes. reset integrator
+	BIC	#077777,R0	;construct interval and type
+	BIS	CWRELT(R5),R0
+	BMI	5$		;branch if mark
+	TST	CWRSWS(R5)	;space. was last mark
+	BPL	5$		;branch if no
+	BIT	#TXTBIT,CWRSWS(R5) ;yes has it been sent before
+;	Bne	6$		;branch if yes
+5$:	MOV	R0,CWRSWS(R5)	;no. do it
+	BIS	#TXTBIT,R0
+;	MOVB	PARMON(R3),R1
+;	.SEND
+6$:	CLR	CWRELT(R5)	;reset interval
+7$:	JMP	OSMINT		;finished here. go see to transmitter
+	.PAGE
+	.SBTTL	RADIOTELETYPE INPUT (TTI)
+;
+; This section detects 5-level asynchronous signals and converts
+; Baudot code to ascii. maximum-likelihood viterbi decoding
+; Is used on a character-by-character basis.
+;
+TTIASY:	CMP	PARSQL(R3),PARTHX(R3) ;is receiver in mark-hold
+	BLO	3$		;branch if no
+	CLR	PARSNC(R3)	;yes. reset synch integrator
+	BIT	#AFBBIT,PAROPT(R3) ;is baud-rate afc enabled
+	BEQ	3$		;branch if no
+	TST	CWRSIG(R5)	;yes. determine line state
+	BMI	1$		;branch if mark
+	INCB	CWRELT+1(R5)	;space. increment pulse width
+	BVC	3$		;branch if no overflow
+	DECB	CWRELT+1(R5)	;overflow. limit at maximum
+	BR	3$
+;
+1$:	MOV	CWRELT(R5),R0	;mark. get pulse width
+	CMP	R0,PARLOW(R3)	;is length out of bounds
+	BLO	2$		;branch if yes
+	CMP	R0,PARHIG(R3)
+	BHI	2$		;branch if yes
+	SUB	PARSCA(R3),R0	;no. update filter tuning
+	ASH	#-AFCONS,R0
+	ADD	R0,PARSCA(R3)	;correct tracking filter rate
+2$:	CLR	CWRELT(R5)	;set up for next time
+3$:	INCB	CWRPAD+1(R5)	;increment character estimate
+	BVC	.+6
+	DECB	CWRPAD+1(R5)
+	MOVB	CWRCNT+1(R5),R4	;get survivor pointer
+	CMPB	R4,PARSCA+1(R3)	;is this stuffing cycle
+	BHI	TTI23		;branch if yes
+	ASL	R4		;no. compute survivor pointer
+	ASL	R4
+	ADD	R5,R4
+	MOV	CWRSIG(R5),R0	;get binary decision
+	ROL	R0
+	ROR	CWRVTB-2(R4)	;shift into register
+	ADD	CWRACT(R5),PC	;angle bracket
+	JMP	TTIP0		;00 asynch idle
+	JMP	TTIP1		;04 bit 0 (start bit)
+	JMP	TTIP2		;10 bit 1
+	JMP	TTIP2		;14 bit 2
+	JMP	TTIP2		;20 bit 3
+	JMP	TTIP2		;24 bit 4
+	JMP	TTIP2		;30 bit 5
+	JMP	TTIP3		;34 bit 6 (stop bit)
+	JMP	TTIP4		;40 synch idle
+	JMP	TTIP5		;44 frame error
+;
+TTIP0:	TST	CWRSIG(R5)	;state 0. is this space
+	BMI	TTI42		;branch if no
+	CMP	CWRPAD(R5),CWRLIM(R5) ;yes. is interval too long
+	BHI	TTI19		;branch if yes
+	MOV	CWRPAD(R5),R0	;no. update character estimate
+	CLR	R1
+	SUB	PARPAD+2(R3),R1
+	SBC	R0
+	SUB	PARPAD(R3),R0
+	MOV	#-PADCON,-(SP)	;use damping factor for shift
+	ADD	PARLOP(R3),@SP
+	ASHC	(SP)+,R0
+	ADD	R1,PARPAD+2(R3)
+	ADC	R0
+	ADD	R0,PARPAD(R3)
+	CMP	PARSNC(R3),PARSYN(R3) ;up the integrator
+	BHIS	TTI18
+	INC	PARSNC(R3)
+	BR	TTI18
+;
+TTI19:	TST	PARSNC(R3)	;down the integrator
+	BEQ	TTI18
+	DEC	PARSNC(R3)
+TTI18:	MOV	#1*4,CWRACT(R5)	;initialize for next char
+	ADD	PARSCA(R3),CWRCNT(R5)
+	CLR	CWRPAD(R5)
+TTIP1:	CLR	CWRVTB-4(R4)	;state 1 (bit 0). initialize
+	MOV	#077777,CWRVAL(R5)
+	CLR	CWRSRV(R5)
+	MOV	PARSCA(R3),R0
+	ASR	R0
+	NEG	R0
+	MOV	R0,CWRPHA(R5)
+	BIT	#MORBIT,CWRSTS(R5) ;is moore mode set
+	BEQ	TTI21		;branch to assume space if no
+	MOV	#-1,CWRPAD(R5)	;yes. initialize counter
+TTIP2:	TST	CWRSIG(R5)	;state 2 (bits 1-5). is this space
+	BPL	TTI21		;branch if yes
+	MOV	CWRSCA(R5),R0	;no. add distance to mark
+	ADD	CWRSIG(R5),R0
+	BR	TTI22
+;
+TTI21:	MOV	CWRSCA(R5),R0	;add distance to space
+	SUB	CWRSIG(R5),R0
+TTI22:	ADD	R0,CWRVTB-4(R4)
+TTI23:	DECB	CWRCNT+1(R5)	;count down minor cycle
+	BEQ	TTI25		;branch if underflow
+TTI42:	JMP	RTRCHR		;finished here. go convert char to ascii
+;
+TTI25:	ADD	#1*4,CWRACT(R5)	;underflow. step to next state
+	ADD	PARSCA(R3),CWRCNT(R5) ;careful correction
+TTI24:	BIT	#MORBIT,CWRSTS(R5) ;is this moore mode
+	BEQ	TTI42		;branch if no
+	ASRB	CWRMOB(R5)	;yes. shift bit in
+	ROR	CWRMOO+2(R5)
+	MOV	CWRMOO+2(R5),R1
+	MOV	CWRACT(R5),R4	;get char phase table pointer
+	ADD	R5,R4
+	MOV	R1,CWRMOO+2(R4) ;save shifted survivor
+	CMP	PARSNC(R3),PARSYN(R3) ;is we in synch
+	BHIS	TTI26		;branch if yes
+	BIC	#^C037777,R1	;no. search for synch (2 char)
+	CMP	R1,PARMOO(R3)
+	BEQ	TTI27		;branch if found
+	BR	TTI28		;and if not found
+;
+TTI26:	MOV	R1,R0		;synch. decode printing char
+	BIC	#^C177,R1
+	ADD	PC,R1
+	MOVB	MORBDT-.(R1),R1
+	BMI	TTI28		;branch if invalid
+	CMP	R4,CWRMIX(R5)	;valid char. is it right phase
+	BNE	.+6		;branch if no
+	MOVB	R1,CWRBFS(R5)	;yes. save baudot char
+	ASH	#-7,R0		;decode current char
+	BIC	#^C177,R0
+	ADD	PC,R0
+	MOVB	MORBDT-.(R0),R0
+	BMI	TTI28		;branch if invalid
+	CMP	R0,R1		;both valid. are both chars same
+	BNE	TTI27		;branch if no
+	MOV	CWRMOO(R4),R0	;yes. skip update but compare
+	BR	TTI21A
+;
+TTI27:	MOV	#077777,R0	;in synch
+	BR	TTI29
+;
+TTI28:	CLR	R0		;out of synch
+TTI29:	SUB	CWRMOO(R4),R0	;update distance
+	ASH	#-6,R0
+	ADD	CWRMOO(R4),R0
+	MOV	R0,CWRMOO(R4)
+TTI21A:	CMP	R0,CWRMOX(R5)	;is this max so far
+	BLOS	TTI42		;branch if no
+	MOV	R0,CWRMOX(R5)	;yes. save new max
+	MOV	R4,CWRMOP(R5)	;and phase
+	BR	TTI42
+;
+TTIP4:	DECB	CWRCNT+1(R5)	;state 4 (synch idle). count down minor cycle
+	BNE	TTI42		;branch if no overflow
+	JMP	TTI18
+;
+TTIP3:	BIT	#MORBIT,CWRSTS(R5) ;state 3 (bit 6). is moore mode set
+	BEQ	1$		;branch to assume mark if no
+	TST	CWRSIG(R5)	;yes. is this space
+	BPL	2$		;branch if yes
+1$:	MOV	CWRSCA(R5),R0	;no. add distance to mark
+	ADD	CWRSIG(R5),R0
+	BR	3$
+;
+2$:	MOV	CWRSCA(R5),R0	;add distance to space
+	SUB	CWRSIG(R5),R0
+3$:	ADD	CWRVTB-4(R4),R0
+	MOV	R0,CWRVTB-4(R4)
+	CMP	R0,CWRVAL(R5)	;is this new minimum
+	BHIS	4$		;branch if no
+	MOV	R0,CWRVAL(R5)	;yes. update minimum
+	MOV	CWRVTB-2(R4),CWRSRV(R5)	;save shift reg
+	MOV	CWRPHA(R5),CWRIDX(R5) ;save survivor index
+4$:	INCB	CWRPHA+1(R5)	;keep track of survivor index
+	DECB	CWRCNT+1(R5)	;count down minor cycle
+	BNE	TTI42A		;branch if no underflow
+	MOV	CWRIDX(R5),R0	;underflow. get bit phase error
+	MOVB	CWRSRV+1(R5),R1	;get survivor
+	ASR	R1
+	BIT	#MORBIT,CWRSTS(R5) ;is this moore mode
+	BEQ	TTI48		;branch if no
+	MOV	#1*4,CWRACT(R5)	;yes. reset state counter
+	MOV	CWRMOP(R5),CWRMIX(R5) ;save character phase pointer
+	MOV	CWRMOX(R5),PARSNC(R3) ;and max distance
+	CLR	CWRMOX(R5)	;reset for next time
+	MOVB	R1,CWRMOB(R5)	;save survivor
+	BEQ	5$		;branch if all space
+	COM	R1
+	BNE	TTI37		;branch if not all mark
+5$:	MOV	#077777,CWRVAL(R5) ;jack up autostart distance
+	BR	TTI46		;skip phase correction
+;
+TTI48:	ADD	#1*4,CWRACT(R5)	;baudot mode. step to next state
+	BIT	#RSNBIT,PAROPT(R3) ;is synch lock enabled
+	BEQ	1$		;branch if no
+	CMP	PARSNC(R3),PARSYN(R3) ;yes. is we in synch
+	BHIS	TTI45		;branch if yes
+1$:	ASR	R1		;unsynch baudot. check framing
+	BPL	TTI32		;branch if stop bit not mark
+	BIC	#^C37,R1	;valid frame. save baudot char
+	MOVB	R1,CWRBFS(R5)
+	BIT	#AFCBIT,PAROPT(R3) ;is afc enabled
+	BEQ	2$		;branch if no
+	ASH	#-ASHAFC,R0	;yes. update baud rate estimate
+	ADD	PARSCA(R3),R0
+	CMP	R0,PARLOW(R3)	;is rate out of bounds
+	BLO	2$		;branch if yes
+	CMP	R0,PARHIG(R3)
+	BHI	2$		;branch if yes
+	MOV	R0,PARSCA(R3)	;no. store it
+2$:	MOV	PARSCA(R3),R0	;compute start bit gate
+	ASR	R0
+	ADD	PARSCA(R3),R0	;(allow up to 2.5 stop units)
+	ADD	CWRPAD(R5),R0
+	MOV	R0,CWRLIM(R5)
+	BR	TTI41
+;
+TTI45:	ASR	R1		;synch baudot. check framing
+	BCS	TTI46		;branch if start bit not space
+	BPL	TTI46		;branch if stop bit not mark
+	BIC	#^C37,R1	;valid frame. save baudot char
+	MOVB	R1,CWRBFS(R5)
+TTI37:	CLR	R1		;in synch. filter phase detect output
+	SUB	CWRCOR+2(R5),R1
+	SBC	R0
+	SUB	CWRCOR(R5),R0
+	ASHC	PARLOP(R3),R0
+	ADD	R1,CWRCOR+2(R5)
+	ADC	R0
+	ADD	R0,CWRCOR(R5)
+TTI46:	MOV	CWRCOR(R5),R0	;update global time
+	MOV	CWRCOR+2(R5),R1
+	ASHC	PARLOP(R3),R0
+	ADD	PARPAD+2(R3),R1
+	ADC	R0
+	ADD	PARPAD(R3),R0
+	SUB	CWRPAD(R5),R0
+	ADD	R1,CWRCNT+2(R5)
+	ADC	CWRCNT(R5)
+	ADD	R0,CWRCNT(R5)
+	BMI	TTI41		;negative time. board time machine
+	MOV	#-ASSCON,R4	;use long integration time for squelch
+	ADD	PARLOP(R3),R4
+	BR	TTI44
+;
+TTI32:	ADD	#1*4,CWRACT(R5)	;frame error. search for mark
+TTIP5:	TST	CWRSIG(R5)	;state 5 (frame error). is line at mark
+	BMI	TTI41		;branch if yes
+TTI42A:	JMP	TTI42		;no. twiddle thumbs
+;
+TTI41:	CLR	CWRACT(R5)	;resume start-bit search
+	MOV	#-ASTCON,R4	;use short integration time for squelch
+TTI44:	MOV	CWRVAL(R5),R0	;update autostart threshold
+	SWAB	R0
+	SUB	PARSQL(R3),R0
+	ASH	R4,R0
+	ADD	R0,PARSQL(R3)
+	JMP	TTI24
+	.PAGE
+	.SBTTL	RADIOTELETYPE INPUT CHARACTER PROCESSING (RTR)
+;
+; This section translates the baudot character to ascii. the translation
+; Is according to the c-rap conventions, as amended to include selectable
+; Escape character.
+;
+RTRCHR:	MOVB	CWRBFI(R5),R0	;is char waiting from prev cycle
+	BEQ	9$		;branch if no (also drop nuls here)
+	CMP	PARSQL(R3),PARTHX(R3) ;yes. is receiver in mark-hold
+	BHIS	3$		;branch if yes (force downshift)
+	BIT	#FFGBIT,CWXSTS(R5) ;no. is this fig shift
+	BEQ	1$		;branch if no
+	CMPB	R0,PARAPR(R3)	;yes. is char c-rap escape
+	BNE	1$		;branch if no
+	BIS	#JAMBIT,CWXSTS(R5) ;yes. set fig-dle shift
+	BR	8$
+;
+1$:	CMPB	R0,#FIG		;is char fig
+	BNE	2$		;branch if no
+	BIS	#CASBIT+FFGBIT,CWXSTS(R5) ;yes. set fig shift (upshift)
+	BR	9$
+;
+2$:	CMPB	R0,#LTR		;is char ltr
+	BNE	4$		;branch if no
+3$:	BIC	#CASBIT+JAMBIT,CWXSTS(R5) ;yes. set ltr shift (downshift)
+	BR	8$
+;
+4$:	BIT	#CASBIT+JAMBIT,CWXSTS(R5) ;is this ltr shift
+	BEQ	6$		;branch if yes
+	BIT	#JAMBIT,CWXSTS(R5) ;no. is this control shift
+	BEQ	5$		;branch if no
+	BIC	#JAMBIT,CWXSTS(R5) ;yes. set fig shift
+	ADD	#BDCASC-BDFASC,R0 ;use control shift table
+5$:	ADD	#BDFASC-BDLASC,R0 ;use fig shift table
+6$:	ADD	PC,R0
+	MOVB	BDLASC-.(R0),R0	
+	BPL	7$		;branch if no unshift
+	BIT	#RDSBIT,PAROPT(R3) ;is auto-downshift bit set
+	BEQ	7$		;branch if no
+	BIC	#CASBIT+JAMBIT,CWXSTS(R5) ;yes. unshift
+7$:	BIC	#^C177,R0	;make it pretty
+	MOV	R0,CWRBUF(R5)
+8$:	BIC	#FFGBIT,CWXSTS(R5) ;make sure fig isnt too powerful
+9$:	MOVB	CWRBFS(R5),CWRBFI(R5) ;pick up last received char
+	CLRB	CWRBFS(R5)
+	JMP	OSMINT		;finished here. go see to transmitter
+	.PAGE
+	.SBTTL	OUTPUT SAMPLE PROCESSING
+;
+; Output processing (otp)
+;
+; The following sections are called by means of extended
+; Interrupts by the output process.
+;
+; Output send char (sio)
+;
+OTPSIO:
+	RTS	PC
+
+	MOV	R0,CWXBUF(R5)	;save for pickup
+	BICB	#200,CWXBUF(R5)	;is this nul
+	BEQ	12$		;branch if yes
+	BIS	#BUFBIT,CWRSTS(R5) ;no. mark so somebody will notice
+	JMP	.WAIT		;shortcut
+;
+12$:	RTS	PC
+;
+; Output sample processing (osm)
+;
+; The following sections are called as the result of a drv11 interrupt
+; Driven by a 500hz clock. they control the transmitter keying for
+; Radiotelegraph (a1) and radioteletype (f1) emissions.
+; In radioteletype mode narrow-shift f1 emission is used instead
+; Of a1 emission for the required fcc identification.
+;
+; Output device interrupt
+;
+OSMINT:	TST	CWXCNT(R5)	;is bit timer running
+	BEQ	1$		;branch if no
+	DEC	CWXCNT(R5)	;yes. decrement it
+	BNE	RTX5A		;branch if still running
+1$:	BIT	#RTIBIT,CWRSTS(R5) ;is rtty mode set
+	BEQ	RTX1		;branch if yes
+;
+; Radiotelegraph output
+;
+	BIT	#BZYBIT,CWXSTS(R5) ;is output busy
+	BNE	TGOUTP		;branch if yes
+TGO20:	BIT	#RDYBIT,CWXSTS(R5) ;no. is next char ready
+	BEQ	RTX5A		;branch if no
+	MOV	CWXSRG(R5),CWXSRL(R5) ;first bit. load shift register
+	BIC	#RDYBIT,CWXSTS(R5) ;fiddle bits
+	BIS	#BZYBIT,CWXSTS(R5)
+TGOUTP:
+	MOV	PARCWS(R3),R0	;get rtlg baud interval
+	.IF	DF,DRV11	;conditional assembly for drv11
+	BIT	#KEYBIT,DRVOUT(R2) ;rtlg. was last element space
+	BEQ	1$		;branch if yes
+	BIC	#KEYBIT,DRVOUT(R2) ;no. key up for one dot
+	BR	5$
+	.ENDC
+;
+1$:	CLC			;shift register right
+	ROR	CWXSRL(R5)	;is this end of char
+	BNE	2$		;branch if no
+	BIC	#BZYBIT,CWXSTS(R5) ;yes. reset indicator
+	BR	TGO20
+;
+2$:	BCS	3$		;branch if dot
+	ROR	CWXSRL(R5)
+	BCC	4$		;branch if end of char
+	ASL	R0		;dash. set length three dots
+	ADD	PARCWS(R3),R0
+3$:
+	.IF	DF,DRV11	;conditional assembly for drv11
+	BIS	#KEYBIT,DRVOUT(R2) ;key down
+	.ENDC
+	BR	5$
+;
+4$:	MOV	PARSTC(R3),R0	;end of char. key up for two dots
+5$:	BR	RTX4
+;
+RTX5A:	JMP	RTX5
+;
+; Radioteletype output (rtx)
+;
+RTX1:	BIT	#BZYBIT,CWXSTS(R5) ;baudot. is output busy
+	BNE	6$		;branch if yes
+	BIT	#RDYBIT,CWXSTS(R5) ;no. is next char ready
+	BNE	1$		;branch if yes
+	BIT	#XSNBIT,PAROPT(R3) ;no. is this synch idle
+	BEQ	RTX5		;branch if no
+	CMP	CWXSTA(R5),#2*4	;yes. is this transmit state
+	BLO	RTX5		;branch if no
+	CMP	CWXSTA(R5),#4*4
+	BHIS	RTX5		;branch if no
+	BIT	#MORBIT,CWRSTS(R5) ;yes. what mode is this
+	BNE	2$		;branch if moore
+	MOV	#100,CWXSRL(R5)	;baudot. send nul idle
+	MOVB	#7.,CWXSRC(R5)
+	BR	5$
+;
+1$:	MOVB	CWXSRG(R5),R0	;char ready. get it
+	BIT	#MORBIT,CWRSTS(R5) ;is this moore code
+	BEQ	3$		;branch if no
+	BIC	#^C37,R0	;yes. convert to moore (ita-3) code
+	ADD	PC,R0
+	MOVB	BDTMOR-.(R0),R0
+	BNE	4$		;branch if non-nul
+2$:	MOV	PARMOO(R3),CWXSRL(R5) ;nul. send 2-char syn sequence
+	MOVB	#14.,CWXSRC(R5)
+	BR	5$
+;
+3$:	ASL	R0		;baudot. set up for start/stop
+4$:	MOV	R0,CWXSRL(R5)
+	MOVB	CWXSRG+1(R5),CWXSRG(R5) ;squad right
+	BNE	30$		;branch if more
+	BIC	#RDYBIT,CWXSTS(R5) ;none. reset indicator
+30$:	MOVB	CWXSRG+2(R5),CWXSRG+1(R5)
+	CLRB	CWXSRG+2(R5)
+	MOVB	#7.,CWXSRC(R5)	;initialize bit counter
+5$:	BIS	#BZYBIT,CWXSTS(R5) ;set indicator
+6$:	DECB	CWXSRC(R5)	;decrement bit counter
+	BNE	31$		;branch if nonzero
+	BIC	#BZYBIT,CWXSTS(R5) ;zero. reset indicator
+31$:	CLC
+	BIT	#MORBIT,CWRSTS(R5) ;is this moore code
+	BEQ	7$		;branch if no
+	ROR	CWXSRL(R5)	;yes. shift next bit onto line
+	BCS	10$		;branch if mark
+	BR	8$		;space
+;
+7$:	ROR	CWXSRL(R5)	;baudot. shift next bit onto line
+	BEQ	9$		;branch if done
+	BCS	10$		;branch if mark
+8$:	MOVB	PARXDS+1(R3),R0	;set one baud interval
+	.IF	DF,DRV11	;conditional assembly for drv11
+	BIS	#KEYBIT,DRVOUT(R2) ;send space
+	.ENDC
+	BR	12$
+;
+9$:	MOVB	PARSTP(R3),R0	;set stop interval
+	BR	11$
+;
+10$:	MOVB	PARXDS+1(R3),R0	;set one baud interval
+11$:
+	.IF	DF,DRV11	;conditional assembly for drv11
+	BIC	#KEYBIT,DRVOUT(R2) ;send mark
+	.ENDC
+12$:	BIC	#^C377,R0	;snip protuberances
+RTX4:	MOV	R0,CWXCNT(R5)	;save counter
+RTX5:	MOV	(SP)+,R4
+	TSTB	PSASTS(R5)	;is process running
+	BMI	2$		;branch if yes
+	MOV	CWRBUF(R5),@R4	;no. is buffer ready
+	BEQ	2$		;branch if no
+	CLR	CWRBUF(R5)	;yes. wake it up
+	JMP	.SKED
+;
+2$:	BIT	#RDYBIT,CWXSTS(R5) ;is buffer empty
+;	BEQ	CWXCHR		;branch if yes
+	RTS	PC
+	.PAGE
+	.SBTTL	OUTPUT CHARACTER PROCESSING (CWX)
+;
+; This section is entered at every device interrupt when a character
+; Is not actually being transmitted. it implements the transmit/receive
+; Switching, timeouts and identification procedures required in the
+; C-rap protocol.
+;
+CWXCHR:	ADD	CWXSTA(R5),PC	;handrail for swingers
+	JMP	CWXP0		;0 interpret command
+	JMP	CWXP1		;1 end transmission
+	JMP	CWXP2		;2 send normal output
+	JMP	CWXP3		;3 send prestored string
+	JMP	CWXP4		;4 load frequency digit phase 1
+	JMP	CWXP5		;5 load frequency digit phase 2
+	JMP	CWXP6		;6 increment scan
+;
+; State 0 - interpret command
+;
+CWXP0:	MOV	@CWXPRG(R5),R1	;state 0. fetch next command
+	ADD	#2,CWXPRG(R5)
+	MOVB	R1,R0		;extract operand address
+	ASL	R0
+	ADD	CWXPRG(R5),R0
+	MOV	R0,CWXPTR(R5)	;save in a handy place
+	SWAB	R1		;extract operation code
+	BIC	#^C377,R1
+	ADD	R1,PC		;shoot silver bullets
+	JMP	CWXJMP		;0 transfer
+	JMP	CWXMIT		;1 send text
+	JMP	CWXMSG		;2 send message
+	JMP	CWXSEQ		;3 transfer if zero
+	JMP	CWXSNE		;4 transfer if nonzero
+	JMP	CWXFRL		;5 load freq and receive
+	JMP	CWXCTL		;6 load freq and transmit
+	JMP	CWXTM1		;7 set identification timer
+	JMP	CWXTM2		;8 set utility timer
+	JMP	CWXMUZ		;9 disable transmitter
+	JMP	CWXUMZ		;10 enable transmitter
+	JMP	CWXMUT		;11 disable receiver
+	JMP	CWXUMT		;12 enable receiver
+	JMP	CWXCW		;13 force cw msg
+	JMP	CWXSXX		;14 start scan
+;
+; Op = 3 - transfer if zero
+;
+CWXSEQ:	MOV	@CWXPRG(R5),R1	;fetch argument
+	ADD	#2,CWXPRG(R5)
+	BIT	R1,CWRSTS(R5)	;test bits
+	BEQ	CWXJMP		;branch if zero
+CHR10:	RTS	PC
+;
+; Op = 4 - transfer if nonzero
+;
+CWXSNE:	MOV	@CWXPRG(R5),R1	;fetch argument
+	ADD	#2,CWXPRG(R5)
+	BIT	R1,CWRSTS(R5)	;test bits
+	BEQ	CHR10		;branch if zero
+;
+; Op = 0 - transfer
+;
+CWXJMP:	MOV	R0,CWXPRG(R5)	;stash in program counter
+	RTS	PC
+;
+; Op = 7 - set identification timer
+;
+CWXTM1:	MOV	@R0,CWXFCC(R5)	;initialize identification timer
+	BIC	#FCCBIT,CWRSTS(R5)
+	RTS	PC
+;
+; Op = 8 - set utility timer
+;
+CWXTM2:	MOV	@R0,CWXTOT(R5)	;initialize utility timer
+	BIC	#CNTBIT,CWRSTS(R5)
+	RTS	PC
+;
+; Op = 9 - disable transmitter
+;
+CWXMUZ:	MOV	#DC3,R0		;muzzle transmitter
+	BR	CWX99
+;
+; Op = 10 - enable transmitter
+;
+CWXUMZ:	MOV	#DC1,R0		;unmuzzle transmitter
+CWX99:	CLRB	TTXLIN(R5)	;reset line counter
+	BIC	#LTRBIT+FIGBIT,CWXSTS(R5)
+;	MOVB	PARMON(R3),R1
+;	JMP	.SEND
+;
+; Op = 11 - disable receiver
+;
+CWXMUT:	CLR	PARDET(R3)	;reset carrier indicator
+	BIC	#XQTBIT,CWRSTS(R5)
+	RTS	PC
+;
+; Op = 12 - enable receiver
+;
+CWXUMT:	BIC	#CASBIT+FFGBIT+JAMBIT,CWXSTS(R5) ;reset status bits
+	CLR	PARSQL(R3)	;reset squelch integrator
+	CLR	PARSNC(R3)	;reset synch-lock integrator
+	RTS	PC
+;
+; Op = 5 - load freq and receive
+;
+CWXFRL:	CLR	CWXSCN(R5)	;reset scanning
+CWX49:	MOV	#^C<DEMMSK+SELMSK>,R1 ;initialize for receive
+	BR	CWX55
+;
+; Op = 6 - load freq and transmit
+;
+CWXCTL:	MOV	#^C<PTTMSK+SELMSK>,R1 ;initialize for transmit
+CWX55:	MOVB	@CWXPTR(R5),CWRSTS(R5) ;reset option bits
+	INC	CWXPTR(R5)
+	MOV	#TR1ENB,R0	;construct transceiver mask
+	BIT	#XCVBIT,CWRSTS(R5)
+	BEQ	1$
+	MOV	#TR2ENB,R0
+1$:	BIC	R1,R0
+	MOV	R0,CWXSEL(R5)	;save for later
+	MOV	R0,R1		;is dial locked this xceiver
+	BIC	#^CLOKMSK,R1
+	BIT	R1,CWRINP(R5)
+	BNE	CWX55A		;branch if no (skip freq)
+	BIC	#^CSELMSK,R0
+	.IF	DF,DRV11	;conditional assembly for drv11
+	MOV	R0,DRVOUT(R2)	;start things
+	.ENDC
+CWXP5:	MOV	#4*4,CWXSTA(R5)	;state 5. exit to state 4
+	.IF	DF,DRV11	;conditional assembly for drv11
+	CLRB	DRVOUT(R2)	;reset bits
+	.ENDC
+	TSTB	@CWXPTR(R5)	;is this last byte
+	BNE	RTX10C		;branch if no
+CWX55A:
+	.IF	DF,DRV11	;conditional assembly for drv11
+	CLR	DRVOUT(R2)	;turn out the lights
+	MOV	CWXSEL(R5),R0	;get final bits
+	BIC	#SELMSK,R0
+	BIS	R0,DRVOUT(R2)
+	.ENDC
+	CLR	CWXSTA(R5)	;exit to state 0
+RTX10C:	RTS	PC
+;
+CWXP4:	MOV	#5*4,CWXSTA(R5)	;state 4. exit to state 5
+	.IF	DF,DRV11	;conditional assembly for drv11
+	BISB	@CWXPTR(R5),DRVOUT(R2) ;get next digit
+	.ENDC
+	INC	CWXPTR(R5)
+	RTS	PC
+;
+; Op = 14 - start scan
+;
+CWXSXX:	TST	CWXSCN(R5)	;is scan in progress
+	BNE	5$		;branch if yes
+	MOV	PARSCN(R3),CWXSCN(R5) ;no. is it at lower limit
+	BNE	CWX49		;branch if yes
+	RTS	PC
+;
+5$:	DEC	CWXSCN(R5)	;count it down
+	MOV	#<TR1ENB&SELMSK>!SCXBIT,R0 ;construct transceiver mask
+	BIT	#XCVBIT,CWRSTS(R5)
+	BEQ	1$
+	MOV	#<TR2ENB&SELMSK>!SCXBIT!UDCBIT,R0
+1$:
+	.IF	DF,DRV11	;conditional assembly for drv11
+	BIS	R0,DRVOUT(R2)
+	.ENDC
+	MOV	#6*4,CWXSTA(R5)	;exit to state 6
+	RTS	PC
+;
+CWXP6:
+	.IF	DF,DRV11	;conditional assembly for drv11
+	BIC	#SELMSK!377,DRVOUT(R2)
+	.ENDC
+	CLR	CWXSTA(R5)	;count down. exit quietly
+	RTS	PC
+;
+; Op = 1 - send text
+;
+CWXMIT:	BIC	#CNTBIT,CWRSTS(R5) ;set up timer
+	BIT	#RTGBIT,PARMOD(R3) ;is this rtty mode
+	BEQ	CWXP2		;branch if yes
+	BIS	#RTIBIT,CWRSTS(R5) ;no. set rtlg for output
+CWXP2:	MOV	#2*4,CWXSTA(R5)	;exit to state 3
+	BIT	#FCCBIT+CNTBIT,CWRSTS(R5) ;have timers run down
+	BNE	CWXP1		;branch if yes
+	BITB	#3,CWXBUF+1(R5) ;no. is this ack msg
+	BNE	3$		;branch if no
+	CMP	CWXTOT(R5),#IDLDLY ;yes. force to short timeout
+	BLOS	3$
+	MOV	#IDLDLY,CWXTOT(R5)
+3$:	BIT	#BUFBIT,CWRSTS(R5) ;no. is buffer loaded
+	BEQ	RTX10		;branch if no
+	MOVB	CWXBUF(R5),R0	;yes. get buffer
+	CMP	CWXFCC(R5),#IDNDLY ;is ident timeout imminent
+	BHI	CWX87		;branch if no
+	CMPB	R0,#CR		;yes. is char cr
+	BNE	CWX87		;branch if no
+	BIS	#FCCBIT,CWRSTS(R5) ;yes. set indicator
+CWXP1:	MOV	#1*4,CWXSTA(R5)	;state 1. exit to state 1
+ 	BIT	#BZYBIT,CWXSTS(R5) ;yes. is output busy
+	BNE	RTX10		;branch if yes
+	BIC	#RTIBIT,CWRSTS(R5) ;reset mode bit
+	CLR	CWXSTA(R5)	;return to catching flies
+RTX10:	BIT	#SKDBIT,CWXSTS(R5) ;is proc waiting to be sked'd
+	BEQ	RTX10C		;branch if no
+	BIC	#SKDBIT,CWXSTS(R5) ;yes. sked proc
+	JMP	.SKED		;shortcut
+;
+; Op = 2 - send message
+;
+CWXMSG:	BIT	#RTGBIT,PARMOD(R3) ;is this rtty mode
+	BEQ	CWXP3		;branch if yes
+;
+; Op = 13 - send cw msg
+;
+CWXCW:	BIS	#RTIBIT,CWRSTS(R5) ;force cw msg
+CWXP3:	MOV	#3*4,CWXSTA(R5)	;state 3. exit to state 3
+	MOVB	@CWXPTR(R5),R0	;get next byte
+	INC	CWXPTR(R5)
+	TSTB	R0		;is string ended
+	BEQ	CWXP1		;branch if yes
+	BIC	#^C177,R0	;no. sanitize
+	MOV	#IDLDLY,CWXTOT(R5) ;set short timeout
+	BR	CWX15
+;
+CWX87:	BIC	#BUFBIT,CWRSTS(R5) ;start processing
+	BIS	#SKDBIT,CWXSTS(R5) ;spring load sked bit
+	MOV	PARDLY(R3),CWXTOT(R5) ;set long timeout
+	CMPB	R0,#040		;is this ending char
+	BHIS	CWX15		;branch if no
+	MOV	R0,R1		;maybe. check table
+	BIC	#^C37,R1
+	ADD	CWXPTR(R5),R1
+	MOVB	@R1,R1		;fetch table argument
+	BEQ	CWX15		;branch if do-nothing
+	ASL	R1		;exit. compute exit offset
+	ADD	R1,CWXPRG(R5)
+	BR	CWXP1
+;
+CWX15:	CMPB	R0,#177		;no. fiddle for del
+	BLO	.+4
+	INC	R0		;map del into baudot ltr
+	CMPB	R0,#140		;fold lower-case letters etc.
+	BLO	.+6
+	SUB	#040,R0
+	.PAGE
+	.SBTTL	OUTPUT ENCODE
+;
+; The following sections encode the ascii character for radiotelegraph
+; Or radioteletype transmission and leave the control information in
+; The transmit shift register. transmission is completed as the result
+; Of device interrupts.
+;
+	BIT	#RTIBIT,CWRSTS(R5) ;is rtty mode set
+	BEQ	RTX2		;branch if yes
+;
+; Radiotelegraph output
+;
+	ASL	R0		;convert to morse
+	ADD	PC,R0
+	MOV	MORTAB-.(R0),R0	
+	BR	RTX12
+;
+; Radioteletype output (rtx)
+;
+RTX2:	ADD	PC,R0		;convert to baudot
+	MOVB	ASCBDT-.(R0),R0
+	MOV	R0,R1		;save shift control bits
+	BIC	#^C37,R0
+	CMPB	R0,PARAPR(R3)	;is char dle
+	BNE	1$		;branch if no
+	TSTB	R1		;yes. is this ltr shift
+	BPL	1$		;branch if no
+	BIS	#300,R1		;yes. force fig-dle shift
+1$:	CLC
+	ROLB	R1		;test shift status
+	BCS	2$		;branch if force fig shift
+	BMI	6$		;branch if force ltr shift
+	CMP	R0,#SPC		;is char spc
+	BNE	3$		;branch if no
+	BIT	#XDSBIT,PAROPT(R3) ;yes. is auto-downshift bit set
+	BEQ	8$		;branch if no
+	BIC	#FIGBIT,CWXSTS(R5) ;yes. force downshift-on-space
+	BR	8$
+;
+2$:	BPL	4$		;branch if fig shift
+	BIS	#40,R0		;control shift. send fig-sub-char sequence
+	MOVB	R0,CWXSRG+2(R5)
+	MOVB	PARAPR(R3),R0	;get c-rap escape char
+	SWAB	R0
+	BIS	#FIG+020040,R0
+3$:	BIC	#LTRBIT+FIGBIT,CWXSTS(R5) ;unshift
+	BR	8$
+;
+4$:	BIT	#FIGBIT,CWXSTS(R5) ;is fig shift on
+	BNE	5$		;branch if yes
+	SWAB	R0		;no. send fig-char sequence
+	BIS	#FIG+020040,R0
+5$:	BIS	#FIGBIT,CWXSTS(R5) ;mark as fig shift
+	BIC	#LTRBIT,CWXSTS(R5)
+	BR	8$
+;
+6$:	BIT	#LTRBIT,CWXSTS(R5) ;is ltr shift on
+	BNE	7$		;branch if yes
+	SWAB	R0		;no. send ltr-char sequence
+	BIS	#LTR+020040,R0
+7$:	BIS	#LTRBIT,CWXSTS(R5) ;mark as ltr shift
+	BIC	#FIGBIT,CWXSTS(R5)
+8$:	BIS	#40,R0		;add stop bits
+RTX12:	MOV	R0,CWXSRG(R5)
+	BIS	#RDYBIT,CWXSTS(R5)
+	RTS	PC
+	.PAGE
+	.SBTTL	DATA SEGMENT
+;
+	.PSECT	$KERD,RO,D
+;
+; Process headers
+;
+CWRPAT:	.PAT	CWREND,IORINI,PRI3,<0,0,ISMINI,ISMSIO,ISMINT>
+CWXPAT:	.PAT	CWXEND,IOXINI,PRI4,<0,OTPASY,OTPASY,OTPSIO,0>
+;
+	.END
+                                                                                                                                                          

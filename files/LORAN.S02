@@ -1,0 +1,3563 @@
+%!PS-Adobe-23.0 EPSF-1.2
+%%Creator: SCHEMA
+%%BoundingBox: 0 0 1343.0 1023.0
+/scl 511804.0 0.072 mul 65536.0 div def
+scl scl scale
+
+% Landscape Orientation
+/xoff 256.0 65536.0 mul 511804.0 div def
+/yoff 1343.0 -256.0 65536.0 mul 511804.0 div sub def
+xoff yoff translate
+-90 rotate
+
+0 setgray
+
+/a { 1 setlinewidth newpath arcn stroke } def
+/fa { 3 setlinewidth newpath arcn stroke } def
+/c { 1 setlinewidth newpath 0 360 arc stroke } def
+/fc { 1 setlinewidth newpath 0 360 arc fill } def
+/l { 1 setlinewidth newpath moveto lineto stroke } def
+/t { 3 setlinewidth newpath moveto lineto stroke } def
+/ds { [4 4] 0 setdash 1 setlinewidth
+	newpath moveto lineto stroke [] 0 setdash } def
+/dt { [2 2] 0 setdash 1 setlinewidth
+	newpath moveto lineto stroke [] 0 setdash } def
+
+8 7 8 1015 t
+1328 7 912 7 t
+1336 1015 8 1015 t
+1336 7 1336 1015 t
+912 7 8 7 t
+1336 7 1328 7 t
+
+/reencsmalldict 12 dict def	%% Schema font definitions
+/ReEncodeSmall
+	{ reencsmalldict begin
+		/newcodesandnames exch def
+		/newfontname exch def
+		/basefontname exch def
+		/basefontdict basefontname findfont def
+		/newfont basefontdict maxlength dict def
+		basefontdict
+			{ exch dup /FID ne
+				{ dup /Encoding eq
+					{ exch dup length array copy newfont 3 1 roll put }
+					{ exch newfont 3 1 roll put }
+					ifelse
+				}
+				{ pop pop }
+				ifelse
+			} forall
+		newfont /FontName newfontname put
+		newcodesandnames aload pop
+		newcodesandnames length 2 idiv
+			{ newfont /Encoding get 3 1 roll put }
+			repeat
+		newfontname newfont definefont pop
+		end
+		} def
+/schfontvec [ 8#200 /Ccedilla 8#201 /udieresis 8#202 /eacute 8#203 /acircumflex
+8#204 /adieresis 8#205 /agrave 8#207 /ccedilla 8#210 /ecircumflex
+8#211 /edieresis 8#212 /egrave 8#213 /idieresis 8#214 /icircumflex
+8#215 /igrave 8#216 /Adieresis 8#220 /Eacute 8#223 /ocircumflex
+8#224 /odieresis 8#225 /ograve 8#226 /ucircumflex 8#227 /ugrave
+8#230 /ydieresis 8#231 /Odieresis 8#232 /Udieresis 8#240 /aacute 8#241 /iacute
+8#242 /oacute 8#243 /uacute 8#244 /ntilde 8#245 /Ntilde ] def
+/schsymbvec [ 8#341 /beta 8#346 /mu 8#352 /Omega ] def
+/Courier-Bold /Schfont schfontvec ReEncodeSmall
+/Symbol /Schsymb schsymbvec ReEncodeSmall
+
+
+/htdict 4 dict def	%% HTEXT - variable spacing horizontal text routine
+/ht
+	{	htdict begin
+		/textstring exch def
+		/xskip exch def
+		0 text_height neg rmoveto
+		/Schfont findfont text_height scalefont setfont
+		textstring
+			{
+			/charcode exch def
+			/thechar ( ) dup 0 charcode put def
+			gsave
+				charcode 8#245 gt
+				{ /Schsymb findfont text_height scalefont setfont
+				thechar show
+				/Schfont findfont text_height scalefont setfont }
+				{ thechar show }
+				ifelse
+			grestore
+			currentpoint moveto
+			xskip 0 rmoveto
+			} forall
+		end
+	} def
+
+/text_height 12 def
+/text_width 6 def
+1304 27 moveto 9 (5) ht
+/text_height 12 def
+/text_width 6 def
+1272 27 moveto 9 (OF) ht
+/text_height 12 def
+/text_width 6 def
+1192 27 moveto 9 (SHEET) ht
+1176 31 1176 7 l
+1336 55 992 55 l
+1336 31 992 31 l
+/text_height 20 def
+/text_width 9 def
+1032 87 moveto 13 (Loran Timing Receiver) ht
+/text_height 12 def
+/text_width 6 def
+1040 27 moveto 9 (18 Sept 1991) ht
+1176 55 1176 31 l
+/text_height 12 def
+/text_width 6 def
+1032 51 moveto 9 (100-0001-001) ht
+/text_height 12 def
+/text_width 6 def
+1216 51 moveto 9 (REV) ht
+/text_height 12 def
+/text_width 6 def
+1264 51 moveto 9 (1E) ht
+256 839 256 847 l
+/b { newpath 0.5 0 360 arc fill } def
+248 838 b
+249 838 b
+250 838 b
+251 838 b
+252 838 b
+253 838 b
+254 838 b
+249 837 b
+250 836 b
+251 835 b
+252 834 b
+253 833 b
+254 832 b
+256 839 b
+255 838 b
+256 838 b
+257 838 b
+258 838 b
+259 838 b
+260 838 b
+261 838 b
+261 835 b
+260 834 b
+259 833 b
+258 832 b
+255 831 b
+257 831 b
+256 830 b
+262 838 b
+263 838 b
+264 838 b
+263 837 b
+262 836 b
+440 855 440 863 l
+432 854 b
+433 854 b
+434 854 b
+435 854 b
+436 854 b
+437 854 b
+438 854 b
+433 853 b
+434 852 b
+435 851 b
+436 850 b
+437 849 b
+438 848 b
+440 855 b
+439 854 b
+440 854 b
+441 854 b
+442 854 b
+443 854 b
+444 854 b
+445 854 b
+445 851 b
+444 850 b
+443 849 b
+442 848 b
+439 847 b
+441 847 b
+440 846 b
+446 854 b
+447 854 b
+448 854 b
+447 853 b
+446 852 b
+/text_height 12 def
+/text_width 6 def
+469 903 moveto 9 (I+) ht
+/text_height 12 def
+/text_width 6 def
+469 887 moveto 9 (I-) ht
+/text_height 12 def
+/text_width 6 def
+469 871 moveto 9 (AGC) ht
+464 863 440 863 l
+464 879 440 879 l
+464 895 440 895 l
+552 879 528 879 l
+552 895 528 895 l
+
+/vtdict 4 dict def	%% VTEXT - variable spacing verticle text routine
+/vt
+	{	vtdict begin
+		/thestring exch def
+		/yskip exch def
+		0 text_height neg rmoveto
+		/Schfont findfont text_height scalefont setfont
+		thestring
+			{
+			/charcode exch def
+			/thechar ( ) dup 0 charcode put def
+			gsave
+				charcode 8#245 gt
+				{ /Schsymb findfont text_height scalefont setfont
+				thechar show
+				/Schfont findfont text_height scalefont setfont }
+				{ thechar show }
+				ifelse
+			grestore
+			currentpoint moveto
+			0 yskip neg rmoveto
+			} forall
+		end
+	} def
+
+/text_height 12 def
+/text_width 6 def
+454 909 moveto 16 (312) vt
+528 911 464 911 l
+528 847 464 847 l
+464 847 464 911 l
+528 847 528 911 l
+/text_height 12 def
+/text_width 6 def
+465 928 moveto 9 (MC1590G) ht
+/text_height 12 def
+/text_width 6 def
+466 942 moveto 9 (IC201) ht
+552 863 528 863 l
+/text_height 12 def
+/text_width 6 def
+499 871 moveto 9 (VCC) ht
+/text_height 12 def
+/text_width 6 def
+508 904 moveto 9 (O+) ht
+/text_height 12 def
+/text_width 6 def
+508 887 moveto 9 (O-) ht
+/text_height 12 def
+/text_width 6 def
+532 910 moveto 16 (567) vt
+600 863 600 847 l
+600 911 600 895 l
+552 807 552 815 l
+544 806 b
+545 806 b
+546 806 b
+547 806 b
+548 806 b
+549 806 b
+550 806 b
+545 805 b
+546 804 b
+547 803 b
+548 802 b
+549 801 b
+550 800 b
+552 807 b
+551 806 b
+552 806 b
+553 806 b
+554 806 b
+555 806 b
+556 806 b
+557 806 b
+557 803 b
+556 802 b
+555 801 b
+554 800 b
+551 799 b
+553 799 b
+552 798 b
+558 806 b
+559 806 b
+560 806 b
+559 805 b
+558 804 b
+608 807 608 815 l
+600 806 b
+601 806 b
+602 806 b
+603 806 b
+604 806 b
+605 806 b
+606 806 b
+601 805 b
+602 804 b
+603 803 b
+604 802 b
+605 801 b
+606 800 b
+608 807 b
+607 806 b
+608 806 b
+609 806 b
+610 806 b
+611 806 b
+612 806 b
+613 806 b
+613 803 b
+612 802 b
+611 801 b
+610 800 b
+607 799 b
+609 799 b
+608 798 b
+614 806 b
+615 806 b
+616 806 b
+615 805 b
+614 804 b
+664 911 600 911 l
+600 911 2 fc
+552 847 2 fc
+600 847 552 847 l
+600 847 2 fc
+664 847 608 847 l
+608 847 600 847 l
+608 847 2 fc
+1120 863 1120 847 l
+1120 911 1120 895 l
+1072 807 1072 815 l
+1064 806 b
+1065 806 b
+1066 806 b
+1067 806 b
+1068 806 b
+1069 806 b
+1070 806 b
+1065 805 b
+1066 804 b
+1067 803 b
+1068 802 b
+1069 801 b
+1070 800 b
+1072 807 b
+1071 806 b
+1072 806 b
+1073 806 b
+1074 806 b
+1075 806 b
+1076 806 b
+1077 806 b
+1077 803 b
+1076 802 b
+1075 801 b
+1074 800 b
+1071 799 b
+1073 799 b
+1072 798 b
+1078 806 b
+1079 806 b
+1080 806 b
+1079 805 b
+1078 804 b
+1128 807 1128 815 l
+1120 806 b
+1121 806 b
+1122 806 b
+1123 806 b
+1124 806 b
+1125 806 b
+1126 806 b
+1121 805 b
+1122 804 b
+1123 803 b
+1124 802 b
+1125 801 b
+1126 800 b
+1128 807 b
+1127 806 b
+1128 806 b
+1129 806 b
+1130 806 b
+1131 806 b
+1132 806 b
+1133 806 b
+1133 803 b
+1132 802 b
+1131 801 b
+1130 800 b
+1127 799 b
+1129 799 b
+1128 798 b
+1134 806 b
+1135 806 b
+1136 806 b
+1135 805 b
+1134 804 b
+1184 911 1120 911 l
+1120 911 2 fc
+1072 847 2 fc
+1120 847 1072 847 l
+1120 847 2 fc
+1184 847 1128 847 l
+1128 847 1120 847 l
+1128 847 2 fc
+376 407 376 415 l
+368 406 b
+369 406 b
+370 406 b
+371 406 b
+372 406 b
+373 406 b
+374 406 b
+369 405 b
+370 404 b
+371 403 b
+372 402 b
+373 401 b
+374 400 b
+376 407 b
+375 406 b
+376 406 b
+377 406 b
+378 406 b
+379 406 b
+380 406 b
+381 406 b
+381 403 b
+380 402 b
+379 401 b
+378 400 b
+375 399 b
+377 399 b
+376 398 b
+382 406 b
+383 406 b
+384 406 b
+383 405 b
+382 404 b
+736 879 720 879 l
+736 895 720 895 l
+736 927 720 927 l
+864 991 864 927 l
+880 975 720 975 l
+880 879 864 879 l
+880 895 864 895 l
+880 911 864 911 l
+720 975 720 927 l
+720 927 2 fc
+720 927 720 895 l
+720 895 2 fc
+720 879 720 847 l
+720 895 720 879 l
+720 879 2 fc
+672 991 672 911 l
+864 991 672 991 l
+736 911 672 911 l
+672 911 664 911 l
+672 911 2 fc
+664 911 2 fc
+664 847 2 fc
+720 847 672 847 l
+672 847 664 847 l
+672 847 2 fc
+/text_height 12 def
+/text_width 6 def
+989 903 moveto 9 (I+) ht
+/text_height 12 def
+/text_width 6 def
+989 887 moveto 9 (I-) ht
+/text_height 12 def
+/text_width 6 def
+989 871 moveto 9 (AGC) ht
+984 863 960 863 l
+984 879 960 879 l
+984 895 960 895 l
+1072 879 1048 879 l
+1072 895 1048 895 l
+/text_height 12 def
+/text_width 6 def
+974 909 moveto 16 (312) vt
+1048 911 984 911 l
+1048 847 984 847 l
+984 847 984 911 l
+1048 847 1048 911 l
+/text_height 12 def
+/text_width 6 def
+985 928 moveto 9 (MC1590G) ht
+/text_height 12 def
+/text_width 6 def
+986 942 moveto 9 (IC203) ht
+1072 863 1048 863 l
+/text_height 12 def
+/text_width 6 def
+1019 871 moveto 9 (VCC) ht
+/text_height 12 def
+/text_width 6 def
+1028 904 moveto 9 (O+) ht
+/text_height 12 def
+/text_width 6 def
+1028 887 moveto 9 (O-) ht
+/text_height 12 def
+/text_width 6 def
+1052 910 moveto 16 (567) vt
+1184 847 2 fc
+1248 911 1184 911 l
+568 511 552 511 l
+568 495 552 495 l
+568 479 536 479 l
+536 479 536 463 l
+568 463 536 463 l
+712 495 696 495 l
+712 479 696 479 l
+728 463 696 463 l
+712 399 552 399 l
+600 399 600 383 l
+632 399 632 367 l
+552 511 2 fc
+552 495 552 399 l
+552 511 552 495 l
+552 495 2 fc
+712 479 712 399 l
+712 495 712 479 l
+712 479 2 fc
+536 479 2 fc
+536 463 2 fc
+/text_height 12 def
+/text_width 6 def
+128 382 moveto 9 (P1) ht
+/text_height 12 def
+/text_width 6 def
+128 398 moveto 9 (P0) ht
+600 383 128 383 l
+632 367 128 367 l
+/text_height 12 def
+/text_width 6 def
+1185 254 moveto 9 (S1) ht
+1200 223 1152 223 l
+1232 215 1208 215 l
+/text_height 12 def
+/text_width 6 def
+1248 27 moveto 9 (2) ht
+880 975 880 911 l
+880 911 2 fc
+880 895 880 879 l
+880 911 880 895 l
+880 895 2 fc
+992 7 992 87 t
+1336 87 992 87 t
+992 87 992 87 t
+992 87 992 87 t
+488 495 472 495 l
+488 463 472 463 l
+448 495 432 495 l
+448 463 432 463 l
+/text_height 12 def
+/text_width 6 def
+440 515 moveto 9 (100KHZ) ht
+/text_height 12 def
+/text_width 6 def
+440 527 moveto 9 (T201) ht
+461 467 461 491 l
+448 495 b
+449 495 b
+450 495 b
+448 487 b
+449 487 b
+450 487 b
+451 494 b
+452 493 b
+453 492 b
+453 491 b
+453 490 b
+452 489 b
+451 488 b
+448 487 b
+449 487 b
+450 487 b
+448 479 b
+449 479 b
+450 479 b
+451 486 b
+452 485 b
+453 484 b
+453 483 b
+453 482 b
+452 481 b
+451 480 b
+448 479 b
+449 479 b
+450 479 b
+448 471 b
+449 471 b
+450 471 b
+451 478 b
+452 477 b
+453 476 b
+453 475 b
+453 474 b
+452 473 b
+451 472 b
+448 471 b
+449 471 b
+450 471 b
+448 463 b
+449 463 b
+450 463 b
+451 470 b
+452 469 b
+453 468 b
+453 467 b
+453 466 b
+452 465 b
+451 464 b
+470 471 b
+471 471 b
+472 471 b
+469 470 b
+468 469 b
+467 468 b
+467 467 b
+467 466 b
+468 465 b
+469 464 b
+470 463 b
+471 463 b
+472 463 b
+470 479 b
+471 479 b
+472 479 b
+469 478 b
+468 477 b
+467 476 b
+467 475 b
+467 474 b
+468 473 b
+469 472 b
+470 471 b
+471 471 b
+472 471 b
+470 487 b
+471 487 b
+472 487 b
+469 486 b
+468 485 b
+467 484 b
+467 483 b
+467 482 b
+468 481 b
+469 480 b
+470 479 b
+471 479 b
+472 479 b
+470 495 b
+471 495 b
+472 495 b
+469 494 b
+468 493 b
+467 492 b
+467 491 b
+467 490 b
+468 489 b
+469 488 b
+470 487 b
+471 487 b
+472 487 b
+458 467 458 491 l
+488 479 472 479 l
+552 863 552 847 l
+552 879 552 863 l
+552 863 2 fc
+1072 863 1072 847 l
+1072 879 1072 863 l
+1072 863 2 fc
+320 479 320 463 l
+320 463 2 fc
+/text_height 12 def
+/text_width 6 def
+1167 238 moveto 9 (5MHZ) ht
+144 839 144 847 l
+136 838 b
+137 838 b
+138 838 b
+139 838 b
+140 838 b
+141 838 b
+142 838 b
+137 837 b
+138 836 b
+139 835 b
+140 834 b
+141 833 b
+142 832 b
+144 839 b
+143 838 b
+144 838 b
+145 838 b
+146 838 b
+147 838 b
+148 838 b
+149 838 b
+149 835 b
+148 834 b
+147 833 b
+146 832 b
+143 831 b
+145 831 b
+144 830 b
+150 838 b
+151 838 b
+152 838 b
+151 837 b
+150 836 b
+400 255 2 fc
+/text_height 12 def
+/text_width 6 def
+1240 203 moveto 9 (5MHZ) ht
+1224 151 1224 159 l
+1217 149 b
+1216 148 b
+1215 147 b
+1214 146 b
+1213 145 b
+1212 144 b
+1211 143 b
+1218 150 b
+1224 149 b
+1223 148 b
+1222 147 b
+1221 146 b
+1220 145 b
+1219 144 b
+1218 143 b
+1225 150 b
+1231 149 b
+1230 148 b
+1229 147 b
+1228 146 b
+1227 145 b
+1226 144 b
+1225 143 b
+1232 150 b
+1232 150 1218 150 l
+1200 191 1152 191 l
+1152 191 568 191 l
+1152 191 2 fc
+256 255 184 255 l
+184 255 128 255 l
+184 255 2 fc
+256 255 2 fc
+400 215 400 223 l
+392 214 b
+393 214 b
+394 214 b
+395 214 b
+396 214 b
+397 214 b
+398 214 b
+393 213 b
+394 212 b
+395 211 b
+396 210 b
+397 209 b
+398 208 b
+400 215 b
+399 214 b
+400 214 b
+401 214 b
+402 214 b
+403 214 b
+404 214 b
+405 214 b
+405 211 b
+404 210 b
+403 209 b
+402 208 b
+399 207 b
+401 207 b
+400 206 b
+406 214 b
+407 214 b
+408 214 b
+407 213 b
+406 212 b
+/text_height 12 def
+/text_width 6 def
+128 318 moveto 9 (VCC) ht
+/text_height 12 def
+/text_width 6 def
+675 807 moveto 9 (VCC) ht
+/text_height 12 def
+/text_width 6 def
+1187 807 moveto 9 (VCC) ht
+/text_height 12 def
+/text_width 6 def
+435 407 moveto 9 (VCC) ht
+/text_height 12 def
+/text_width 6 def
+128 206 moveto 9 (VCO) ht
+432 191 128 191 l
+144 239 128 239 l
+96 231 96 223 l
+120 231 120 223 l
+328 207 328 215 l
+320 206 b
+321 206 b
+322 206 b
+323 206 b
+324 206 b
+325 206 b
+326 206 b
+321 205 b
+322 204 b
+323 203 b
+324 202 b
+325 201 b
+326 200 b
+328 207 b
+327 206 b
+328 206 b
+329 206 b
+330 206 b
+331 206 b
+332 206 b
+333 206 b
+333 203 b
+332 202 b
+331 201 b
+330 200 b
+327 199 b
+329 199 b
+328 198 b
+334 206 b
+335 206 b
+336 206 b
+335 205 b
+334 204 b
+/text_height 12 def
+/text_width 6 def
+312 235 moveto 9 (*) ht
+/text_height 12 def
+/text_width 6 def
+128 91 moveto 9 (* note: connect digital and analog) ht
+376 271 280 271 l
+376 239 376 271 l
+280 239 280 271 l
+376 239 280 239 l
+280 255 256 255 l
+328 215 328 239 l
+/text_height 12 def
+/text_width 6 def
+316 253 moveto 9 (GND) ht
+/text_height 12 def
+/text_width 6 def
+283 263 moveto 9 (IN) ht
+/text_height 12 def
+/text_width 6 def
+349 263 moveto 9 (OUT) ht
+/text_height 12 def
+/text_width 6 def
+266 270 moveto 9 (1) ht
+/text_height 12 def
+/text_width 6 def
+304 288 moveto 9 (LM7808) ht
+/text_height 12 def
+/text_width 6 def
+304 301 moveto 9 (IC204) ht
+/text_height 12 def
+/text_width 6 def
+331 235 moveto 9 (2) ht
+400 255 376 255 l
+/text_height 12 def
+/text_width 6 def
+384 270 moveto 9 (3) ht
+320 407 320 415 l
+312 406 b
+313 406 b
+314 406 b
+315 406 b
+316 406 b
+317 406 b
+318 406 b
+313 405 b
+314 404 b
+315 403 b
+316 402 b
+317 401 b
+318 400 b
+320 407 b
+319 406 b
+320 406 b
+321 406 b
+322 406 b
+323 406 b
+324 406 b
+325 406 b
+325 403 b
+324 402 b
+323 401 b
+322 400 b
+319 399 b
+321 399 b
+320 398 b
+326 406 b
+327 406 b
+328 406 b
+327 405 b
+326 404 b
+/text_height 20 def
+/text_width 9 def
+896 159 moveto 13 (Receiver Module) ht
+432 463 432 447 l
+432 447 2 fc
+904 895 896 895 l
+960 895 936 895 l
+368 839 368 847 l
+360 838 b
+361 838 b
+362 838 b
+363 838 b
+364 838 b
+365 838 b
+366 838 b
+361 837 b
+362 836 b
+363 835 b
+364 834 b
+365 833 b
+366 832 b
+368 839 b
+367 838 b
+368 838 b
+369 838 b
+370 838 b
+371 838 b
+372 838 b
+373 838 b
+373 835 b
+372 834 b
+371 833 b
+370 832 b
+367 831 b
+369 831 b
+368 830 b
+374 838 b
+375 838 b
+376 838 b
+375 837 b
+374 836 b
+368 911 368 895 l
+368 911 2 fc
+200 879 144 879 l
+312 879 256 879 l
+312 911 312 879 l
+144 879 2 fc
+312 879 2 fc
+368 911 312 911 l
+312 911 2 fc
+256 911 232 911 l
+1184 895 1184 911 l
+1184 847 1184 863 l
+1184 895 b
+1185 895 b
+1186 895 b
+1184 887 b
+1185 887 b
+1186 887 b
+1187 894 b
+1188 893 b
+1189 892 b
+1189 891 b
+1189 890 b
+1188 889 b
+1187 888 b
+1184 887 b
+1185 887 b
+1186 887 b
+1184 879 b
+1185 879 b
+1186 879 b
+1187 886 b
+1188 885 b
+1189 884 b
+1189 883 b
+1189 882 b
+1188 881 b
+1187 880 b
+1184 879 b
+1185 879 b
+1186 879 b
+1184 871 b
+1185 871 b
+1186 871 b
+1187 878 b
+1188 877 b
+1189 876 b
+1189 875 b
+1189 874 b
+1188 873 b
+1187 872 b
+1184 871 b
+1185 871 b
+1186 871 b
+1184 863 b
+1185 863 b
+1186 863 b
+1187 870 b
+1188 869 b
+1189 868 b
+1189 867 b
+1189 866 b
+1188 865 b
+1187 864 b
+/text_height 12 def
+/text_width 6 def
+1195 880 moveto 9 (450U) ht
+/text_height 12 def
+/text_width 6 def
+1196 895 moveto 9 (L205) ht
+1184 911 2 fc
+/text_height 12 def
+/text_width 6 def
+360 531 moveto 9 (100 kHz) ht
+336 511 336 503 l
+392 511 392 495 l
+392 463 392 447 l
+336 455 336 447 l
+336 511 2 fc
+432 511 392 511 l
+392 511 336 511 l
+392 511 2 fc
+336 447 2 fc
+432 447 392 447 l
+392 447 2 fc
+392 447 376 447 l
+376 447 336 447 l
+376 447 2 fc
+96 207 96 191 l
+120 207 120 191 l
+152 230 136 230 l
+144 230 144 239 l
+149 227 139 227 l
+146 224 142 224 l
+144 221 b
+184 207 184 215 l
+176 206 b
+177 206 b
+178 206 b
+179 206 b
+180 206 b
+181 206 b
+182 206 b
+177 205 b
+178 204 b
+179 203 b
+180 202 b
+181 201 b
+182 200 b
+184 207 b
+183 206 b
+184 206 b
+185 206 b
+186 206 b
+187 206 b
+188 206 b
+189 206 b
+189 203 b
+188 202 b
+187 201 b
+186 200 b
+183 199 b
+185 199 b
+184 198 b
+190 206 b
+191 206 b
+192 206 b
+191 205 b
+190 204 b
+184 215 128 215 l
+184 223 184 215 l
+184 215 2 fc
+1152 223 1152 191 l
+912 335 128 335 l
+880 351 128 351 l
+992 399 976 399 l
+768 767 128 767 l
+/text_height 12 def
+/text_width 6 def
+128 782 moveto 9 (CODE) ht
+120 775 96 775 l
+768 815 768 767 l
+912 351 912 335 l
+984 447 976 447 l
+984 471 984 447 l
+1048 471 1040 471 l
+1048 431 1040 431 l
+992 399 992 207 l
+728 559 728 511 l
+728 511 696 511 l
+728 511 728 463 l
+/text_height 12 def
+/text_width 6 def
+1185 270 moveto 9 (S0) ht
+1064 583 1064 255 l
+1200 255 1064 255 l
+1048 471 1048 431 l
+1048 431 2 fc
+976 511 976 463 l
+1048 511 1040 511 l
+1048 511 1048 471 l
+1048 471 2 fc
+992 511 976 511 l
+992 471 984 471 l
+992 431 976 431 l
+872 399 848 399 l
+872 415 848 415 l
+872 431 848 431 l
+872 447 848 447 l
+/text_height 12 def
+/text_width 6 def
+877 471 moveto 16 (1234D) vt
+/text_height 12 def
+/text_width 6 def
+860 477 moveto 16 (45678) vt
+880 351 880 375 l
+944 351 944 375 l
+872 375 872 479 l
+/text_height 12 def
+/text_width 6 def
+967 477 moveto 16 (3210) vt
+872 463 848 463 l
+976 415 952 415 l
+976 431 952 431 l
+976 447 952 447 l
+/text_height 12 def
+/text_width 6 def
+959 477 moveto 16 (11119) vt
+912 351 912 375 l
+/text_height 12 def
+/text_width 6 def
+880 391 moveto 9 (A0 A1 EN) ht
+/text_height 12 def
+/text_width 6 def
+886 471 moveto 16 (AAAAA) vt
+952 375 952 479 l
+952 375 872 375 l
+952 479 872 479 l
+976 399 952 399 l
+976 463 952 463 l
+/text_height 12 def
+/text_width 6 def
+942 471 moveto 16 (BBBBB) vt
+/text_height 12 def
+/text_width 6 def
+933 471 moveto 16 (1234D) vt
+/text_height 12 def
+/text_width 6 def
+878 495 moveto 9 (ADG509A) ht
+/text_height 12 def
+/text_width 6 def
+880 509 moveto 9 (IC208) ht
+/text_height 12 def
+/text_width 6 def
+872 376 moveto 9 (1      2) ht
+/text_height 12 def
+/text_width 6 def
+894 376 moveto 9 (16) ht
+848 511 832 511 l
+848 511 848 463 l
+840 471 832 471 l
+840 471 840 447 l
+848 447 840 447 l
+848 431 832 431 l
+784 511 776 511 l
+784 471 776 471 l
+760 551 760 399 l
+848 399 760 399 l
+776 511 776 471 l
+776 471 2 fc
+/text_height 12 def
+/text_width 6 def
+128 350 moveto 9 (G1) ht
+784 431 776 431 l
+1008 415 976 415 l
+1008 415 1008 239 l
+848 415 848 255 l
+1064 255 848 255 l
+848 239 824 239 l
+784 215 784 263 l
+/text_height 12 def
+/text_width 6 def
+787 255 moveto 9 (+) ht
+/text_height 12 def
+/text_width 6 def
+787 239 moveto 9 (-) ht
+/text_height 12 def
+/text_width 6 def
+784 280 moveto 9 (LM324) ht
+/text_height 12 def
+/text_width 6 def
+784 293 moveto 9 (IC207B) ht
+784 247 760 247 l
+784 231 760 231 l
+/text_height 12 def
+/text_width 6 def
+770 262 moveto 9 (5) ht
+/text_height 12 def
+/text_width 6 def
+770 246 moveto 9 (6) ht
+/text_height 12 def
+/text_width 6 def
+832 254 moveto 9 (7) ht
+824 239 784 263 l
+824 239 784 215 l
+848 207 760 207 l
+760 231 760 207 l
+760 575 760 551 l
+848 551 760 551 l
+1064 583 848 583 l
+760 247 744 247 l
+992 207 848 207 l
+848 207 2 fc
+848 239 2 fc
+1200 239 1008 239 l
+1008 239 848 239 l
+1008 239 2 fc
+1064 255 2 fc
+760 551 2 fc
+848 583 2 fc
+672 287 592 287 l
+592 247 592 255 l
+584 246 b
+585 246 b
+586 246 b
+587 246 b
+588 246 b
+589 246 b
+590 246 b
+585 245 b
+586 244 b
+587 243 b
+588 242 b
+589 241 b
+590 240 b
+592 247 b
+591 246 b
+592 246 b
+593 246 b
+594 246 b
+595 246 b
+596 246 b
+597 246 b
+597 243 b
+596 242 b
+595 241 b
+594 240 b
+591 239 b
+593 239 b
+592 238 b
+598 246 b
+599 246 b
+600 246 b
+599 245 b
+598 244 b
+672 247 672 255 l
+664 246 b
+665 246 b
+666 246 b
+667 246 b
+668 246 b
+669 246 b
+670 246 b
+665 245 b
+666 244 b
+667 243 b
+668 242 b
+669 241 b
+670 240 b
+672 247 b
+671 246 b
+672 246 b
+673 246 b
+674 246 b
+675 246 b
+676 246 b
+677 246 b
+677 243 b
+676 242 b
+675 241 b
+674 240 b
+671 239 b
+673 239 b
+672 238 b
+678 246 b
+679 246 b
+680 246 b
+679 245 b
+678 244 b
+744 287 672 287 l
+1048 431 1048 303 l
+944 351 944 319 l
+592 287 2 fc
+744 287 744 247 l
+744 287 2 fc
+672 287 2 fc
+/text_height 12 def
+/text_width 6 def
+128 366 moveto 9 (G0) ht
+120 183 120 199 l
+96 183 96 199 l
+/text_height 12 def
+/text_width 6 def
+101 199 moveto 9 (16) ht
+128 191 120 191 l
+/text_height 12 def
+/text_width 6 def
+59 199 moveto 9 (J202) ht
+/text_height 12 def
+/text_width 6 def
+157 878 moveto 9 (C201) ht
+/text_height 12 def
+/text_width 6 def
+157 865 moveto 9 (.011U) ht
+151 865 137 865 l
+144 843 18 111 69 a
+144 865 144 879 l
+144 847 144 861 l
+/text_height 12 def
+/text_width 6 def
+269 878 moveto 9 (C203) ht
+/text_height 12 def
+/text_width 6 def
+269 865 moveto 9 (.011U) ht
+263 865 249 865 l
+256 843 18 111 69 a
+256 865 256 879 l
+256 847 256 861 l
+184 911 168 911 l
+232 911 216 911 l
+/text_height 12 def
+/text_width 6 def
+184 947 moveto 9 (L202) ht
+187 916 b
+188 916 b
+189 916 b
+186 915 b
+190 915 b
+185 914 b
+184 913 b
+184 912 b
+184 911 b
+191 914 b
+192 913 b
+192 912 b
+192 911 b
+195 916 b
+196 916 b
+197 916 b
+194 915 b
+198 915 b
+193 914 b
+192 913 b
+192 912 b
+192 911 b
+199 914 b
+200 913 b
+200 912 b
+200 911 b
+203 916 b
+204 916 b
+205 916 b
+202 915 b
+206 915 b
+201 914 b
+200 913 b
+200 912 b
+200 911 b
+207 914 b
+208 913 b
+208 912 b
+208 911 b
+211 916 b
+212 916 b
+213 916 b
+210 915 b
+214 915 b
+209 914 b
+208 913 b
+208 912 b
+208 911 b
+215 914 b
+216 913 b
+216 912 b
+216 911 b
+/text_height 12 def
+/text_width 6 def
+183 934 moveto 9 (5.4M) ht
+312 911 288 911 l
+270 904 270 918 l
+293 911 18 201 159 a
+270 911 256 911 l
+288 911 275 911 l
+/text_height 12 def
+/text_width 6 def
+259 934 moveto 9 (C202) ht
+/text_height 12 def
+/text_width 6 def
+253 904 moveto 9 (470P) ht
+664 895 664 911 l
+664 847 664 863 l
+664 895 b
+665 895 b
+666 895 b
+664 887 b
+665 887 b
+666 887 b
+667 894 b
+668 893 b
+669 892 b
+669 891 b
+669 890 b
+668 889 b
+667 888 b
+664 887 b
+665 887 b
+666 887 b
+664 879 b
+665 879 b
+666 879 b
+667 886 b
+668 885 b
+669 884 b
+669 883 b
+669 882 b
+668 881 b
+667 880 b
+664 879 b
+665 879 b
+666 879 b
+664 871 b
+665 871 b
+666 871 b
+667 878 b
+668 877 b
+669 876 b
+669 875 b
+669 874 b
+668 873 b
+667 872 b
+664 871 b
+665 871 b
+666 871 b
+664 863 b
+665 863 b
+666 863 b
+667 870 b
+668 869 b
+669 868 b
+669 867 b
+669 866 b
+668 865 b
+667 864 b
+/text_height 12 def
+/text_width 6 def
+675 880 moveto 9 (630U) ht
+/text_height 12 def
+/text_width 6 def
+676 895 moveto 9 (L204) ht
+/text_height 12 def
+/text_width 6 def
+488 91 moveto 9 (T1: 100-kHz transformer 3 windings each 500U ) ht
+/text_height 12 def
+/text_width 6 def
+1120 411 moveto 9 (4: short caps) ht
+/text_height 12 def
+/text_width 6 def
+1120 459 moveto 9 (1: 1.000M) ht
+/text_height 12 def
+/text_width 6 def
+1120 475 moveto 9 (IC208 time constants) ht
+/text_height 12 def
+/text_width 6 def
+1120 427 moveto 9 (3: 0.036M) ht
+/text_height 12 def
+/text_width 6 def
+1120 443 moveto 9 (2: 0.264M) ht
+/text_height 12 def
+/text_width 6 def
+176 971 moveto 9 (bandpass filter 85-115 kHz) ht
+/text_height 12 def
+/text_width 6 def
+608 931 moveto 9 (85 kHz) ht
+/text_height 12 def
+/text_width 6 def
+1128 931 moveto 9 (115 kHz) ht
+/text_height 12 def
+/text_width 6 def
+200 987 moveto 9 (Butterworth 500-ohm) ht
+/text_height 12 def
+/text_width 6 def
+472 979 moveto 9 (rf amp) ht
+/text_height 12 def
+/text_width 6 def
+872 531 moveto 9 (gain adj) ht
+/text_height 12 def
+/text_width 6 def
+992 979 moveto 9 (rf amp) ht
+424 279 400 279 l
+400 303 128 303 l
+400 279 400 255 l
+400 303 400 279 l
+400 279 2 fc
+944 319 128 319 l
+664 399 664 367 l
+776 447 696 447 l
+776 447 776 431 l
+776 471 776 447 l
+776 447 2 fc
+536 463 488 463 l
+504 495 488 495 l
+504 511 504 495 l
+552 511 504 511 l
+320 511 320 495 l
+336 511 320 511 l
+320 463 320 447 l
+336 447 320 447 l
+320 447 2 fc
+440 631 440 599 l
+1248 783 1120 783 l
+1248 911 1248 783 l
+/text_height 12 def
+/text_width 6 def
+1240 763 moveto 9 (PCI) ht
+760 863 736 863 l
+760 879 736 879 l
+760 895 736 895 l
+760 911 736 911 l
+/text_height 12 def
+/text_width 6 def
+765 935 moveto 16 (1234D) vt
+/text_height 12 def
+/text_width 6 def
+748 941 moveto 16 (45678) vt
+768 815 768 839 l
+832 815 832 839 l
+760 839 760 943 l
+/text_height 12 def
+/text_width 6 def
+855 941 moveto 16 (3210) vt
+760 927 736 927 l
+864 879 840 879 l
+864 895 840 895 l
+864 911 840 911 l
+/text_height 12 def
+/text_width 6 def
+847 941 moveto 16 (11119) vt
+800 815 800 839 l
+/text_height 12 def
+/text_width 6 def
+768 855 moveto 9 (A0 A1 EN) ht
+/text_height 12 def
+/text_width 6 def
+774 935 moveto 16 (AAAAA) vt
+840 839 840 943 l
+840 839 760 839 l
+840 943 760 943 l
+864 863 840 863 l
+864 927 840 927 l
+/text_height 12 def
+/text_width 6 def
+830 935 moveto 16 (BBBBB) vt
+/text_height 12 def
+/text_width 6 def
+821 935 moveto 16 (1234D) vt
+/text_height 12 def
+/text_width 6 def
+766 959 moveto 9 (ADG509A) ht
+/text_height 12 def
+/text_width 6 def
+768 973 moveto 9 (IC202) ht
+/text_height 12 def
+/text_width 6 def
+760 840 moveto 9 (1      2) ht
+/text_height 12 def
+/text_width 6 def
+782 840 moveto 9 (16) ht
+736 863 736 783 l
+904 783 736 783 l
+960 879 944 879 l
+944 879 944 783 l
+944 783 936 783 l
+/text_height 12 def
+/text_width 6 def
+899 823 moveto 9 (VCC) ht
+848 815 832 815 l
+440 599 432 599 l
+440 639 440 631 l
+448 639 440 639 l
+512 599 512 607 l
+504 598 b
+505 598 b
+506 598 b
+507 598 b
+508 598 b
+509 598 b
+510 598 b
+505 597 b
+506 596 b
+507 595 b
+508 594 b
+509 593 b
+510 592 b
+512 599 b
+511 598 b
+512 598 b
+513 598 b
+514 598 b
+515 598 b
+516 598 b
+517 598 b
+517 595 b
+516 594 b
+515 593 b
+514 592 b
+511 591 b
+513 591 b
+512 590 b
+518 598 b
+519 598 b
+520 598 b
+519 597 b
+518 596 b
+712 631 704 631 l
+440 631 2 fc
+712 631 2 fc
+728 511 2 fc
+536 559 536 479 l
+728 559 536 559 l
+504 511 2 fc
+512 639 480 639 l
+512 639 2 fc
+616 639 568 639 l
+568 639 512 639 l
+568 639 2 fc
+/text_height 12 def
+/text_width 6 def
+496 675 moveto 9 (agc amp) ht
+/text_height 12 def
+/text_width 6 def
+128 766 moveto 9 (PCI) ht
+800 751 128 751 l
+800 815 800 751 l
+1200 751 800 751 l
+413 605 b
+413 604 b
+414 604 b
+419 604 b
+413 603 b
+414 603 b
+415 603 b
+419 603 b
+413 602 b
+414 602 b
+415 602 b
+416 602 b
+419 602 b
+413 601 b
+414 601 b
+415 601 b
+416 601 b
+417 601 b
+419 601 b
+413 600 b
+414 600 b
+415 600 b
+416 600 b
+417 600 b
+418 600 b
+419 600 b
+413 599 b
+414 599 b
+415 599 b
+416 599 b
+417 599 b
+418 599 b
+419 599 b
+413 598 b
+414 598 b
+415 598 b
+416 598 b
+417 598 b
+418 598 b
+419 598 b
+413 597 b
+414 597 b
+415 597 b
+416 597 b
+417 597 b
+419 597 b
+413 596 b
+414 596 b
+415 596 b
+416 596 b
+419 596 b
+413 595 b
+414 595 b
+415 595 b
+419 595 b
+413 594 b
+414 594 b
+419 594 b
+413 593 b
+420 599 b
+414 599 400 599 l
+432 599 421 599 l
+/text_height 12 def
+/text_width 6 def
+400 595 moveto 9 (1N4148) ht
+/text_height 12 def
+/text_width 6 def
+401 620 moveto 9 (D201) ht
+461 645 b
+461 644 b
+462 644 b
+467 644 b
+461 643 b
+462 643 b
+463 643 b
+467 643 b
+461 642 b
+462 642 b
+463 642 b
+464 642 b
+467 642 b
+461 641 b
+462 641 b
+463 641 b
+464 641 b
+465 641 b
+467 641 b
+461 640 b
+462 640 b
+463 640 b
+464 640 b
+465 640 b
+466 640 b
+467 640 b
+461 639 b
+462 639 b
+463 639 b
+464 639 b
+465 639 b
+466 639 b
+467 639 b
+461 638 b
+462 638 b
+463 638 b
+464 638 b
+465 638 b
+466 638 b
+467 638 b
+461 637 b
+462 637 b
+463 637 b
+464 637 b
+465 637 b
+467 637 b
+461 636 b
+462 636 b
+463 636 b
+464 636 b
+467 636 b
+461 635 b
+462 635 b
+463 635 b
+467 635 b
+461 634 b
+462 634 b
+467 634 b
+461 633 b
+468 639 b
+462 639 448 639 l
+480 639 469 639 l
+/text_height 12 def
+/text_width 6 def
+448 635 moveto 9 (1N4148) ht
+/text_height 12 def
+/text_width 6 def
+449 660 moveto 9 (D202) ht
+432 511 432 495 l
+848 583 824 583 l
+784 559 784 607 l
+784 591 760 591 l
+784 575 760 575 l
+/text_height 12 def
+/text_width 6 def
+787 599 moveto 9 (+) ht
+/text_height 12 def
+/text_width 6 def
+787 583 moveto 9 (-) ht
+/text_height 12 def
+/text_width 6 def
+770 606 moveto 9 (3) ht
+/text_height 12 def
+/text_width 6 def
+770 590 moveto 9 (2) ht
+/text_height 12 def
+/text_width 6 def
+832 598 moveto 9 (1) ht
+/text_height 12 def
+/text_width 6 def
+784 624 moveto 9 (LM324) ht
+/text_height 12 def
+/text_width 6 def
+784 637 moveto 9 (IC207A) ht
+824 583 784 607 l
+824 583 784 559 l
+760 591 744 591 l
+712 631 712 575 l
+456 575 336 575 l
+352 623 336 623 l
+288 575 280 575 l
+440 631 416 631 l
+376 607 376 655 l
+/text_height 12 def
+/text_width 6 def
+379 647 moveto 9 (+) ht
+/text_height 12 def
+/text_width 6 def
+379 631 moveto 9 (-) ht
+/text_height 12 def
+/text_width 6 def
+376 672 moveto 9 (LM324) ht
+/text_height 12 def
+/text_width 6 def
+376 685 moveto 9 (IC207C) ht
+376 623 352 623 l
+/text_height 12 def
+/text_width 6 def
+424 646 moveto 9 (8) ht
+/text_height 12 def
+/text_width 6 def
+353 654 moveto 9 (10) ht
+376 639 352 639 l
+/text_height 12 def
+/text_width 6 def
+362 638 moveto 9 (9) ht
+416 631 376 655 l
+416 631 376 607 l
+336 575 2 fc
+280 575 2 fc
+616 623 616 575 l
+712 575 616 575 l
+616 575 504 575 l
+616 575 2 fc
+400 599 336 599 l
+336 599 336 575 l
+336 623 336 599 l
+336 599 2 fc
+1224 191 8 c
+1224 191 1200 191 l
+1224 159 1224 183 l
+/text_height 12 def
+/text_width 6 def
+1209 217 moveto 9 (J203) ht
+1224 193 b
+1225 193 b
+1223 192 b
+1224 192 b
+1225 192 b
+1226 192 b
+1223 191 b
+1224 191 b
+1225 191 b
+1226 191 b
+1224 190 b
+1225 190 b
+1016 815 1016 823 l
+1008 814 b
+1009 814 b
+1010 814 b
+1011 814 b
+1012 814 b
+1013 814 b
+1014 814 b
+1009 813 b
+1010 812 b
+1011 811 b
+1012 810 b
+1013 809 b
+1014 808 b
+1016 815 b
+1015 814 b
+1016 814 b
+1017 814 b
+1018 814 b
+1019 814 b
+1020 814 b
+1021 814 b
+1021 811 b
+1020 810 b
+1019 809 b
+1018 808 b
+1015 807 b
+1017 807 b
+1016 806 b
+1022 814 b
+1023 814 b
+1024 814 b
+1023 813 b
+1022 812 b
+1072 911 1072 895 l
+1120 911 1072 911 l
+968 823 960 823 l
+1016 823 1000 823 l
+896 895 896 863 l
+896 863 864 863 l
+960 823 960 807 l
+960 863 960 823 l
+960 823 2 fc
+440 911 440 895 l
+440 879 416 879 l
+552 911 552 895 l
+600 911 552 911 l
+384 911 368 911 l
+440 911 416 911 l
+416 807 416 815 l
+408 806 b
+409 806 b
+410 806 b
+411 806 b
+412 806 b
+413 806 b
+414 806 b
+409 805 b
+410 804 b
+411 803 b
+412 802 b
+413 801 b
+414 800 b
+416 807 b
+415 806 b
+416 806 b
+417 806 b
+418 806 b
+419 806 b
+420 806 b
+421 806 b
+421 803 b
+420 802 b
+419 801 b
+418 800 b
+415 799 b
+417 799 b
+416 798 b
+422 806 b
+423 806 b
+424 806 b
+423 805 b
+422 804 b
+416 879 416 847 l
+120 759 120 775 l
+96 759 96 775 l
+/text_height 12 def
+/text_width 6 def
+101 775 moveto 9 (6) ht
+128 767 120 767 l
+/text_height 12 def
+/text_width 6 def
+59 775 moveto 9 (J202) ht
+120 247 120 263 l
+96 247 96 263 l
+/text_height 12 def
+/text_width 6 def
+101 263 moveto 9 (8) ht
+128 255 120 255 l
+/text_height 12 def
+/text_width 6 def
+59 263 moveto 9 (J202) ht
+1232 247 1232 263 l
+1208 247 1208 263 l
+/text_height 12 def
+/text_width 6 def
+1213 263 moveto 9 (13) ht
+/text_height 12 def
+/text_width 6 def
+1238 263 moveto 9 (J202) ht
+1208 255 1200 255 l
+1232 231 1232 247 l
+1208 231 1208 247 l
+/text_height 12 def
+/text_width 6 def
+1213 247 moveto 9 (12) ht
+/text_height 12 def
+/text_width 6 def
+1238 247 moveto 9 (J202) ht
+1208 239 1200 239 l
+1232 215 1232 231 l
+1208 215 1208 231 l
+/text_height 12 def
+/text_width 6 def
+1213 231 moveto 9 (20) ht
+/text_height 12 def
+/text_width 6 def
+1238 231 moveto 9 (J202) ht
+1208 223 1200 223 l
+120 743 120 759 l
+96 743 96 759 l
+/text_height 12 def
+/text_width 6 def
+101 759 moveto 9 (18) ht
+128 751 120 751 l
+/text_height 12 def
+/text_width 6 def
+59 759 moveto 9 (J202) ht
+120 375 120 391 l
+96 375 96 391 l
+/text_height 12 def
+/text_width 6 def
+101 391 moveto 9 (22) ht
+128 383 120 383 l
+/text_height 12 def
+/text_width 6 def
+59 391 moveto 9 (J202) ht
+120 359 120 375 l
+96 359 96 375 l
+/text_height 12 def
+/text_width 6 def
+101 375 moveto 9 (21) ht
+128 367 120 367 l
+/text_height 12 def
+/text_width 6 def
+59 375 moveto 9 (J202) ht
+120 343 120 359 l
+96 343 96 359 l
+/text_height 12 def
+/text_width 6 def
+101 359 moveto 9 (24) ht
+128 351 120 351 l
+/text_height 12 def
+/text_width 6 def
+59 359 moveto 9 (J202) ht
+120 327 120 343 l
+96 327 96 343 l
+/text_height 12 def
+/text_width 6 def
+101 343 moveto 9 (25) ht
+128 335 120 335 l
+/text_height 12 def
+/text_width 6 def
+59 343 moveto 9 (J202) ht
+120 311 120 327 l
+96 311 96 327 l
+/text_height 12 def
+/text_width 6 def
+101 327 moveto 9 (23) ht
+128 319 120 319 l
+/text_height 12 def
+/text_width 6 def
+59 327 moveto 9 (J202) ht
+120 295 120 311 l
+96 295 96 311 l
+/text_height 12 def
+/text_width 6 def
+101 311 moveto 9 (9) ht
+128 303 120 303 l
+/text_height 12 def
+/text_width 6 def
+59 311 moveto 9 (J202) ht
+120 231 120 247 l
+96 231 96 247 l
+/text_height 12 def
+/text_width 6 def
+101 247 moveto 9 (11) ht
+128 239 120 239 l
+/text_height 12 def
+/text_width 6 def
+59 247 moveto 9 (J202) ht
+120 207 120 223 l
+96 207 96 223 l
+/text_height 12 def
+/text_width 6 def
+101 223 moveto 9 (10) ht
+128 215 120 215 l
+/text_height 12 def
+/text_width 6 def
+59 223 moveto 9 (J202) ht
+256 255 256 119 l
+568 159 568 119 l
+96 295 96 263 l
+120 295 120 263 l
+208 591 208 495 l
+/text_height 12 def
+/text_width 6 def
+237 503 moveto 9 (I+) ht
+/text_height 12 def
+/text_width 6 def
+237 487 moveto 9 (I-) ht
+/text_height 12 def
+/text_width 6 def
+237 471 moveto 9 (AGC) ht
+232 463 208 463 l
+232 479 208 479 l
+232 495 208 495 l
+320 479 296 479 l
+320 495 296 495 l
+/text_height 12 def
+/text_width 6 def
+222 509 moveto 16 (312) vt
+296 511 232 511 l
+296 447 232 447 l
+232 447 232 511 l
+296 447 296 511 l
+/text_height 12 def
+/text_width 6 def
+233 528 moveto 9 (MC1590G) ht
+/text_height 12 def
+/text_width 6 def
+234 542 moveto 9 (IC205) ht
+320 463 296 463 l
+/text_height 12 def
+/text_width 6 def
+267 471 moveto 9 (VCC) ht
+/text_height 12 def
+/text_width 6 def
+276 504 moveto 9 (O+) ht
+/text_height 12 def
+/text_width 6 def
+276 487 moveto 9 (O-) ht
+/text_height 12 def
+/text_width 6 def
+300 510 moveto 16 (567) vt
+208 407 208 415 l
+200 406 b
+201 406 b
+202 406 b
+203 406 b
+204 406 b
+205 406 b
+206 406 b
+201 405 b
+202 404 b
+203 403 b
+204 402 b
+205 401 b
+206 400 b
+208 407 b
+207 406 b
+208 406 b
+209 406 b
+210 406 b
+211 406 b
+212 406 b
+213 406 b
+213 403 b
+212 402 b
+211 401 b
+210 400 b
+207 399 b
+209 399 b
+208 398 b
+214 406 b
+215 406 b
+216 406 b
+215 405 b
+214 404 b
+144 415 144 423 l
+136 414 b
+137 414 b
+138 414 b
+139 414 b
+140 414 b
+141 414 b
+142 414 b
+137 413 b
+138 412 b
+139 411 b
+140 410 b
+141 409 b
+142 408 b
+144 415 b
+143 414 b
+144 414 b
+145 414 b
+146 414 b
+147 414 b
+148 414 b
+149 414 b
+149 411 b
+148 410 b
+147 409 b
+146 408 b
+143 407 b
+145 407 b
+144 406 b
+150 414 b
+151 414 b
+152 414 b
+151 413 b
+150 412 b
+144 463 144 455 l
+208 479 208 447 l
+208 463 144 463 l
+144 463 2 fc
+456 159 432 159 l
+456 143 456 207 l
+/text_height 12 def
+/text_width 6 def
+457 224 moveto 9 (VCXO) ht
+/text_height 12 def
+/text_width 6 def
+458 238 moveto 9 (X201) ht
+/text_height 12 def
+/text_width 6 def
+461 199 moveto 9 (VCO) ht
+/text_height 12 def
+/text_width 6 def
+461 167 moveto 9 (VREF) ht
+544 143 544 207 l
+568 159 544 159 l
+544 207 456 207 l
+544 143 456 143 l
+/text_height 12 def
+/text_width 6 def
+507 199 moveto 9 (5HMZ) ht
+456 191 432 191 l
+/text_height 12 def
+/text_width 6 def
+507 167 moveto 9 (OVEN) ht
+568 191 544 191 l
+/text_height 12 def
+/text_width 6 def
+547 206 moveto 16 (1 5) vt
+456 175 432 175 l
+/text_height 12 def
+/text_width 6 def
+447 206 moveto 16 (839) vt
+/text_height 12 def
+/text_width 6 def
+461 184 moveto 9 (+5) ht
+520 223 520 231 l
+512 222 b
+513 222 b
+514 222 b
+515 222 b
+516 222 b
+517 222 b
+518 222 b
+513 221 b
+514 220 b
+515 219 b
+516 218 b
+517 217 b
+518 216 b
+520 223 b
+519 222 b
+520 222 b
+521 222 b
+522 222 b
+523 222 b
+524 222 b
+525 222 b
+525 219 b
+524 218 b
+523 217 b
+522 216 b
+519 215 b
+521 215 b
+520 214 b
+526 222 b
+527 222 b
+528 222 b
+527 221 b
+526 220 b
+520 479 520 287 l
+520 279 472 279 l
+520 287 520 279 l
+592 287 520 287 l
+520 287 2 fc
+520 279 2 fc
+520 479 488 479 l
+520 479 2 fc
+504 543 280 543 l
+520 559 352 559 l
+352 639 352 559 l
+520 559 520 479 l
+504 543 504 511 l
+280 575 280 543 l
+/text_height 12 def
+/text_width 6 def
+1185 286 moveto 9 (S2) ht
+1232 263 1232 279 l
+1208 263 1208 279 l
+/text_height 12 def
+/text_width 6 def
+1213 279 moveto 9 (7) ht
+/text_height 12 def
+/text_width 6 def
+1238 279 moveto 9 (J202) ht
+1208 271 1200 271 l
+1200 271 1080 271 l
+592 447 568 447 l
+592 463 568 463 l
+592 479 568 479 l
+592 495 568 495 l
+/text_height 12 def
+/text_width 6 def
+597 519 moveto 16 (1234D) vt
+/text_height 12 def
+/text_width 6 def
+580 525 moveto 16 (45678) vt
+600 399 600 423 l
+664 399 664 423 l
+592 423 592 527 l
+/text_height 12 def
+/text_width 6 def
+687 525 moveto 16 (3210) vt
+592 511 568 511 l
+696 463 672 463 l
+696 479 672 479 l
+696 495 672 495 l
+/text_height 12 def
+/text_width 6 def
+679 525 moveto 16 (11119) vt
+632 399 632 423 l
+/text_height 12 def
+/text_width 6 def
+600 439 moveto 9 (A0 A1 EN) ht
+/text_height 12 def
+/text_width 6 def
+606 519 moveto 16 (AAAAA) vt
+672 423 672 527 l
+672 423 592 423 l
+672 527 592 527 l
+696 447 672 447 l
+696 511 672 511 l
+/text_height 12 def
+/text_width 6 def
+662 519 moveto 16 (BBBBB) vt
+/text_height 12 def
+/text_width 6 def
+653 519 moveto 16 (1234D) vt
+/text_height 12 def
+/text_width 6 def
+598 543 moveto 9 (ADG509A) ht
+/text_height 12 def
+/text_width 6 def
+600 557 moveto 9 (IC206) ht
+/text_height 12 def
+/text_width 6 def
+592 424 moveto 9 (1      2) ht
+/text_height 12 def
+/text_width 6 def
+614 424 moveto 9 (16) ht
+/text_height 12 def
+/text_width 6 def
+672 555 moveto 9 (demod) ht
+704 631 680 631 l
+640 607 640 655 l
+/text_height 12 def
+/text_width 6 def
+643 647 moveto 9 (+) ht
+/text_height 12 def
+/text_width 6 def
+643 631 moveto 9 (-) ht
+/text_height 12 def
+/text_width 6 def
+640 672 moveto 9 (LM324) ht
+/text_height 12 def
+/text_width 6 def
+640 685 moveto 9 (IC207D) ht
+640 639 616 639 l
+640 623 616 623 l
+/text_height 12 def
+/text_width 6 def
+688 646 moveto 9 (14) ht
+/text_height 12 def
+/text_width 6 def
+617 638 moveto 9 (13) ht
+/text_height 12 def
+/text_width 6 def
+617 654 moveto 9 (12) ht
+680 631 640 655 l
+680 631 640 607 l
+712 687 712 631 l
+960 759 960 687 l
+1080 687 1080 271 l
+280 703 280 575 l
+712 687 144 687 l
+712 687 2 fc
+1080 687 960 687 l
+960 687 712 687 l
+960 687 2 fc
+144 687 144 591 l
+144 543 144 463 l
+/text_height 12 def
+/text_width 6 def
+216 563 moveto 9 (rf amp) ht
+568 447 568 303 l
+1048 303 568 303 l
+/text_height 12 def
+/text_width 6 def
+755 375 moveto 9 (VCC) ht
+680 367 664 367 l
+752 367 728 367 l
+744 591 744 287 l
+1096 319 944 319 l
+944 319 2 fc
+1224 623 1224 631 l
+1217 621 b
+1216 620 b
+1215 619 b
+1214 618 b
+1213 617 b
+1212 616 b
+1211 615 b
+1218 622 b
+1224 621 b
+1223 620 b
+1222 619 b
+1221 618 b
+1220 617 b
+1219 616 b
+1218 615 b
+1225 622 b
+1231 621 b
+1230 620 b
+1229 619 b
+1228 618 b
+1227 617 b
+1226 616 b
+1225 615 b
+1232 622 b
+1232 622 1218 622 l
+1224 751 8 c
+1224 751 1200 751 l
+1224 719 1224 743 l
+/text_height 12 def
+/text_width 6 def
+1209 777 moveto 9 (J205) ht
+1224 753 b
+1225 753 b
+1223 752 b
+1224 752 b
+1225 752 b
+1226 752 b
+1223 751 b
+1224 751 b
+1225 751 b
+1226 751 b
+1224 750 b
+1225 750 b
+1224 711 1224 719 l
+1217 709 b
+1216 708 b
+1215 707 b
+1214 706 b
+1213 705 b
+1212 704 b
+1211 703 b
+1218 710 b
+1224 709 b
+1223 708 b
+1222 707 b
+1221 706 b
+1220 705 b
+1219 704 b
+1218 703 b
+1225 710 b
+1231 709 b
+1230 708 b
+1229 707 b
+1228 706 b
+1227 705 b
+1226 704 b
+1225 703 b
+1232 710 b
+1232 710 1218 710 l
+1224 663 8 c
+1224 663 1200 663 l
+1224 631 1224 655 l
+/text_height 12 def
+/text_width 6 def
+1209 689 moveto 9 (J206) ht
+1224 665 b
+1225 665 b
+1223 664 b
+1224 664 b
+1225 664 b
+1226 664 b
+1223 663 b
+1224 663 b
+1225 663 b
+1226 663 b
+1224 662 b
+1225 662 b
+/text_height 12 def
+/text_width 6 def
+1240 675 moveto 9 (SIG) ht
+120 727 120 743 l
+96 727 96 743 l
+/text_height 12 def
+/text_width 6 def
+101 743 moveto 9 (15) ht
+128 735 120 735 l
+/text_height 12 def
+/text_width 6 def
+59 743 moveto 9 (J202) ht
+/text_height 12 def
+/text_width 6 def
+128 750 moveto 9 (AGC) ht
+568 735 128 735 l
+568 735 568 687 l
+208 719 208 623 l
+1120 719 208 719 l
+1104 703 280 703 l
+1104 703 1104 663 l
+1112 663 1104 663 l
+1152 663 1144 663 l
+1120 783 1120 719 l
+800 751 2 fc
+200 863 200 879 l
+200 815 200 831 l
+200 863 b
+201 863 b
+202 863 b
+200 855 b
+201 855 b
+202 855 b
+203 862 b
+204 861 b
+205 860 b
+205 859 b
+205 858 b
+204 857 b
+203 856 b
+200 855 b
+201 855 b
+202 855 b
+200 847 b
+201 847 b
+202 847 b
+203 854 b
+204 853 b
+205 852 b
+205 851 b
+205 850 b
+204 849 b
+203 848 b
+200 847 b
+201 847 b
+202 847 b
+200 839 b
+201 839 b
+202 839 b
+203 846 b
+204 845 b
+205 844 b
+205 843 b
+205 842 b
+204 841 b
+203 840 b
+200 839 b
+201 839 b
+202 839 b
+200 831 b
+201 831 b
+202 831 b
+203 838 b
+204 837 b
+205 836 b
+205 835 b
+205 834 b
+204 833 b
+203 832 b
+/text_height 12 def
+/text_width 6 def
+211 848 moveto 9 (230U) ht
+/text_height 12 def
+/text_width 6 def
+212 863 moveto 9 (L201) ht
+312 863 312 879 l
+312 815 312 831 l
+312 863 b
+313 863 b
+314 863 b
+312 855 b
+313 855 b
+314 855 b
+315 862 b
+316 861 b
+317 860 b
+317 859 b
+317 858 b
+316 857 b
+315 856 b
+312 855 b
+313 855 b
+314 855 b
+312 847 b
+313 847 b
+314 847 b
+315 854 b
+316 853 b
+317 852 b
+317 851 b
+317 850 b
+316 849 b
+315 848 b
+312 847 b
+313 847 b
+314 847 b
+312 839 b
+313 839 b
+314 839 b
+315 846 b
+316 845 b
+317 844 b
+317 843 b
+317 842 b
+316 841 b
+315 840 b
+312 839 b
+313 839 b
+314 839 b
+312 831 b
+313 831 b
+314 831 b
+315 838 b
+316 837 b
+317 836 b
+317 835 b
+317 834 b
+316 833 b
+315 832 b
+/text_height 12 def
+/text_width 6 def
+323 848 moveto 9 (230U) ht
+/text_height 12 def
+/text_width 6 def
+324 863 moveto 9 (L203) ht
+200 807 200 815 l
+192 806 b
+193 806 b
+194 806 b
+195 806 b
+196 806 b
+197 806 b
+198 806 b
+193 805 b
+194 804 b
+195 803 b
+196 802 b
+197 801 b
+198 800 b
+200 807 b
+199 806 b
+200 806 b
+201 806 b
+202 806 b
+203 806 b
+204 806 b
+205 806 b
+205 803 b
+204 802 b
+203 801 b
+202 800 b
+199 799 b
+201 799 b
+200 798 b
+206 806 b
+207 806 b
+208 806 b
+207 805 b
+206 804 b
+312 807 312 815 l
+304 806 b
+305 806 b
+306 806 b
+307 806 b
+308 806 b
+309 806 b
+310 806 b
+305 805 b
+306 804 b
+307 803 b
+308 802 b
+309 801 b
+310 800 b
+312 807 b
+311 806 b
+312 806 b
+313 806 b
+314 806 b
+315 806 b
+316 806 b
+317 806 b
+317 803 b
+316 802 b
+315 801 b
+314 800 b
+311 799 b
+313 799 b
+312 798 b
+318 806 b
+319 806 b
+320 806 b
+319 805 b
+318 804 b
+168 911 144 911 l
+144 911 144 879 l
+144 911 120 911 l
+/text_height 12 def
+/text_width 6 def
+93 919 moveto 9 (PRE) ht
+/text_height 12 def
+/text_width 6 def
+56 907 moveto 9 (\(sheet 3\)) ht
+/text_height 12 def
+/text_width 6 def
+128 270 moveto 9 (12A) ht
+/text_height 12 def
+/text_width 6 def
+128 334 moveto 9 (ENB1) ht
+/text_height 12 def
+/text_width 6 def
+848 619 moveto 9 (I integrator) ht
+/text_height 12 def
+/text_width 6 def
+864 283 moveto 9 (Q integrator) ht
+1200 351 1096 351 l
+1224 351 8 c
+1224 351 1200 351 l
+1224 319 1224 343 l
+/text_height 12 def
+/text_width 6 def
+1209 377 moveto 9 (J204) ht
+1224 353 b
+1225 353 b
+1223 352 b
+1224 352 b
+1225 352 b
+1226 352 b
+1223 351 b
+1224 351 b
+1225 351 b
+1226 351 b
+1224 350 b
+1225 350 b
+1224 311 1224 319 l
+1217 309 b
+1216 308 b
+1215 307 b
+1214 306 b
+1213 305 b
+1212 304 b
+1211 303 b
+1218 310 b
+1224 309 b
+1223 308 b
+1222 307 b
+1221 306 b
+1220 305 b
+1219 304 b
+1218 303 b
+1225 310 b
+1231 309 b
+1230 308 b
+1229 307 b
+1228 306 b
+1227 305 b
+1226 304 b
+1225 303 b
+1232 310 b
+1232 310 1218 310 l
+/text_height 12 def
+/text_width 6 def
+1240 363 moveto 9 (ENB) ht
+1096 351 1096 319 l
+296 164 296 175 l
+/text_height 12 def
+/text_width 6 def
+306 165 moveto 9 (R223) ht
+/text_height 12 def
+/text_width 6 def
+306 152 moveto 9 (560) ht
+301 161 296 163 l
+301 145 292 141 l
+301 145 292 149 l
+301 153 292 157 l
+301 153 292 149 l
+296 137 296 139 l
+296 140 292 141 l
+296 127 296 138 l
+301 161 292 157 l
+296 163 296 165 l
+296 138 296 140 l
+352 175 296 175 l
+352 162 352 175 l
+352 143 352 157 l
+343 166 b
+344 165 b
+345 164 b
+346 163 b
+347 162 b
+348 162 b
+349 162 b
+349 159 b
+348 158 b
+349 158 b
+347 157 b
+348 157 b
+349 157 b
+346 156 b
+347 156 b
+348 156 b
+349 156 b
+352 163 b
+350 162 b
+351 162 b
+352 162 b
+353 162 b
+354 162 b
+355 162 b
+356 162 b
+351 161 b
+352 161 b
+353 161 b
+350 160 b
+351 160 b
+352 160 b
+353 160 b
+354 160 b
+350 159 b
+351 159 b
+352 159 b
+353 159 b
+354 159 b
+355 159 b
+350 158 b
+351 158 b
+352 158 b
+353 158 b
+354 158 b
+355 158 b
+356 158 b
+350 157 b
+351 157 b
+352 157 b
+353 157 b
+354 157 b
+355 157 b
+356 157 b
+350 156 b
+351 156 b
+352 156 b
+353 156 b
+354 156 b
+355 156 b
+356 156 b
+357 162 b
+358 161 b
+359 160 b
+360 159 b
+361 158 b
+357 157 b
+357 156 b
+358 156 b
+/text_height 12 def
+/text_width 6 def
+364 175 moveto 9 (D203) ht
+/text_height 12 def
+/text_width 6 def
+364 160 moveto 9 (1N751) ht
+352 135 352 143 l
+344 134 b
+345 134 b
+346 134 b
+347 134 b
+348 134 b
+349 134 b
+350 134 b
+345 133 b
+346 132 b
+347 131 b
+348 130 b
+349 129 b
+350 128 b
+352 135 b
+351 134 b
+352 134 b
+353 134 b
+354 134 b
+355 134 b
+356 134 b
+357 134 b
+357 131 b
+356 130 b
+355 129 b
+354 128 b
+351 127 b
+353 127 b
+352 126 b
+358 134 b
+359 134 b
+360 134 b
+359 133 b
+358 132 b
+296 127 296 119 l
+432 175 352 175 l
+568 119 296 119 l
+296 119 256 119 l
+296 119 2 fc
+352 175 2 fc
+/text_height 12 def
+/text_width 6 def
+414 167 moveto 9 (NC) ht
+/text_height 12 def
+/text_width 6 def
+504 75 moveto 9 (14x3 turns #28 Amidon FT50/75 ferrite) ht
+/text_height 12 def
+/text_width 6 def
+144 75 moveto 9 (grounds together at IC204 pin 2) ht
+368 884 368 895 l
+/text_height 12 def
+/text_width 6 def
+378 885 moveto 9 (R201) ht
+/text_height 12 def
+/text_width 6 def
+378 872 moveto 9 (680) ht
+373 881 368 883 l
+373 865 364 861 l
+373 865 364 869 l
+373 873 364 877 l
+373 873 364 869 l
+368 857 368 859 l
+368 860 364 861 l
+368 847 368 858 l
+373 881 364 877 l
+368 883 368 885 l
+368 858 368 860 l
+672 836 672 847 l
+/text_height 12 def
+/text_width 6 def
+682 837 moveto 9 (R202) ht
+/text_height 12 def
+/text_width 6 def
+682 824 moveto 9 (150) ht
+677 833 672 835 l
+677 817 668 813 l
+677 817 668 821 l
+677 825 668 829 l
+677 825 668 821 l
+672 809 672 811 l
+672 812 668 813 l
+672 799 672 810 l
+677 833 668 829 l
+672 835 672 837 l
+672 810 672 812 l
+858 815 848 815 l
+896 815 886 815 l
+/text_height 12 def
+/text_width 6 def
+851 835 moveto 9 (10K) ht
+/text_height 12 def
+/text_width 6 def
+851 847 moveto 9 (R203) ht
+862 820 860 815 l
+866 811 862 820 l
+870 820 866 811 l
+874 811 870 820 l
+878 820 874 811 l
+882 811 878 820 l
+884 815 882 811 l
+886 815 884 815 l
+860 815 859 815 l
+960 796 960 807 l
+/text_height 12 def
+/text_width 6 def
+970 797 moveto 9 (R204) ht
+/text_height 12 def
+/text_width 6 def
+970 784 moveto 9 (5.6K) ht
+965 793 960 795 l
+965 777 956 773 l
+965 777 956 781 l
+965 785 956 789 l
+965 785 956 781 l
+960 769 960 771 l
+960 772 956 773 l
+960 759 960 770 l
+965 793 956 789 l
+960 795 960 797 l
+960 770 960 772 l
+1184 836 1184 847 l
+/text_height 12 def
+/text_width 6 def
+1194 837 moveto 9 (R205) ht
+/text_height 12 def
+/text_width 6 def
+1194 824 moveto 9 (56) ht
+1189 833 1184 835 l
+1189 817 1180 813 l
+1189 817 1180 821 l
+1189 825 1180 829 l
+1189 825 1180 821 l
+1184 809 1184 811 l
+1184 812 1180 813 l
+1184 799 1184 810 l
+1189 833 1180 829 l
+1184 835 1184 837 l
+1184 810 1184 812 l
+1162 663 1152 663 l
+1200 663 1190 663 l
+/text_height 12 def
+/text_width 6 def
+1155 683 moveto 9 (2.2K) ht
+/text_height 12 def
+/text_width 6 def
+1155 695 moveto 9 (R206) ht
+1166 668 1164 663 l
+1170 659 1166 668 l
+1174 668 1170 659 l
+1178 659 1174 668 l
+1182 668 1178 659 l
+1186 659 1182 668 l
+1188 663 1186 659 l
+1190 663 1188 663 l
+1164 663 1163 663 l
+144 580 144 591 l
+/text_height 12 def
+/text_width 6 def
+154 581 moveto 9 (R207) ht
+/text_height 12 def
+/text_width 6 def
+154 568 moveto 9 (5.6K) ht
+149 577 144 579 l
+149 561 140 557 l
+149 561 140 565 l
+149 569 140 573 l
+149 569 140 565 l
+144 553 144 555 l
+144 556 140 557 l
+144 543 144 554 l
+149 577 140 573 l
+144 579 144 581 l
+144 554 144 556 l
+298 575 288 575 l
+336 575 326 575 l
+/text_height 12 def
+/text_width 6 def
+291 595 moveto 9 (10K) ht
+/text_height 12 def
+/text_width 6 def
+291 607 moveto 9 (R208) ht
+302 580 300 575 l
+306 571 302 580 l
+310 580 306 571 l
+314 571 310 580 l
+318 580 314 571 l
+322 571 318 580 l
+324 575 322 571 l
+326 575 324 575 l
+300 575 299 575 l
+466 575 456 575 l
+504 575 494 575 l
+/text_height 12 def
+/text_width 6 def
+459 595 moveto 9 (33K) ht
+/text_height 12 def
+/text_width 6 def
+459 607 moveto 9 (R209) ht
+470 580 468 575 l
+474 571 470 580 l
+478 580 474 571 l
+482 571 478 580 l
+486 580 482 571 l
+490 571 486 580 l
+492 575 490 571 l
+494 575 492 575 l
+468 575 467 575 l
+568 676 568 687 l
+/text_height 12 def
+/text_width 6 def
+578 677 moveto 9 (R210) ht
+/text_height 12 def
+/text_width 6 def
+578 664 moveto 9 (1M) ht
+573 673 568 675 l
+573 657 564 653 l
+573 657 564 661 l
+573 665 564 669 l
+573 665 564 661 l
+568 649 568 651 l
+568 652 564 653 l
+568 639 568 650 l
+573 673 564 669 l
+568 675 568 677 l
+568 650 568 652 l
+336 492 336 503 l
+/text_height 12 def
+/text_width 6 def
+346 493 moveto 9 (R211) ht
+/text_height 12 def
+/text_width 6 def
+346 480 moveto 9 (1K) ht
+341 489 336 491 l
+341 473 332 469 l
+341 473 332 477 l
+341 481 332 485 l
+341 481 332 477 l
+336 465 336 467 l
+336 468 332 469 l
+336 455 336 466 l
+341 489 332 485 l
+336 491 336 493 l
+336 466 336 468 l
+432 436 432 447 l
+/text_height 12 def
+/text_width 6 def
+442 437 moveto 9 (R212) ht
+/text_height 12 def
+/text_width 6 def
+442 424 moveto 9 (56) ht
+437 433 432 435 l
+437 417 428 413 l
+437 417 428 421 l
+437 425 428 429 l
+437 425 428 421 l
+432 409 432 411 l
+432 412 428 413 l
+432 399 432 410 l
+437 433 428 429 l
+432 435 432 437 l
+432 410 432 412 l
+434 279 424 279 l
+472 279 462 279 l
+/text_height 12 def
+/text_width 6 def
+427 299 moveto 9 (4.7K) ht
+/text_height 12 def
+/text_width 6 def
+427 311 moveto 9 (R213) ht
+438 284 436 279 l
+442 275 438 284 l
+446 284 442 275 l
+450 275 446 284 l
+454 284 450 275 l
+458 275 454 284 l
+460 279 458 275 l
+462 279 460 279 l
+436 279 435 279 l
+520 268 520 279 l
+/text_height 12 def
+/text_width 6 def
+530 269 moveto 9 (R214) ht
+/text_height 12 def
+/text_width 6 def
+530 256 moveto 9 (4.7K) ht
+525 265 520 267 l
+525 249 516 245 l
+525 249 516 253 l
+525 257 516 261 l
+525 257 516 253 l
+520 241 520 243 l
+520 244 516 245 l
+520 231 520 242 l
+525 265 516 261 l
+520 267 520 269 l
+520 242 520 244 l
+690 367 680 367 l
+728 367 718 367 l
+/text_height 12 def
+/text_width 6 def
+683 387 moveto 9 (10K) ht
+/text_height 12 def
+/text_width 6 def
+683 399 moveto 9 (R215) ht
+694 372 692 367 l
+698 363 694 372 l
+702 372 698 363 l
+706 363 702 372 l
+710 372 706 363 l
+714 363 710 372 l
+716 367 714 363 l
+718 367 716 367 l
+692 367 691 367 l
+794 511 784 511 l
+832 511 822 511 l
+/text_height 12 def
+/text_width 6 def
+787 531 moveto 9 (10K) ht
+/text_height 12 def
+/text_width 6 def
+787 543 moveto 9 (R216) ht
+798 516 796 511 l
+802 507 798 516 l
+806 516 802 507 l
+810 507 806 516 l
+814 516 810 507 l
+818 507 814 516 l
+820 511 818 507 l
+822 511 820 511 l
+796 511 795 511 l
+794 471 784 471 l
+832 471 822 471 l
+/text_height 12 def
+/text_width 6 def
+787 491 moveto 9 (75K) ht
+/text_height 12 def
+/text_width 6 def
+787 503 moveto 9 (R217) ht
+798 476 796 471 l
+802 467 798 476 l
+806 476 802 467 l
+810 467 806 476 l
+814 476 810 467 l
+818 467 814 476 l
+820 471 818 467 l
+822 471 820 471 l
+796 471 795 471 l
+794 431 784 431 l
+832 431 822 431 l
+/text_height 12 def
+/text_width 6 def
+787 451 moveto 9 (270K) ht
+/text_height 12 def
+/text_width 6 def
+787 463 moveto 9 (R218) ht
+798 436 796 431 l
+802 427 798 436 l
+806 436 802 427 l
+810 427 806 436 l
+814 436 810 427 l
+818 427 814 436 l
+820 431 818 427 l
+822 431 820 431 l
+796 431 795 431 l
+1002 511 992 511 l
+1040 511 1030 511 l
+/text_height 12 def
+/text_width 6 def
+995 531 moveto 9 (10K) ht
+/text_height 12 def
+/text_width 6 def
+995 543 moveto 9 (R219) ht
+1006 516 1004 511 l
+1010 507 1006 516 l
+1014 516 1010 507 l
+1018 507 1014 516 l
+1022 516 1018 507 l
+1026 507 1022 516 l
+1028 511 1026 507 l
+1030 511 1028 511 l
+1004 511 1003 511 l
+1002 471 992 471 l
+1040 471 1030 471 l
+/text_height 12 def
+/text_width 6 def
+995 491 moveto 9 (75K) ht
+/text_height 12 def
+/text_width 6 def
+995 503 moveto 9 (R220) ht
+1006 476 1004 471 l
+1010 467 1006 476 l
+1014 476 1010 467 l
+1018 467 1014 476 l
+1022 476 1018 467 l
+1026 467 1022 476 l
+1028 471 1026 467 l
+1030 471 1028 471 l
+1004 471 1003 471 l
+1002 431 992 431 l
+1040 431 1030 431 l
+/text_height 12 def
+/text_width 6 def
+995 451 moveto 9 (270K) ht
+/text_height 12 def
+/text_width 6 def
+995 463 moveto 9 (R221) ht
+1006 436 1004 431 l
+1010 427 1006 436 l
+1014 436 1010 427 l
+1018 427 1014 436 l
+1022 436 1018 427 l
+1026 427 1022 436 l
+1028 431 1026 427 l
+1030 431 1028 431 l
+1004 431 1003 431 l
+398 904 398 918 l
+421 911 18 201 159 a
+398 911 384 911 l
+416 911 403 911 l
+/text_height 12 def
+/text_width 6 def
+387 934 moveto 9 (C204) ht
+/text_height 12 def
+/text_width 6 def
+381 904 moveto 9 (100N) ht
+/text_height 12 def
+/text_width 6 def
+429 846 moveto 9 (C205) ht
+/text_height 12 def
+/text_width 6 def
+429 833 moveto 9 (100N) ht
+423 833 409 833 l
+416 811 18 111 69 a
+416 833 416 847 l
+416 815 416 829 l
+559 833 545 833 l
+552 811 18 111 69 a
+552 833 552 847 l
+552 815 552 829 l
+/text_height 12 def
+/text_width 6 def
+565 833 moveto 9 (10U) ht
+/text_height 12 def
+/text_width 6 def
+566 846 moveto 9 (C206) ht
+/text_height 12 def
+/text_width 6 def
+537 848 moveto 9 (+) ht
+/text_height 12 def
+/text_width 6 def
+613 894 moveto 9 (C207) ht
+/text_height 12 def
+/text_width 6 def
+613 881 moveto 9 (5.6N) ht
+607 881 593 881 l
+600 859 18 111 69 a
+600 881 600 895 l
+600 863 600 877 l
+/text_height 12 def
+/text_width 6 def
+621 846 moveto 9 (C208) ht
+/text_height 12 def
+/text_width 6 def
+621 833 moveto 9 (100N) ht
+615 833 601 833 l
+608 811 18 111 69 a
+608 833 608 847 l
+608 815 608 829 l
+918 776 918 790 l
+941 783 18 201 159 a
+918 783 904 783 l
+936 783 923 783 l
+/text_height 12 def
+/text_width 6 def
+907 806 moveto 9 (C209) ht
+/text_height 12 def
+/text_width 6 def
+901 776 moveto 9 (100N) ht
+918 888 918 902 l
+941 895 18 201 159 a
+918 895 904 895 l
+936 895 923 895 l
+/text_height 12 def
+/text_width 6 def
+907 918 moveto 9 (C210) ht
+/text_height 12 def
+/text_width 6 def
+901 888 moveto 9 (100N) ht
+982 816 982 830 l
+1005 823 18 201 159 a
+982 823 968 823 l
+1000 823 987 823 l
+/text_height 12 def
+/text_width 6 def
+971 846 moveto 9 (C211) ht
+/text_height 12 def
+/text_width 6 def
+965 816 moveto 9 (100N) ht
+1079 833 1065 833 l
+1072 811 18 111 69 a
+1072 833 1072 847 l
+1072 815 1072 829 l
+/text_height 12 def
+/text_width 6 def
+1085 833 moveto 9 (10U) ht
+/text_height 12 def
+/text_width 6 def
+1086 846 moveto 9 (C212) ht
+/text_height 12 def
+/text_width 6 def
+1057 848 moveto 9 (+) ht
+/text_height 12 def
+/text_width 6 def
+1133 894 moveto 9 (C213) ht
+/text_height 12 def
+/text_width 6 def
+1133 881 moveto 9 (4.3N) ht
+1127 881 1113 881 l
+1120 859 18 111 69 a
+1120 881 1120 895 l
+1120 863 1120 877 l
+/text_height 12 def
+/text_width 6 def
+1141 846 moveto 9 (C214) ht
+/text_height 12 def
+/text_width 6 def
+1141 833 moveto 9 (100N) ht
+1135 833 1121 833 l
+1128 811 18 111 69 a
+1128 833 1128 847 l
+1128 815 1128 829 l
+1126 656 1126 670 l
+1149 663 18 201 159 a
+1126 663 1112 663 l
+1144 663 1131 663 l
+/text_height 12 def
+/text_width 6 def
+1115 686 moveto 9 (C215) ht
+/text_height 12 def
+/text_width 6 def
+1109 656 moveto 9 (100P) ht
+/text_height 12 def
+/text_width 6 def
+525 638 moveto 9 (C216) ht
+/text_height 12 def
+/text_width 6 def
+525 625 moveto 9 (1U) ht
+519 625 505 625 l
+512 603 18 111 69 a
+512 625 512 639 l
+512 607 512 621 l
+/text_height 12 def
+/text_width 6 def
+221 622 moveto 9 (C217) ht
+/text_height 12 def
+/text_width 6 def
+221 609 moveto 9 (100N) ht
+215 609 201 609 l
+208 587 18 111 69 a
+208 609 208 623 l
+208 591 208 605 l
+/text_height 12 def
+/text_width 6 def
+157 454 moveto 9 (C218) ht
+/text_height 12 def
+/text_width 6 def
+157 441 moveto 9 (100N) ht
+151 441 137 441 l
+144 419 18 111 69 a
+144 441 144 455 l
+144 423 144 437 l
+/text_height 12 def
+/text_width 6 def
+221 446 moveto 9 (C219) ht
+/text_height 12 def
+/text_width 6 def
+221 433 moveto 9 (100N) ht
+215 433 201 433 l
+208 411 18 111 69 a
+208 433 208 447 l
+208 415 208 429 l
+327 433 313 433 l
+320 411 18 111 69 a
+320 433 320 447 l
+320 415 320 429 l
+/text_height 12 def
+/text_width 6 def
+333 433 moveto 9 (10U) ht
+/text_height 12 def
+/text_width 6 def
+334 446 moveto 9 (C220) ht
+/text_height 12 def
+/text_width 6 def
+305 448 moveto 9 (+) ht
+/text_height 12 def
+/text_width 6 def
+405 494 moveto 9 (C221) ht
+/text_height 12 def
+/text_width 6 def
+405 481 moveto 9 (5.1N) ht
+399 481 385 481 l
+392 459 18 111 69 a
+392 481 392 495 l
+392 463 392 477 l
+/text_height 12 def
+/text_width 6 def
+389 446 moveto 9 (C222) ht
+/text_height 12 def
+/text_width 6 def
+389 433 moveto 9 (100N) ht
+383 433 369 433 l
+376 411 18 111 69 a
+376 433 376 447 l
+376 415 376 429 l
+/text_height 12 def
+/text_width 6 def
+197 254 moveto 9 (C223) ht
+/text_height 12 def
+/text_width 6 def
+197 241 moveto 9 (330N) ht
+191 241 177 241 l
+184 219 18 111 69 a
+184 241 184 255 l
+184 223 184 237 l
+/text_height 12 def
+/text_width 6 def
+413 254 moveto 9 (C224) ht
+/text_height 12 def
+/text_width 6 def
+413 241 moveto 9 (100N) ht
+407 241 393 241 l
+400 219 18 111 69 a
+400 241 400 255 l
+400 223 400 237 l
+599 273 585 273 l
+592 251 18 111 69 a
+592 273 592 287 l
+592 255 592 269 l
+/text_height 12 def
+/text_width 6 def
+605 273 moveto 9 (20U) ht
+/text_height 12 def
+/text_width 6 def
+606 286 moveto 9 (C225) ht
+/text_height 12 def
+/text_width 6 def
+577 288 moveto 9 (+) ht
+/text_height 12 def
+/text_width 6 def
+685 286 moveto 9 (C226) ht
+/text_height 12 def
+/text_width 6 def
+685 273 moveto 9 (100N) ht
+679 273 665 273 l
+672 251 18 111 69 a
+672 273 672 287 l
+672 255 672 269 l
+/text_height 12 def
+/text_width 6 def
+861 582 moveto 9 (C227) ht
+/text_height 12 def
+/text_width 6 def
+861 569 moveto 9 (3.6N) ht
+855 569 841 569 l
+848 547 18 111 69 a
+848 569 848 583 l
+848 551 848 565 l
+/text_height 12 def
+/text_width 6 def
+861 238 moveto 9 (C228) ht
+/text_height 12 def
+/text_width 6 def
+861 225 moveto 9 (3.6N) ht
+855 225 841 225 l
+848 203 18 111 69 a
+848 225 848 239 l
+848 207 848 221 l
+
+showpage
+      

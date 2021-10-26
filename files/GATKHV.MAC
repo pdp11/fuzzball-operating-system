@@ -1,0 +1,576 @@
+	.TITLE	GATKHV	Network HDLC Driver for the KH(V)11
+	.SBTTL	PDP11/DCN Network HDLC Driver
+	.LIST	ME,MEB
+	.NLIST	CND
+	.ENABL	LC
+
+;
+; PDP11/DCN Network HDLC Driver
+;
+; This module is an extension of the network processes. It transmits
+; and receives packets using the KH(V)11 HDLC framing interface.
+;
+
+;
+; External Symbols:
+;
+	.GLOBL	.WAIT,.SKED,.ASYN,.STIM ;Supervisor services
+	.GLOBL	NETINP,NETOUT		;Process initialization
+;
+; Entry Symbols:
+;
+	.GLOBL	KHIPAT			;Input	process control vector
+	.GLOBL	KHOPAT			;Output process control vector
+;
+; System definitions:
+;
+	.ASECT
+	.MCALL	.COM  .CHR  .PSA  .GAT	.PAT	;DCNLIB definitions
+	.MCALL	.SETV	.CTIM	.SKED	;DCNLIB macros
+.PAGE
+	.SBTTL	Define common date
+	.COM				;Define common date
+.PAGE
+	.SBTTL	Define ASCII code
+	.CHR				;Define ASCII code
+.PAGE
+	.SBTTL	Define Process Storage Areas
+	.PSA				;Define process storage areas
+.PAGE
+	.SBTTL	Define Gateway/Bridge Storage Areas
+	.GAT				;Define Gateway/Bridge storage areas
+;
+NUMFLG	=	2			;Number of inserted XMT flags
+;
+.	=	PARPRI
+;.	=	PARADR + 4
+;
+PARKIR: .BLKW		;KH11 CSR/IR contents at time of interrupt
+;
+PAROII: .BLKW		;Count of KHOINI entries
+PARIII: .BLKW		;Count of KHIINI entries
+PARRST: .BLKW		;Count of KHORST entries
+PARRIN: .BLKW		;Count of KHRINI entries
+PARISI: .BLKW		;Count of KHISIO entries
+PARIIN: .BLKW		;Count of KHIINT entries
+PARACS: .BLKW		;KHCSR(R2) contents after the last KHIINT entry
+PARIAS: .BLKW		;Count of KHIASY entries
+PARRDN: .BLKW		;Count of KHIASY entries as RCV done
+PARRRD: .BLKW		;Count of KHIASY entried with scheduled RCV done.
+PAROSI: .BLKW		;Count of KHOSIO entries
+PAROIN: .BLKW		;Count of KHOINT entries
+PARRTD: .BLKW		;Count of KHOINT entries with scheduled XMT done
+PARASY: .BLKW		;Count of KHOASY entries
+PARCWT: .BLKW		;Count of KHTCWT entries
+;
+PARRXI: .BLKW		;Count: RCV Exceptional Interrupts
+PARRCR: .BLKW		;Count: RCV CRC errors
+PARAFE: .BLKW		;Count: RCV Abort Frame Error
+PAROVR: .BLKW		;Count: RCV Overruns
+PARBC0: .BLKW		;Count: Byte Count Zero Interrupts
+PARIBC: .BLKW		;Count: IBC errors
+;
+PARDSC: .BLKW		;Count: Data Set Change
+;
+PARTXI: .BLKW		;Count: XMT Exceptional Interrupts
+PARFLG:	.BLKW		;Flag: Waiting for Flag completion
+.PAGE
+	.SBTTL	Definitions for the KH(V)11 Synchronous Dataset Adaptor
+
+.	=	0			;Start of KH-CSRs
+KHCSR:	.BLKW				;Command Status Register
+KHEXTA: .BLKW				;Extended Address Register
+	.BLKW				;Spare
+	.BLKW				;Spare
+KHIMA:	.BLKW				;Inbound Memory Address Register
+KHIBC:	.BLKW				;Inbound Byte Count Register
+KHOMA:	.BLKW				;Outbound Memory Address Register
+KHOBC:	.BLKW				;Outbound Byte Count Register
+
+;
+; The following are WD1933 HDLC Chip registers.
+;
+
+KHWCR1: .BLKW				;Command Register 1
+KHWCR2: .BLKW				;Command Register 2
+KHWCR3: .BLKW				;Command Register 3
+KHWRHR: 				;Read:	Receive Holding Register
+KHWAR:	.BLKW				;Write: Address Register
+KHWIR:					;Read: Interrupt Register
+KHWTHR: .BLKW				;Write: Transmit Holding Register
+KHWSR:	.BLKW				;Status Register
+;					; End of KH(V)11 CSRs
+
+;
+; KHCSR bit definitions:
+;
+
+;					 |
+;	 +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+;	 |MST|	 |   |	 |1X |NR |OD |ID |DMA|INT| O | I |IB |IA |ID |OD |
+;	 |RST|	 |   |	 |32x|ZI |ENA|ENA|TO |RQ |BC0|BC0|ENA|ENA|REQ|REQ|
+;	 +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+;	     |		 |	     |		 |	     |
+
+;
+; Name		 Mask		    Bit Function
+;
+
+KHMRST	=	100000		   ;15 WD1933 Master Reset
+KH32X	=	  4000		   ;11 1X 32X clock bit (1=1X)
+KHNRZ	=	  2000		   ;10 Set NRZI mode
+KHODEN	=	  1000		   ;09 Enable outbound DMA (from 11)
+KHIDEN	=	   400		   ;08 Enable inbound DMA  (to 11)
+KHDMAT	=	   200		   ;07 DMA timeout occurred
+KHINTR	=	   100		   ;06 Interrupt request from HDLC chip
+KHOBC0	=	    40		   ;05 Byte Count Zero on output (from 11)
+KHIBC0	=	    20		   ;04 Byte Count Zero on input  (to 11)
+KHIBEN	=	    10		   ;03 Enable Interrupt B (HDLC requests)
+KHIAEN	=	     4		   ;02 Enable Interrupt A (BC0 or DMA timeout
+KHDRQO	=	     2		   ;01 TX data request from HDLC chip
+KHDRQI	=	     1		   ;00 RX data available from HDLC chip
+.PAGE
+;
+; KHEXTADR definition:
+;
+
+;					 |
+;	 +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+;	 |   |	 |   |	 |   |	 |   |	 |   |	 |   |	 |IMA|IMA|OMA|OMA|
+;	 |   |	 |   |	 |   |	 |   |	 |   |	 |   |	 | 17| 16| 17| 16|
+;	 +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+;	     |		 |	     |		 |	     |
+
+;
+; Name		 Mask		    Bit Function
+;
+
+KHEXAO	=	     3		   ;1-0 Outbound Extended Address bits
+KHEXAI	=	    14		   ;3-2 Inbound Extended Address bits
+
+;
+; Command Register 1 Bits:
+;
+
+;					 |
+;	 +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+;	 |   |	 |   |	 |   |	 |   |	 |ACT|ACT|TC |TC |TBL|TBL|DTR|MSC|
+;	 |   |	 |   |	 |   |	 |   |	 |RCV|XMT|   |	 |   |	 |   |OUT|
+;	 +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+;	     |		 |	     |		 |	     |
+
+;
+; Name		 Mask		    Bit Function
+;
+
+ACTRCV	=	   200		   ;7 Activate Receive
+ACTXMT	=	   100		   ;6 Activate Transmit
+TC	=	    60		   ;5-4 Transmit Commands
+TCDATA	=	     0		   ;TC: Send Data
+TCABO	=	    20		   ;TC: Send ABORT
+TCFLAG	=	    40		   ;TC: Send FLAG
+TCFCS	=	    60		   ;TC: Send Frame Check Sequence
+TBL	=	    14		   ;3-2 Transmit Byte Length
+TBL8	=	     0		   ;TBL: 8
+TBL7	=	     4		   ;TBL: 7
+TBL6	=	    10		   ;TBL: 6
+TBL5	=	    14		   ;TBL: 5
+HLCDTR	=	     2		   ;1 Turn on Data Terminal Ready
+MSCOUT	=	     1		   ;0 Turn on Miscellaneous Out
+.PAGE
+;
+; Command Register 2 Bits.
+;
+
+;					 |
+;	 +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+;	 |   |	 |   |	 |   |	 |   |	 |SEL|ADC|XTA|IR |IR |GOA|SLF|ATO|
+;	 |   |	 |   |	 |   |	 |   |	 |2CB|ENA|ENA|BL |BL |HED|TST|FLG|
+;	 +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+;	     |		 |	     |		 |	     |
+
+;
+; Name		 Mask		    Bit Function
+;
+
+SEL2CB	=	   200		   ;7 Select 2 Control Bytes Per Frame
+ADCENA	=	   100		   ;6 Enable Address Compare
+XTAENA	=	    40		   ;5 Enable Extended Address
+IRBL	=	    30		   ;4-3 I-Field Receive Byte Length
+IRBL8	=	    00		   ;IRBL: 8
+IRBL7	=	    10		   ;IRBL: 7
+IRBL6	=	    20		   ;IRBL: 6
+IRBL5	=	    30		   ;IRBL: 5
+GAHEAD	=	     4		   ;2 Enable Go-Ahead Mode
+HDTEST	=	     2		   ;1 Enable Self Test Mode
+AUTFLG	=	     1		   ;0 Enable Auto Flag Mode
+
+;
+; Command Register 3 Bits.
+;
+
+;					 |
+;	 +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+;	 |   |	 |   |	 |   |	 |   |	 |   |	 |   |	 |   |XR |XR |XR |
+;	 |   |	 |   |	 |   |	 |   |	 |   |	 |   |	 |   | BL| BL| BL|
+;	 +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+;	     |		 |	     |		 |	     |
+
+;
+; Name		 Mask		    Bit Function
+;
+
+XRBL	=	     7		   ;2-0 Residual Byte Length (Bits)
+XRBL0	=	     0		   ;XRBL: 0 (no residual byte)
+XRBL1	=	     1		   ;XRBL: 1
+XRBL2	=	     2		   ;XRBL: 2
+XRBL3	=	     3		   ;XRBL: 3
+XRBL4	=	     4		   ;XRBL: 4
+XRBL5	=	     5		   ;XRBL: 5
+XRBL6	=	     6		   ;XRBL: 6
+XRBL7	=	     7		   ;XRBL: 7
+.PAGE
+;
+; Status Register Bits.
+;
+
+;					 |
+;	 +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+;	 |   |	 |   |	 |   |	 |   |	 |RI |CAR|DSR|MSC|RCV|AF |OR |CRC|
+;	 |   |	 |   |	 |   |	 |   |	 |   |DET|   |IN |IDL|ERR|ERR|ERR|
+;	 +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+;	     |		 |	     |		 |	     |
+
+;
+; Name		 Mask		    Bit Function
+;
+
+HDRING	=	   200		   ;7 Ring Indicator
+HDDCD	=	   100		   ;6 Data Carrier Detect
+HDDSR	=	    40		   ;5 Data Set Ready
+MISCIN	=	    20		   ;4 Miscellaneous In
+RCVIDL	=	    10		   ;3 Receive IDLE
+RC	=	     7		   ;2-0 Residual Count (Bits in Last)
+AFERR	=	     4		   ;2 If REOM Errors: Abort Frame
+ORERR	=	     2		   ;1 If REOM Errors: Overrun
+CRCERR	=	     1		   ;0 If REOM Errors: CRC Error
+
+;
+; Interrupt Register Bits.
+;
+
+;					 |
+;	 +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+;	 |   |	 |   |	 |   |	 |   |	 |REM|REM|XEM|XEM|DS |DRQ|DRQ|IRQ|
+;	 |   |	 |   |	 |   |	 |   |	 |   |ERR|   |ERR|CNG| I | O |	 |
+;	 +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+;	     |		 |	     |		 |	     |
+
+;
+; Name		 Mask		    Bit Function
+;
+
+REOM	=	   200		   ;7 Receive End-Of-Message OK
+REOMER	=	   100		   ;6 Receive End-Of-Message Errors
+XEOM	=	    40		   ;5 Transmit Done OK
+XEOMER	=	    20		   ;4 Transmit Done Underrun
+DSCHG	=	    10		   ;3 Data Set Change Detected
+DRQI	=	     4		   ;2 Data Request Input (RHR Full)
+DRQO	=	     2		   ;1 Data Request Output (THR Empty)
+INTRQ	=	     1		   ;0 Interrupt Request
+.PAGE
+	.SBTTL	Process save area extension (ASR)
+
+;
+; Process save area extension (asr)  (Interrupt A)
+;
+
+.	=	GATENR
+ASRADR: .BLKW			;Input buffer address
+ASRCNT: .BLKW			;Input buffer byte count
+	.BLKW	REGEND/2+NTISTK ;process stack
+ASREND	=	.		;end of asr extension
+
+;
+; Process save area extension (asx)  (Interrupt B)
+;
+
+.	=	GATENX
+ASXADR: .BLKW			;Output buffer address
+ASXCNT: .BLKW			;Output buffer byte count
+	.BLKW	REGEND/2+NTOSTK ;process stack
+ASXEND	=	.		;end of asx extension
+.PAGE
+	.SBTTL	Procedure Segment
+
+;
+; Procedure segment
+;
+; Supervisor-state procedure
+; Dsects: r2 = dev, r3 = par, r4 = reg, r5 = psa
+;
+; Note: calling process sets r0 = byte count, r1 = starting address.
+; At completion of transfer r0 = byte count. record usrt
+; Input error as hardware error.
+;
+	.PSECT	$KERI,RO,I
+KHVCOD	==	.			;dummy label to find the thing
+
+;
+; Initialize KH(V)11 Device
+;
+
+KHOINI: INC	PAROII(R3)		;Count it
+	BIS	#KHIBEN,KHCSR(R2)	;Finally enable B Interrupt
+	RTS	PC
+;
+KHIINI: INC	PARIII(R3)		;Count it
+	JSR	PC,KHRINI		;Initialize device
+;
+	MOV	#ASY+EXTBAS,R1 		;allocate input vector
+	.SETV
+	ADD	#4,R0			;Allocate output vector
+	MOV     #INT+EXTBAS,R1		;
+	.SETV				
+	RTS	PC
+
+;
+; Initialize the board
+;
+
+KHRINI: INC	PARRIN(R3)		;Count it
+	MOV	#KHMRST,KHCSR(R2)	;Perform a Master Reset
+1$:	TST	KHCSR(R2)		;Wait for Reset Done
+	BMI	1$			;
+	MOV	#200.,-(SP)		;
+2$:	DEC	@SP			;
+	BNE	2$			;
+	TST	(SP)+			;
+	MOV	#AUTFLG,KHWCR2(R2)	;Send Flags
+	MOV	#ACTXMT!HLCDTR,KHWCR1(R2);Turn on xmitter and raise DTR
+	MOV	#KH32X!KHIAEN,KHCSR(R2) ;Set 1*Clock and enable A interrupts
+RTSPC:	RTS	PC			;Back to caller
+.PAGE
+	.SBTTL	Initialize Input Block Transfer
+
+;
+; Initialize Input Block Transfer
+;
+
+KHISIO: INC	PARISI(R3)		;Count it
+	MOV	#500.,-(SP)		;set counter
+1$:	BIT	#KHIDEN,KHCSR(R2)	;Inbound DMA enable clear?
+	BEQ	2$			;yes
+	DEC	(SP)			;dec counter
+	BNE	1$			;loop
+2$:	TST	(SP)+			;adjust stack
+	MOV	R1,ASRADR(R5)		;Save address into PSA
+	MOV	R1,KHIMA(R2)		;Set up rcv memory address
+	ADD	#BUFTLR,R0		;Allow space at the end for CRC
+	MOV	R0,ASRCNT(R5)		;Save byte count into PSA
+	NEG	R0			;Conv Count to BC increments
+	MOV	R0,KHIBC(R2)		;Load rcv. byte count reg
+	BIC	#KHIBC0,KHCSR(R2)	;Clr possible IBC0 indicator
+	BIS	#KHIDEN,KHCSR(R2)	;Enable inbound DMA
+	BISB	#ACTRCV,KHWCR1(R2)	;Finally turn on receiver
+	JMP	.WAIT
+.PAGE
+	.SBTTL	Device Interrupt Routine A: BC0 and DMA Timeout
+
+;
+; Device interrupt Routine A: BC0 and DMA Timeout
+;
+
+KHIASY: INC	PARIAS(R3)	;Count it
+	MOV	KHCSR(R2),PARACS(R3);Save it
+	RTS	PC		;And forget it
+.PAGE
+	.SBTTL	Device Interrupt Routine B: HDLC Chip Interrupts
+
+;
+; Device Interrupt Routine B: HDLC Chip Interrupts 
+;
+
+KHIINT: INC	PARIIN(R3)	;Count it
+;
+	MOV	KHWSR(R2),R0	;Get SR into High and low byte of R0
+	CLRB	R0		;Zap low byte of R0
+	BISB	KHWIR(R2),R0	;Set IR into low byte
+	MOV	R0,PARKIR(R3)	;Save it for now
+;
+	BIT	#DSCHG,R0	;Data set change?
+	BEQ 	20$		;No
+	BIS	#REOMER,R0	;Mark to Re-init receiver
+;
+20$:	BIT	#REOM!REOMER!XEOMER,R0 ;RCV with or without error?
+	BEQ     10$		;Try Transmit done request or error
+;
+; Take care of receive requests
+;
+	INC	PARRDN(R3)	;Count it
+;
+	BIT	#KHIBC0,KHCSR(R2);RXI in REOM(ERR) after BC0
+	BNE	1$		;Byte count 0 interrupt
+	BIT	#REOMER!XEOMER,R0 ;RCV or XMT error?
+	BEQ	6$		;No.
+	BIT	#REOMER,R0	;If Receive EOM with Error
+	BEQ	5$		;Branch if no receive error
+;
+1$:	BIC	#KHIDEN!KHIBC0,KHCSR(R2) ;Clear Inbound DMA enable & BC0
+	BIT	#KHIDEN!KHIBC0,KHCSR(R2) ;Wait until done
+	BNE	1$
+	BIT	R0,#CRCERR*256. ;If checksum error
+	BEQ	2$		;Otherwise
+	INC	PARRCR(R3)	;Count checksum error
+2$:	BIT	R0,#AFERR*256.	;Abort frame error?
+	BEQ	3$		;No
+	INC	PARAFE(R3)	;Count Abort frame errors
+3$:	BIT	R0,#ORERR*256.	;Overrun error?
+	BEQ	4$		;No
+	INC	PAROVR(R3)	;Count overrun.
+4$:	BIT	#KHIBC0,KHCSR(R2) ;BC zero interrupt?
+	BEQ	5$		;No
+	INC	PARBC0(R3)	;Count it
+	INC	PARRXI(R3)	;Count general receive error
+5$:	JSR	PC,KHRINI	;Reset chip
+	BIS	#KHIBEN,KHCSR(R2) ;Finally enable B Interrupt
+	BIS	#1,REGPS(R4)	;Indicate RCV error
+	BNE	9$		;	
+.PAGE
+6$:	BIT	R0,#REOM	;If Receive End of Message (no errors)
+	BEQ	9$		;Otherwise
+	TST	ASRADR(R5)	;Is there a buffer?
+	BEQ	5$		;If none there, treat as RXI
+	ADD	KHIBC(R2),ASRCNT(R5);Update byte count with residual
+	ADD	ASRCNT(R5),ASRADR(R5);Get pointer past last byte rcvd
+	CMP	ASRADR(R5),KHIMA(R2);Insure that we agree with hardware
+	BEQ	8$		;We do
+	INC	PARIBC(R3)	;Otherwise count IBC error
+	BR	5$		;Treat as RXI
+8$:	SUB	#2,ASRCNT(R5)	;Account for CRC
+	BMI	5$		;Treat as RXI if too short
+9$:	TSTB	PSASTS(R5)	;Is RCV interrupt unsolicited?
+	BMI	10$		;Yes
+	CLR	ASRADR(R5)	;Clear buffer indicator
+	MOV	ASRCNT(R5),(R4) ;Set real byte count
+	INC	PARRRD(R3)	;Count it
+	.SKED			;Schedule the PSA
+;
+10$:	BIT	#XEOM!XEOMER!DSCHG,PARKIR(R3) ;Output done request?
+	BNE	11$		;Yes
+	RTS	PC
+;
+11$:	MOVB	PARPID(R3),R1	;Signal output side
+	MOV	#ASY,R0 	;Set Async Interrupt event
+	JMP	.ASYN		;Process input side
+;
+
+.PAGE
+	.SBTTL	Initialize Block Transfer Output
+
+;
+; Initialize Block Transfer Output
+;
+
+KHOSIO: INC	PAROSI(R3)	;Count it
+	MOV	R1,KHOMA(R2)	;Load xmit memory addr. reg.
+	MOV	R1,ASXADR(R5)	;Save address
+	MOV	R0,ASXCNT(R5)	;Save byte count
+	NEG	R0		;Make byte count to residal count
+	MOV	R0,KHOBC(R2) ;Load xmit byte count reg
+	BIS	#KHODEN,KHCSR(R2);Start up outbound DMA
+;
+	JSR	PC,.WAIT	;enter wait state
+	MOV	PARTRY(R3),R0	;Start output timer
+	SUB	R0,RESTIM(R5)	;Set residual time to next poll
+	JMP	.STIM		;
+.PAGE
+	.SBTTL	Device Output Interrupt Routine: Scheduled from RCV Interrupt
+
+;
+; Device Output Interrupt Routine: Scheduled from RCV Interrupt
+;
+
+KHOINT:	INC	PAROIN(R3)	;Count it
+;
+	MOV	PARKIR(R3),R0	;Get destructed register contents
+;
+	BIT	R0,#XEOM!XEOMER ;If xmit int,
+	BEQ	3$		;Otherwise
+1$:	BIC	#KHODEN!KHOBC0,KHCSR(R2);Disable outbound DMA & clear OBC0
+	BIT	#KHODEN!KHOBC0,KHCSR(R2);Wait until done
+	BNE	1$
+;
+	BIT	R0,#XEOMER	;If xmit EOM with error
+	BEQ	4$		;Otherwise:Transmit EOM w/out error
+;
+	INC	PARTXI(R3)	;Count it
+	BIS	#DSCHG,R0	;Pretend DSCHG to reset the device
+5$:	BIS	#1,REGPS(R4)	;Error return
+;
+4$:	TSTB	PSASTS(R5)	;Is process running?
+	BMI	3$		;Forget it if not
+;
+	CMP	PARFLG(R3),#NUMFLG ;Enough flags inserted?
+	BEQ	2$		;Yes
+	BIS	#TCFLAG,KHWCR1(R2);Insert a flag character
+	INC	PARFLG(R3)	;Flag waiting for Flag
+	BR	3$		;Wait for next interrupt
+;
+2$:	CLR	PARFLG(R3)	;Clear Flag flag
+	BIC	#TCFLAG,KHWCR1(R2);Clear inserting flag characters
+;
+	MOV	R0,-(SP)	;Save R0
+	.CTIM			;End operation
+	ADD	R0,RESTIM(R5)	;Add remaining timer ticks
+	CLR	ASXADR(R5)	;Clear buffer indicator
+	INC	PARRTD(R3)	;Count it
+	.SKED			;Schedule XMT PSA
+	MOV	(SP)+,R0	;Restore R0
+;
+3$:	BIT	R0,#DSCHG	;If Data Set Change Interrupt
+	BNE	6$		;Yes
+	RTS	PC
+6$:	JSR	PC,KHRINI	;Reset device
+	BIS	#KHIBEN,KHCSR(R2);Re-enable B interrupt
+	BIS	#REOMER,R0	;Take care of re-init the input
+	INC	PARDSC(R3)	;Count data change interrupts
+	BIC	#DSCHG,R0	;Eventually schedule XMT process
+	BR	5$		;with an error
+;
+.PAGE
+
+KHOASY:	TSTB	R0		;is this a timer interrupt?
+	BNE	KHOINT		;Br if no
+	INC	PARASY(R3)	;Count it
+	BIC	#KHODEN!KHOBC0,KHCSR(R2) ;Turn off outbound DMA
+	BIS	#1,REGPS(R4)	;Signal error
+	CLR	ASXADR(R5)	;Clear buffer indicator
+	JMP	.SKED		;Schedule it
+;
+KHORST:	INC	PARRST(R3)	;Count reset
+	RTS	PC		;Return
+;
+.PAGE
+	.SBTTL	Data segment / Process headers
+
+;
+; Data segment
+;
+
+	.PSECT	$KERD,RO,D
+
+;
+; Process headers
+;
+;               -------------------------ASY----INI----SIO----INT----RST---
+;
+KHIPAT: .PAT	ASREND,NETINP,PRI4,<0,KHIASY,KHIINI,KHISIO,KHIINT>
+KHOPAT: .PAT	ASXEND,NETOUT,PRI4,<0,KHOASY,KHOINI,KHOSIO,KHOINT,KHORST>
+;
+;
+; End of KH(V)11 HDLC Gateway front end routines.
+;
+
+	.END
+ssHg                                                                                                                                                                                                                                                                     

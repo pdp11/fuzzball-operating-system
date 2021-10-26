@@ -1,0 +1,404 @@
+	.TITLE	DSKDU	MSCP disk driver
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn mscp disk driver
+;
+; This module is an extension of the disk driver process. it services
+; the dec uda50 mscp disk controller and drives. Note that this driver
+; supports up to six partitions on mscp unit 0 (hard disk), together
+; with one partition each on mscp units 1 and 2 (floppette disks). RT-11
+; drives 0-5 are associated with the six partitions on unit 0, while
+; drive 6 is associated with unit 1 and drive 7 with unit 2.
+;
+; Max blocks: 65535, rt-11 directory segments: 32 (64 blocks), rt-11 id:
+; 50
+;
+; Note: standard csr/vector addresses are 172150/154.
+;
+; External symbols
+;
+	.GLOBL	DSKINI,.WAIT,.SKED
+;
+; Entry symbols
+;
+	.GLOBL	DUDPAT		;process control vector
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.PSA,.DFBLK,.DSK,.PAT ;dcnlib definitions
+	.COM			;define common data
+	.PSA			;define process save area
+	.DFBLK			;define message codes
+	.DSK			;define disk parameters
+;
+; Module definitions
+;
+RTYCNT	=	8.		;max error retry count
+TO.MIN	=	0		;spinup timeout (sec)
+P.LEN	=	60		;command/response buffer size
+;
+; Control message opcodes
+;
+OP.ABT	=	001		;abort command
+OP.GCS	=	002		;get command status command
+OP.GUS	=	003		;get unit status command
+OP.SCC	=	004		;set controller characteristics command
+OP.SEX	=	007		;serious exception end message
+OP.AVL	=	010		;available command
+OP.ONL	=	011		;online command
+OP.SUC	=	012		;set unit characteristics command
+OP.DAP	=	013		;determine access paths command
+OP.ACC	=	020		;access command
+OP.CCD	=	021		;compare controller data command
+OP.ERS	=	022		;erase command
+OP.FSH	=	023		;flush command
+OP.REP	=	024		;replace command
+OP.CHD	=	040		;compare host data command
+OP.RD	=	041		;read command
+OP.WR	=	042		;write command
+OP.AVA	=	100		;available attention message
+OP.DUP	=	101		;duplicate unit number attention message
+OP.APA	=	102		;access path attention message
+OP.END	=	200		;end message flag
+;
+; Generic command modifiers
+;
+MD.XPR	=	100000		;express request
+MD.CMP	=	040000		;compare
+MD.CLX	=	020000		;clear serious exception
+MD.ERR	=	010000		;force error
+MD.SCH	=	004000		;suppress caching (high speed)
+MD.SCL	=	002000		;suppress caching (low speed)
+MD.SEC	=	001000		;suppress error correction
+MD.SER	=	000400		;suppress error recovery
+MD.SSH	=	000200		;suppress shadowing
+MD.WBN	=	000100		;write back (non-volatile)
+MD.WBV	=	000040		;write back (volatile)
+MD.WRS	=	000020		;write shadow set one unit at a time
+;
+; OP.AVL command modifiers
+;
+MA.ACD	=	000002		;all class drivers
+MA.SPD	=	000001		;spin down
+;
+; OP.FSH command modifiers
+;
+MF.VOL	=	000002		;volatile only
+MF.UNT	=	000001		;flush entire unit
+;
+; OP.GUS command modifiers
+;
+MG.NXT	=	000001		;next unit
+;
+; OP.ONL command modifiers
+;
+MO.MFE	=	000002		;ignore media format error
+MO.RIP	=	000001		;allow self destruction
+;
+; OP.ONL and OP.SUC command modifiers
+;
+MO.AHI	=	000040		;alter host identifier
+MO.SUS	=	000020		;shadow unit specified
+MO.CWB	=	000010		;clear write-back data lost
+MO.WRP	=	000004		;set write protect
+;
+; OP.REP command modifiers
+;
+MR.PRI	=	000001		;primary replacement block
+;
+; End message flags
+;
+EF.BBR	=	200		;bad block reported
+EF.BBU	=	100		;bad block unreported
+EF.LOG	=	040		;error log generated
+EF.XCP	=	020		;serious exception
+;
+; Controller flags
+;
+CF.ATN	=	200		;enable attention messages
+CF.MSC	=	100		;enable miscellaneous error log messages
+CF.OTH	=	040		;enable other host's error log messages
+CF.THS	=	020		;enable this host's error log messages
+CF.MLH	=	004		;multi-host
+CF.SHD	=	002		;shadowing
+CF.576	=	001		;576 byte sectors
+;
+; Unit flags
+;
+UF.REP	=	100000		;controller initiated bad block replacement
+UF.ISS	=	040000		;Inactive shadow set unit
+UF.WPH	=	020000		;write protect (hardware)
+UF.WPS	=	010000		;write protect (software or volume)
+UF.SCH	=	100000		;suppress caching (high speed)
+UF.SCL	=	040000		;suppress caching (low speed)
+UF.RMV	=	000200		;Removable media
+UF.WBN	=	000100		;write back (non-volatile)
+UF.576	=	000004		;576 byte sectors
+UF.CPW	=	000002		;compare writes
+UF.CPR	=	000001		;compare reads
+;
+; Error log message format codes
+;
+FM.CTL	=	000		;controller error
+FM.BUS	=	001		;host memory access error
+FM.DSK	=	002		;disk transfer error
+FM.SDI	=	003		;SDI error
+FM.SML	=	004		;small disk error
+;
+; Error log message flags
+;
+LF.SUC	=	200		;operation successful
+LF.CON	=	100		;operation continuing
+LF.SNR	=	001		;sequence number reset
+;
+; Status codes
+;
+ST.MSK	=	37		;status code mask
+ST.SUC	=	00		;success
+ST.INV	=	01		;invalid command
+ST.ABT	=	02		;command aborted
+ST.OFL	=	03		;unit offline
+ST.AVL	=	04		;unit available
+ST.FMT	=	05		;media format error
+ST.WRP	=	06		;write protected
+ST.CMP	=	07		;compare error
+ST.DAT	=	10		;data error
+ST.BUF	=	11		;host buffer access error
+ST.CTL	=	12		;controller error
+ST.DRV	=	13		;drive error
+ST.DIA	=	37		;message from internal diagnostic
+;
+; Subcodes of ST.OFL
+;
+SF.UNK	=	00*40		;unknown or on other ctlr
+SF.UNM	=	01*40		;unmounted or RUN/STOP at STOP
+SF.INO	=	02*40		;inoperative
+SF.DUP	=	04*40		;duplicate unit number
+SF.DIS	=	10*40		;disabled by FS or diagnostic
+;
+; Ownership flags
+;
+OWN	=	100000		;UDA owns ring buffer entry
+FLAG	=	040000		;UDA should interrupt on ring transition
+;
+; Initialization sequence definitions
+;
+ISTEP1	=	004000		;initialization step 1
+STEP	=	100000		;step switch step 1
+IE	=	000200		;enable interrupt step 1
+GO	=	000001		;GO step 4
+IERROR	=	100000		;error bit - PGM, 08/25/86
+;
+; Process save area extension (dua)
+;
+.	=	DASEND
+INTRID:	.BLKW	2		;interrupt identity area
+MRING:	.BLKW	2		;0 message ring
+CRING:	.BLKW	2		;1 command ring
+REFSEQ:	.BLKW	1		;reference number
+NEXT:	.BLKW	1		;address of post interrupt routine
+INITFL:	.BLKW	1		;initialization flag
+ISTEP:	.BLKW	1		;initialization step
+VOLSIZ:	.BLKW	10		;unit size table
+;
+; Command/response packet buffer
+;
+LN.CMD:	.BLKW	1		;packet length
+VC.CMD:	.BLKW	1		;virtual circuit ID
+CBUFF	=	.
+P.CRF:	.BLKW	2		;reference number
+P.UNIT:	.BLKW	1		;unit number
+	.BLKW	1		;reserved
+P.OPCD:	.BLKB	1		;opcode/endcode
+	.BLKB	1		;reserved
+P.STS:	.BLKW	1		;modifiers/status
+P.BCNT:	.BLKW	2		;byte count
+P.BUFF:	.BLKW	6		;buffer descriptor
+P.LBN:	.BLKW	2		;logical block number
+P.HTMO	=	CBUFF+20	;host timeout
+P.BADB	=	CBUFF+34	;first bad block
+P.UNSZ	=	CBUFF+44	;unit size (response)
+.	=	CBUFF+P.LEN	;end of buffer
+;
+	.BLKW	REGEND/2+DSKSTK	;process stack
+DUDEND	=	.		;end of dud extension
+;
+; UDA device registers
+;
+.	=	0
+UDAIP:	.BLKW	1		;address and polling register
+UDASA:	.BLKW	1		;status and address register
+	.PAGE
+;
+; Procedure segment
+;
+; Supervisor-state procedure
+; Dsects: r2 = dev, r3 = par, r4 = reg, r5 = psa
+;
+	.PSECT	$KERI,RO,I
+;
+; Start i/o operation
+;
+DSKGO:	JSR	PC,.WAIT	;slouch in wait state
+START:	CLR	R0		;is port initializaed
+	TST	ISTEP(R5)
+	BPL	INIT		;branch if no
+	MOV	UDASA(R2),R0	;yes. is port running
+	BIT	#IERROR+ISTEP1,R0
+	BEQ	DISPAT		;branch if yes
+INIT:	MOV	#100000,INITFL(R5) ;no. set initialize
+	INCB	DASERC(R5)	;is retry count exceeded
+	CMPB	DASERC(R5),#RTYCNT
+	BHI	DUHERR		;hard error if yes
+	MOV	R0,UDAIP(R2)	;no. start port
+	MOV	#ISTEP1,ISTEP(R5) ;initialize
+	MOV	R5,R1
+	ADD	#CBUFF,R1
+	MOV	R1,NEXT(R5)
+	MOV	PARVEC(R3),R0	;1 vector, ring size, etc.
+	ASH	#-2,R0
+	BIS	#STEP+IE,R0
+	MOV	R0,(R1)+
+	MOV	R5,@R1		;2 ring pointer low
+	ADD	#MRING,(R1)+
+	CLR	(R1)+		;3 ring pointer high
+	MOV	#GO,(R1)+	;4 go
+INISTP:	MOV	UDASA(R2),R0	;get udasa contents
+	BMI	INIT		;branch if error
+	BIT	R0,ISTEP(R5)	;is expected step bit set
+	BEQ	INISTP		;branch if no
+	ASL	ISTEP(R5)	;yes. advance to next step
+	MOV	@NEXT(R5),UDASA(R2) ;load this bit
+	ADD	#2,NEXT(R5)
+	TST	ISTEP(R5)
+	BMI	START		;branch if complete
+	RTS	PC		;wait for interrupt
+;
+DISPAT:	ASL	INITFL(R5)	;is timeout set
+	BCC	1$		;branch if yes
+	MOV	#OP.SCC,R0	;no. initialize controller 
+	JSR	PC,GETCBF
+	MOV	#TO.MIN,P.HTMO(R5) ;insert timeout
+	MOV	#DISPAT,NEXT(R5)
+	BR	POLL
+;
+1$:	JSR	PC,IOXFER	;initialize i/o
+	MOV	#DUEXIT,NEXT(R5)
+POLL:	MOV	#OWN,CRING+2(R5) ;start polling
+	MOV	UDAIP(R2),R0
+	MOV	#OWN+FLAG,MRING+2(R5)
+STUFIT:	RTS	PC
+;
+DUHERR:	INC	PARTRY(R3)	;increment total errors
+	MOV	P.BADB(R5),DASBLK(R5) ;retrieve block number
+	BIS	#1,REGPS(R4)	;all errors are hard errors
+	MOV	P.STS(R5),@R4
+	JMP	.SKED		;resume process
+;
+DUEXIT:	CLR	DASRWC(R5)	;update word count
+	MOVB	DASDRV(R5),R0	;stash volume size
+	ASL	R0
+	ADD	R5,R0
+	MOV	VOLSIZ(R0),PARMAX(R3)
+	JMP	.SKED		;resume process
+;
+; I/o interrupt service
+;
+DSKINT:	TSTB	PSASTS(R5)	;is process running
+	BMI	STUFIT		;branch if yes
+	TST	ISTEP(R5)	;no. is initialization in progress
+	BGT	INISTP		;branch if yes
+	MOV	UDASA(R2),R0	;no. is port running
+	BIT	#IERROR+ISTEP1,R0
+	BNE	INIT		;branch if no
+	MOV	P.STS(R5),R0	;yes. fetch status
+	BIC	#^C<ST.MSK>,R0
+	CMPB	P.OPCD(R5),#OP.END+OP.ONL ;was command online
+	BNE	6$		;branch if no
+	TST	R0		;yes. is command complete
+	BEQ	1$		;branch if yes
+	INCB	DASERC(R5)	;no. is retry count exceeded
+	CMPB	DASERC(R5),#RTYCNT
+	BLOS	8$		;no. try again
+	BR	DUHERR		;yes. sink with honor
+;	
+1$:	MOVB	DASDRV(R5),R0	;is this flopette
+	CMPB	R0,#6
+	BLO	2$		;branch if no
+	ASL	R0		;yes. save volume size
+	ADD	R5,R0
+	MOV	P.UNSZ(R5),VOLSIZE(R0)
+	BR	5$		;restart operatoin
+;
+2$:	MOV	R5,R0		;hard drive. partition units
+	ADD	#VOLSIZ,R0
+3$:	TST	P.UNSZ+2(R5)	;is remainder over 65535.
+	BEQ	4$		;branch if no
+	MOV	#-1,(R0)+	;yes. save next volume size
+	DEC	P.UNSZ+2(R5)
+	BR	3$
+;
+4$:	MOV	P.UNSZ(R5),(R0)+ ;save last volume size
+5$:	JMP	START		;restart operation
+;
+6$:	TST	R0		;is command complete
+	BNE	7$		;branch if no
+	JMP	@NEXT(R5)	;yes. lurch onward
+;
+7$:	CMP	R0,#ST.AVL	;command incomplete. is unit available
+	BNE	DUHERR		;branch if no
+8$:	MOV	#OP.ONL,R0	;yes. initialize online command
+	JSR	PC,GETCBF
+	BR	POLL
+;
+; Subroutine to initialize i/o command
+;
+IOXFER:	MOV	#OP.RD,R0	;initialize read command
+	JSR	PC,GETCBF
+	CMPB	#BC.WRT+CHNCTL,DASOPN(R5) ;is this write
+	BNE	1$		;branch if no
+	MOV	#OP.WR,P.OPCD(R5) ;yes. insert write command
+1$:	MOV	DASBLK(R5),P.LBN(R5) ;logical block
+	CMPB	DASDRV(R5),#6	;is this flopette
+	BHIS	2$		;branch if yes
+	MOVB	DASDRV(R5),P.LBN+2(R5) ;no. insert logical partition
+2$:	MOV	DASADR(R5),P.BUFF(R5) ;insert physical address
+	MOVB	DASADX(R5),P.BUFF+2(R5)
+	MOV	DASRWC(R5),R0	;insert byte count
+	ASL	R0
+	MOV	R0,P.BCNT(R5)
+	RTS	PC
+;
+; Subroutine to initialize command buffer
+;
+GETCBF:	MOV	R0,-(SP)	;save opcode
+	MOV	R5,R1		;initialize
+	ADD	#CBUFF-4,R1
+	MOV	#P.LEN,(R1)+	;insert length
+	CLR	(R1)+		;insert virtual circuit id
+	MOV	R1,MRING(R5)	;set ring pointers
+	MOV	R1,CRING(R5)
+	MOV	#P.LEN/2,R0	;clear buffer
+1$:	CLR	(R1)+
+	SOB	R0,1$
+	MOV	(SP)+,P.OPCD(R5) ;insert opcode
+	INC	REFSEQ(R5)	;insert reference number
+	MOV	REFSEQ(R5),P.CRF+2(R5)
+	MOVB	DASDRV(R5),R0	;is this flopette
+	SUB	#5,R0
+	BLE	2$		;branch if no
+	MOVB	R0,P.UNIT(R5)	;yes. insert unit number
+2$:	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$KERD,RO,D
+;
+; Process header
+;
+DUDPAT:	.PAT	DUDEND,DSKINI,PRI2,<0,DUHERR,DSKGO,DSKINT>
+;
+	.END
+             

@@ -1,0 +1,1123 @@
+	.TITLE	PING	DCN/PING USER PROCESS
+	.SBTTL	SYSTEM AND MODULE DEFINITONS
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn basic operating system - dcn/ping user process
+;
+; P i n g - packet inter net groper
+;
+; This program is an internet pinger and sounder. it zings packets
+; To various unsuspecting gateways and hosts and collects statistics
+; To embarass the implementers.
+;
+; External symbols
+;
+	.GLOBL	RDASC,RDOCT,HASH,RDDEC,GETARG
+	.GLOBL	GTHOST,RNAME,NAMRST,ERRLVL
+	.GLOBL	FLAGS,PRIDNT,OPNBLK,CTRL,HELP,NETAST
+	.GLOBL	PROCT,PRBYT,PRTPTR
+;
+; Entry symbols
+;
+	.GLOBL	NETDAT,NETSIG,INIT,KWKTBL,COM00
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR	;dcnlib definitions
+	.MCALL	.KWTAB,.GCLK,.PRIO ;dcnlib macros
+	.MCALL	$DFIH,$DFGH,$DFSIG ;moslib definitions
+	.MCALL	DFCON,DFFCB,OPNBLK,ADDR,CALL ;netlib macros
+	.MCALL	GETARG,ENTER,FORMAT
+	.MCALL	.EXIT,.CSISP,.ENTER,.WRITW,.PURGE,.CLOSE ;rt-11 macroni
+	.MCALL	.SPND,.RSUM,.MRKT,.CMKT
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	$DFIH			;define internet header
+	$DFGH			;define icmp protocol header
+	$DFSIG			;define interprocess signals
+	DFCON			;define connection block
+	DFFCB			;define file control block
+;
+; Module definitions
+;
+; Status flags (flags)
+;
+OPXBIT	=	100000		;connection open bit
+RPYBIT	=	040000		;use icmp ack bit
+XFRBIT	=	020000		;ping transfer in progress
+ACKBIT	=	010000		;ping waiting for ack
+TRCBIT	=	004000		;packet trace bit
+DMPBIT	=	002000		;packet dump bit
+FILBIT	=	001000		;statistics file open bit
+TIMBIT	=	000400		;timer running bit
+RNDBIT	=	000200		;random packet length bit
+TSPBIT	=	000100		;timestamp bit
+RTXBIT	=	000040		;retransmit bit
+;
+; Assembly parameters
+;
+RTPSIZ	=	256.		;rtp control block size
+SAMSIZ	=	2		;sample buffer size (blocks)
+	.PAGE
+	.SBTTL	NET PROCESSING
+;
+	.PSECT	$BOSI,RO,I
+;
+; Net completion routine
+;
+NETSUB:	JSR	PC,NETAST
+	RTS	PC
+;
+; Process net signals
+;
+NETSIG:	CMPB	R0,#SG.EST	;is this open
+	BEQ	1$		;branch if yes
+	CMPB	R0,#SG.CC	;no. is this close complete
+	BNE	2$		;branch if no
+	BIC	#OPXBIT,FLAGS	;yes. mark closed
+	.RSUM
+1$:	RTS	PC
+;
+2$:	JSR	PC,ABOR		;stop data transfer
+	RTS	PC
+;
+; Create and initialize packet
+;
+PACKET:	MOV	#1,R0		;gain clout
+	.PRIO
+	CALL	CTRL,#CM.GET,#TEMP,OPNBLK+CONPTR ;allocate and init ip packet
+	MOV	R0,-(SP)	;was it successful
+	BNE	1$		;branch if no
+	MOV	TEMP,R3		;yes. send it
+	MOV	PH.OFS(R3),R2
+	ADD	R3,R2
+	JSR	PC,SEND
+1$:	CLR	R0		;lose clout
+	.PRIO
+	MOV	(SP)+,R0
+	RTS	PC
+;
+; Process net packet
+;
+NETDAT:	MOV	R0,R3		;set packet pointer
+	MOV	PH.OFS(R3),R2
+	ADD	R3,R2
+	BIT	#DMPBIT,FLAGS	;is dump on
+	BEQ	1$		;branch if no
+	MOV	R3,R1		;yes. do it
+	JSR	PC,DUMP
+1$:	.GCLK			;recompute time of arrival
+	MOV	R0,PH.TIM(R3)
+	MOV	R1,PH.TIM+2(R3)
+	CMPB	GH.TYP(R2),#GC.RPY ;is this ack
+	BEQ	PKT8		;branch if yes
+	CMPB	GH.TYP(R2),#GC.TSR
+	BEQ	PKT8		;branch if yes
+;
+; Packet received from remote ping user
+;
+	MOV	R2,R0		;copy header fields
+	ADD	#GH.ID,R0
+	MOV	#AREA,R1
+	MOV	(R0)+,(R1)+	;gh.id
+	MOV	(R0)+,(R1)+	;gh.seq
+	MOV	(R0)+,(R1)+	;gh.org
+	MOV	(R0)+,(R1)+
+	MOV	(R0)+,(R1)+	;gh.rec
+	MOV	(R0)+,(R1)+
+	MOV	(R0)+,(R1)+	;gh.xmt
+	MOV	(R0)+,(R1)+
+	MOV	GH.TYP(R2),RX.TYP ;save ping header
+	MOV	PH.LNG(R3),RX.SIZ
+	ADD	PH.OFS(R3),RX.SIZ
+	SUB	#BUFLDR,RX.SIZ
+	MOV	GH.SEQ(R2),RX.SEQ
+	MOV	PH.TIM(R3),RX.TIM ;save packet timestamp
+	MOV	PH.TIM+2(R3),RX.TIM+2
+	CALL	CTRL,#CM.FRE,R3,OPNBLK+CONPTR ;free ip packet
+	MOV	#1,R0		;gain clout
+	.PRIO
+	CALL	CTRL,#CM.GET,#TEMP,OPNBLK+CONPTR ;allocate and init ip packet
+	TST	R0		;was it successful
+	BEQ	2$		;branch if yes
+	JSR	PC,PRIDNT	;no. display error
+	BR	4$
+;
+2$:	MOV	TEMP,R3		;rassle pointers
+	MOV	RX.SIZ,PH.LNG(R3)
+	SUB	PH.OFS(R3),PH.LNG(R3)
+	ADD	#BUFLDR,PH.LNG(R3)
+	MOV	PH.OFS(R3),R2
+	ADD	R3,R2
+	MOV	#GC.RPY,GH.TYP(R2) ;copy header fields
+	BIT	#TSPBIT,FLAGS
+	BEQ	3$
+	MOV	#GC.TSR,GH.TYP(R2)
+3$:	MOV	R2,R1		;copy timestamp fields
+	ADD	#GH.ID,R1
+	MOV	#AREA,R0
+	MOV	(R0)+,(R1)+	;gh.id
+	MOV	(R0)+,(R1)+	;gh.seq
+	MOV	(R0)+,(R1)+	;gh.org
+	MOV	(R0)+,(R1)+
+	MOV	(R0)+,(R1)+	;gh.rec
+	MOV	(R0)+,(R1)+
+	MOV	(R0)+,(R1)+	;gh.xmt
+	MOV	(R0)+,(R1)+
+	JSR	PC,SND1
+4$:	CLR	R0		;lose clout
+	.PRIO
+	RTS	PC
+;
+; Packet acks one we presumably sent
+;
+PKT8:	MOV	R2,R0		;swap timestamp fields
+	ADD	#GH.ORG,R0
+	SWAB	(R0)+		;gh.org
+	SWAB	(R0)+
+	SWAB	(R0)+		;gh.rec
+	SWAB	(R0)+
+	SWAB	(R0)+		;gh.xmt
+	SWAB	(R0)+
+	MOV	GH.REC(R2),R0	;compute roundtrip delay
+	MOV	GH.REC+2(R2),R1
+	SUB	GH.ORG+2(R2),R1
+	SBC	R0
+	SUB	GH.ORG(R2),R0
+	MOV	R0,GH.REC(R2)
+	MOV	R1,GH.REC+2(R2)
+	SUB	GH.XMT+2(R2),R1
+	SBC	R0
+	SUB	GH.XMT(R2),R0
+	ADD	PH.TIM+2(R3),R1
+	ADC	R0
+	ADD	PH.TIM(R3),R0
+	MOV	R0,GH.XMT(R2)
+	MOV	R1,GH.XMT+2(R2)
+	MOV	R0,DELAY
+	MOV	R1,DELAY+2
+	ASR	R0		;compute clock offset
+	ROR	R1
+	SUB	R1,GH.REC+2(R2)
+	SBC	GH.REC(R2)
+	SUB	R0,GH.REC(R2)
+	MOV	GH.REC+2(R2),OFFSET+2
+	MOV	GH.REC(R2),OFFSET
+	MOV	GH.TYP(R2),AX.TYP ;save ping header
+	MOV	PH.LNG(R3),AX.SIZ
+	ADD	PH.OFS(R3),AX.SIZ
+	SUB	#BUFLDR,AX.SIZ
+	MOV	GH.SEQ(R2),AX.SEQ
+	MOV	PH.TIM(R3),AX.TIM ;save packet timestamp
+	MOV	PH.TIM+2(R3),AX.TIM+2
+	MOVB	IH.VER(R3),R0	;is timestamp option on
+	BIC	#^C17,R0
+	CMP	R0,#<IH.LEN+8.-BUFLDR>/4
+	BLO	1$		;branch if no
+	CMP	IH.LEN(R3),#<6*400+68.>
+	BNE	1$		;branch if no
+	MOV	IH.LEN+2(R3),AX.TIM ;yes. save packet timestamp
+	MOV	IH.LEN+4(R3),AX.TIM+2
+1$:	CALL	CTRL,#CM.FRE,R3,OPNBLK+CONPTR ;free ip packet
+	CMP	AX.SEQ,TX.SEQ	;does sequence match
+	BEQ	2$		;branch if yes
+	INC	SEQCNT		;no. record confusion
+	RTS	PC
+;
+2$:	BIC	#ACKBIT,FLAGS	;record triumph
+	BIT	#TRCBIT,FLAGS	;is trace on
+	BEQ	3$		;branch if no
+	FORMAT	#COM05,#STOBGN	;yes. do it
+3$:	BIT	#FILBIT,FLAGS	;is file enabled
+	BEQ	5$		;branch if no
+	MOV	#AREA,PRTPTR	;yes. zingaling to file
+	FORMAT	#COM05,#STOBGN
+	CLR	R0
+	JSR	PC,PRBYT
+	CLR	PRTPTR
+	MOV	#AREA,R1	;copy (ugh)
+4$:	MOVB	(R1)+,R0
+	BEQ	5$
+	JSR	PC,WRFIL
+	BCC	4$		;branch if ok
+	FORMAT	#COMGG		;write error on output file
+	BIC	#FILBIT,FLAGS
+5$:	MOV	DELAY+2,R0	;stash stats
+	MOV	OFFSET+2,R1
+	JSR	PC,ACCUM
+	BIT	#RTXBIT,FLAGS	;is mode fixed-interval
+	BNE	8$		;branch if yes
+	.CMKT	#ARGBLK,#1,#0	;no. stop timer
+	BIC	#TIMBIT,FLAGS
+	MOV	#1,R0		;gain clout
+	.PRIO
+	CALL	CTRL,#CM.GET,#TEMP,OPNBLK+CONPTR ;allocate and init ip packet
+	TST	R0		;was it successful
+	BEQ	6$		;branch if yes
+	JSR	PC,PRIDNT	;no. display error
+	BR	7$
+;
+6$:	MOV	TEMP,R3		;rassle pointers
+	MOV	PH.OFS(R3),R2
+	ADD	R3,R2
+	JSR	PC,SEND
+7$:	CLR	R0		;lose clout
+	.PRIO
+8$:	RTS	PC
+;
+; Subroutine to send packet
+;
+SEND:	BIT	#XFRBIT,FLAGS	;are we still in business
+	BEQ	2$		;branch if no
+	CMP	TX.SEQ,MAXSEQ	;is sequence complete
+	BLO	REPLY		;branch if no
+	BIC	#XFRBIT,FLAGS	;yes. stall out
+	TST	AX.SEQ		;were any replies received
+	BNE	1$		;branch if yes
+	FORMAT	#COM39A		;host not responding
+	BR	2$
+;
+1$:	FORMAT	#COM39		;operation complete
+2$:	CALL	CTRL,#CM.FRE,R3,OPNBLK+CONPTR ;free ip packet
+	RTS	PC
+;
+REPLY:	INC	TX.SEQ		;advance sequence number
+	BIS	#ACKBIT,FLAGS
+	TST	TIMOUT		;is timeout specified
+	BNE	1$		;branch if yes
+	TST	TIMOUT+2
+	BEQ	2$		;branch if no
+1$:	.MRKT	#ARGBLK,#TIMOUT,#REST,#1 ;yes. start timer
+	BIS	#TIMBIT,FLAGS
+2$:	BIT	#RNDBIT,FLAGS	;is rnd enabled
+	BEQ	4$		;branch if no
+	JSR	PC,RNDOM	;yes. toss coin
+	ASHC	#8.,R0		;use the middle 16 bits
+	BIC	#100000,R0
+	MOV	SIZE,-(SP)	;scale to interval
+	SUB	#<GH.LEN+IH.LEN-BUFLDR>,@SP
+	BGT	3$
+	CLR	@SP
+3$:	MUL	(SP)+,R0
+	ASHC	#1,R0
+	MOV	R0,R1
+	ADD	#GH.LEN+IH.LEN-BUFLDR,R1
+	BR	5$
+;
+4$:	MOV	SIZE,R1		;insert fixed length
+5$:	CMP	R1,OPNBLK+CONSIZ ;trim to max
+	BLOS	6$
+	MOV	OPNBLK+CONSIZ,R1
+6$:	SUB	PH.OFS(R3),R1	;compute data portion length
+	ADD	#BUFLDR,R1
+	CMP	R1,#GH.LEN	;trim to min
+	BGE	7$
+	MOV	#GH.LEN,R1
+7$:	MOV	R1,PH.LNG(R3)
+	ADD	PH.OFS(R3),R1	;save for later
+	SUB	#BUFLDR,R1
+	MOV	R1,TX.SIZ
+	MOV	TX.TYP,GH.TYP(R2) ;copy header fields
+	CLR	GH.ID(R2)
+	MOV	TX.SEQ,GH.SEQ(R2)
+	.GCLK			;insert timestamp
+	MOV	R0,TX.TIM
+	MOV	R1,TX.TIM+2
+	SWAB	R0		;swap timestamp fields
+	SWAB	R1
+	MOV	R0,GH.ORG(R2)
+	MOV	R1,GH.ORG+2(R2)
+	MOV	R0,GH.REC(R2)
+	MOV	R1,GH.REC+2(R2)
+	MOV	R0,GH.XMT(R2)
+	MOV	R1,GH.XMT+2(R2)
+	MOVB	IH.VER(R3),R0	;is timestamp option on
+	BIC	#^C17,R0
+	CMP	R0,#<IH.LEN+8.-BUFLDR>/4
+	BLO	SND1		;branch if no
+	CMP	IH.LEN(R3),#<6*400+68.>
+	BNE	SND1		;branch if no
+	MOV	TX.TIM,IH.LEN+2(R3) ;yes. insert in option
+	MOV	TX.TIM+2,IH.LEN+4(R3)
+SND1:	ASLB	IH.TTL(R3)
+	CLR	GH.CHK(R2)	;compute checksum
+	MOV	R3,R1
+	JSR	PC,CHKSUM
+	MOV	R0,GH.CHK(R2)
+	CALL	CTRL,#CM.SND,R3,OPNBLK+CONPTR ;send ip packet
+	TST	R0
+	BEQ	1$		;branch if ok
+	JSR	PC,PRIDNT	;display message
+	JSR	PC,ABOR		;stop data transfer
+1$:	RTS	PC
+;
+; Subroutine to accumulate sample in histogram
+; R0 = delay sample (-1 for timeout indicator), r1 = offset
+;
+ACCUM:	MOV	R0,TEMP		;save arguments
+	MOV	R1,TEMP1
+	CMP	SAMPTR,BUFEND	;is buffer full
+	BLO	1$		;branch if no
+	INC	OVFLOW		;yes. account for overflow
+	BR	2$
+;
+1$:	MOV	SIZE,@SAMPTR	;stash packet length
+	ADD	#2,SAMPTR
+	MOV	TEMP,@SAMPTR	;stash sample
+	ADD	#2,SAMPTR
+2$:	MOV	TEMP,R0		;account for sample
+	INC	COUNT
+	CMP	R0,#-1		;is this timeout indicator
+	BEQ	4$		;branch if yes
+	ADD	R0,TOTAL+2	;no. accumulate total sum
+	ADC	TOTAL
+	CMP	R0,MAXMUM	;determine maxumum
+	BLOS	3$
+	MOV	R0,MAXMUM
+3$:	CMP	R0,MINMUM	;determine minimum
+	BHIS	4$
+	MOV	R0,MINMUM
+4$:	RTS	PC
+;
+; Subroutine to write byte to output file
+; R0 = byte
+;
+WRFIL:	MOVB	R0,@OUTPTR	;stash byte
+	INC	OUTPTR
+	CMP	OUTPTR,#OUTEND	;is buffer full
+	BLO	1$		;branch if no
+	.WRITW	#ARGBLK,#0,#OUTBUF,#256.,FILFCB+FCBBLK ;yes. write block
+	BCS	2$		;branch if bad
+	INC	FILFCB+FCBBLK	;ok. update pointers
+	MOV	#OUTBUF,OUTPTR
+1$:	CLC
+2$:	RTS	PC
+;
+; Suborutine to close output file
+;
+WRCLZ:	CMP	OUTPTR,#OUTBUF	;is buffer empty
+	BLOS	1$		;branch if yes
+	CLR	R0		;no. fill to block boundary
+	JSR	PC,WRFIL
+	BCC	WRCLZ
+	FORMAT	#COMGG		;write error on output file
+1$:	TST	FILFCB+FCBBLK	;is file empty
+	BEQ	2$		;branch if yes
+	.CLOSE	#0		;no. close file
+	RTS	PC
+;
+2$:	SEC			;null file
+	RTS	PC
+;
+; Subroutine to generate random number
+; Returns r0,R1 = 32-bit integer (uniformly distributed)
+;
+RNDOM:	MOV	SEED,R0		;where this came from is lost in obscurity
+	MOV	SEED+2,R1
+	BNE	1$
+	MOV	#3,R1
+	INC	R0
+	BR	2$
+;
+1$:	ASL	R1
+	ROL	R0
+	ADD	SEED,R0
+	ADD	SEED+2,R1
+	ADC	R0
+	ADD	SEED+2,R0
+	BPL	2$
+	ADD	#100000,R0
+2$:	MOV	R0,SEED
+	MOV	R1,SEED+2
+	MOV	R2,-(SP)
+	MOV	#201,R2
+3$:	ASL	R1
+	ROL	R0
+	BCS	4$
+	DEC	R2
+	BR	3$
+;
+4$:	CLRB	R1
+	BISB	R0,R1
+	SWAB	R1
+	CLRB	R0
+	BISB	R2,R0
+	SWAB	R0
+	ROR	R0
+	ROR	R1
+	MOV	(SP)+,R2
+	RTS	PC
+;
+; Subroutine to compute icmp checksum
+; R1 = packet pointer
+;
+CHKSUM:	MOV	R1,-(SP)	;save few
+	MOV	R2,-(SP)
+	CLR	R0
+	MOV	PH.LNG(R1),R2	;get data pointers
+	ADD	PH.OFS(R1),R1
+	CMP	R2,#GH.HDR	;is packet long enough
+	BLO	3$		;branch if no
+	CLR	-(SP)		;yes. complete checksum
+	ASR	R2
+	ROL	@SP
+1$:	ADD	(R1)+,R0	;accumulate checksum
+	ADC	R0
+	DEC	R2
+	BNE	1$
+	TST	@SP
+	BEQ	4$
+	MOVB	(R1)+,@SP
+4$:	ADD	(SP)+,R0
+	ADC	R0
+	TST	R0		;clean up complement
+	BEQ	2$
+3$:	COM	R0
+2$:	MOV	(SP)+,R2	;restore few
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to dump icmp datagram
+; R1 = packet pointer
+;
+DUMP:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	PH.LNG(R1),R2	;compute datagram length
+	ADD	PH.OFS(R1),R2
+	SUB	#BUFLDR,R2
+	INC	R2
+	ASR	R2
+	ADD	#BUFLDR,R1	;point to ip header
+	MOV	R1,TEMP		;display current address
+	FORMAT	#DMP00,#TEMP
+4$:	MOV	#8.,R3		;set loop count
+2$:	FORMAT	#DMP01		;display current word
+	TST	(R1)+
+	DEC	R2
+	BLE	3$		;branch if done
+	SOB	R3,2$		;loop until end line
+	FORMAT	#DMP02		;end line
+	BR	4$
+;
+3$:	FORMAT	#DMP03		;end line
+	MOV	(SP)+,R3	;restore registers
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+	.PAGE
+	.SBTTL	COMMAND INTERPRETATION
+;
+; Initialization
+;
+INIT:	CALL	GTHOST,#AREA,#0,#0 ;display herald
+	FORMAT	#HERALD,#AREA
+	MOV	#STOBGN,R0	;clear storage
+1$:	CLR	(R0)+
+	CMP	R0,#STOEND
+	BLO	1$
+	MOV	R0,@#50
+	MOV	#^RRCV,RX.HDR
+	MOV	#^RXMT,TX.HDR
+	MOV	#^RACK,AX.HDR
+	MOV	#RTPSIZ,R0	;allocate storage
+	ADD	#SAMSIZ*512.,R0
+	JSR	PC,NAMRST
+	MOV	R0,OPNBLK+CONPTR
+	MOV	#RTPSIZ,OPNBLK+CONFMT
+	ADD	#RTPSIZ,R0
+	MOV	R0,SAMBUF	;save sample buffer pointers
+	ADD	#SAMSIZ*512.,R0
+	MOV	R0,BUFEND
+	RTS	PC
+;
+; Unrecognized command
+;
+NTFD:	FORMAT	#COM29		;unrecognized command
+	RTS	PC
+;
+; Show (sho) show ping status
+; (segment of command language interpreter)
+; Arg = listing type (sta | his)
+;
+SHOW:	JSR	PC,HASH		;get argument
+	BEQ	1$		;default is summary
+	CMP	#^RHIS,R0	;is it "sta"
+	BNE	1$		;branch if no
+	JSR	PC,SUMM		;yes. print statistics
+	JSR	PC,HIST
+	RTS	PC
+;
+1$:	JSR	PC,STAT		;print summary
+	JSR	PC,SUMM
+	RTS	PC
+;
+; Stat (sho) print statistics
+;
+STAT:	MOV	FLAGS,TEMP1	;move under umbrella
+	FORMAT	#COM25,#STOBGN
+	FORMAT	#COM24,#OPNBLK
+	MOVB	OPNBLK+CONOPT+1,R2 ;are options specified
+	BEQ	1$		;branch if no
+	FORMAT	#COM46,#OPNBLK	;yes. display them
+	MOV	#OPNBLK+CONOPT+5,R1
+	ADD	#OPNBLK+CONOPT+2,R2
+2$:	FORMAT	#COM47,R1
+	ADD	#4,R1
+	CMP	R1,R2
+	BLO	2$
+1$:	FORMAT	#COM45,#FILFCB
+	FORMAT	#COM02,#RX.HDR
+	FORMAT	#COM02,#TX.HDR
+	FORMAT	#COM02,#AX.HDR
+	RTS	PC
+;
+; Summ (sum) print statistics summary
+;
+SUMM:	MOV	TOTAL,R0	;compute mean
+	MOV	TOTAL+2,R1
+	DIV	COUNT,R0
+	MOV	R0,TEMP
+	FORMAT	#COM70,#STOBGN
+	RTS	PC
+;
+; Hist (sum) print delay histogram
+; (segment of command language interpreter)
+; Arg1 = min, arg2 = max, arg3 = bin size
+;
+HIST:	TST	COUNT		;have any samples arrived
+	BEQ	7$		;branch if no
+	JSR	PC,RDDEC	;yes. get min
+	BNE	1$
+	MOV	MINMUM,R0
+1$:	MOV	R0,HSTMIN
+	JSR	PC,RDDEC	;get max
+	BNE	2$
+	MOV	MAXMUM,R0
+2$:	MOV	R0,HSTMAX
+	JSR	PC,RDDEC	;get bin size
+	BNE	3$
+	MOV	#50.,R0
+3$:	MOV	R0,HSTBIN
+	ADD	HSTBIN,HSTMAX
+	FORMAT	#COM75		;print header
+	CLR	HSTSUM		;initialize
+	CLR	R0		;round off min
+	MOV	HSTMIN,R1
+	DIV	HSTBIN,R0
+	MUL	HSTBIN,R0
+	MOV	R1,R2
+	JSR	PC,SLICE	;count underflows
+	MOV	R0,HSTUNF
+	BEQ	5$
+	FORMAT	#COM76,#STOBGN
+5$:	MOV	R2,TEMP
+	ADD	HSTBIN,R2
+	CMP	R2,HSTMAX
+	BHI	6$
+	JSR	PC,SLICE
+	MOV	R0,TEMP1
+	MOV	TEMP1,TEMP2
+	CMP	TEMP2,#60.
+	BLOS	12$
+	MOV	#60.,TEMP2
+12$:	FORMAT	#COM74,#STOBGN
+	BR	5$
+;
+6$:	MOV	#177777,R2	;count overflows
+	JSR	PC,SLICE
+	MOV	R0,HSTOVF
+	BEQ	7$
+	FORMAT	#COM77,#STOBGN
+7$:	RTS	PC
+;
+; Subroutine to count all samples less than a given value
+; R2 = threshold, returns r0 = count
+;
+SLICE:	CLR	R0
+	MOV	SAMBUF,R1
+4$:	CMP	R1,SAMPTR	;is this end of buffer
+	BHIS	5$		;branch if yes
+	TST	(R1)+		;(skip packet length)
+	CMP	(R1)+,R2	;check range
+	BHIS	4$
+	INC	R0
+	BR	4$
+;
+5$:	SUB	HSTSUM,R0
+	ADD	R0,HSTSUM
+	RTS	PC
+;
+; Quit (qui) leave the game
+; (segment of command language interpreter)
+; (no arguments)
+;
+QUIT:	JSR	PC,DSCN		;close data connection
+	.EXIT			;return to cli
+	.PAGE
+	.SBTTL	.	COMMANDS TO CONNECT/DISCONNECT REMOTE MACHINE
+;
+; Conn (con) open ping connection
+; (segment of command language interpreter)
+; Arg1 = host name (assume listening if missing), Arg2 = protocol
+;
+CONN:	JSR	PC,DSCN		;close connection
+	BISB	#300,OPNBLK+CONFLG ;presume passive
+	CLR	OPNBLK+CONRMT
+	CLR	OPNBLK+CONRMT+2
+	GETARG	#ARG		;get host name
+	TSTB	ARG		;is argument missing
+	BEQ	2$		;branch if yes
+	CALL	RNAME,#ARG,#OPNBLK+CONRMT,#TEMP ;get address
+	TST	R0
+	BEQ	1$		;branch if found
+	JSR	PC,PRIDNT	;print reason for failure
+	RTS	PC
+;
+1$:	BICB	#300,OPNBLK+CONFLG ;found. set active
+2$:	JSR	PC,RDDEC	;get protocol
+	BNE	4$
+	MOV	#P.IMP,R0	;default is icmp
+4$:	MOVB	R0,OPNBLK+CONPRO
+	.GCLK			;plant seed
+	MOV	R0,SEED
+	MOV	R1,SEED+2
+	CALL	CTRL,#CM.OPN,#OPNBLK+CONPAR,OPNBLK+CONPTR ;open connection
+	TST	R0
+	BEQ	5$		;branch if ok
+	JSR	PC,PRIDNT	;print reason for failure
+	RTS	PC
+;
+5$:	BIS	#OPXBIT,FLAGS	;mark connection open
+	RTS	PC
+;
+; Local (con) set local address for multiply-homed hosts
+; (segment of command language interpreter)
+; Arg1 = host name (default primary address)
+;
+LOCL:	JSR	PC,DSCN		;close connection
+	CLR	OPNBLK+CONLCL
+	CLR	OPNBLK+CONLCL+2
+	GETARG	#ARG		;get host name
+	TSTB	ARG		;is argument missing
+	BEQ	1$		;branch if yes
+	CALL	RNAME,#ARG,#OPNBLK+CONLCL,#TEMP ;no. get address
+	TST	R0
+	BEQ	1$		;branch if found
+	JSR	PC,PRIDNT	;print reason for failure
+1$:	RTS	PC
+;
+; Dscn (dsc) close ping connection
+; (segment of command language interpreter)
+; (no arguments) returns r1 = connection block pointer
+;
+DSCN:	JSR	PC,ABOR		;stop data transfer
+	BIT	#OPXBIT,FLAGS	;is connection open
+	BEQ	1$		;branch if no
+	CALL	CTRL,#CM.CLS,#0,OPNBLK+CONPTR ;ip close
+	.SPND
+1$:	RTS	PC
+;
+; Abor (sto) abort net transfer
+; (segment of command language interpreter)
+; (no arguments)
+;
+ABOR:	.CMKT	#ARGBLK,#1,#0	;stop timer
+	BIT	#XFRBIT,FLAGS	;is transfer in progress
+	BEQ	1$		;branch if no
+	BIC	#XFRBIT+ACKBIT+TIMBIT,FLAGS ;yes. rugpuller
+	FORMAT	#COM03		;net transfer aborted
+1$:	RTS	PC
+;
+; Size (opt) set datagram size
+; (segment of command language interpreter)
+; Arg1 = datagram size, arg2 = distribution switch (RAN, FIX)
+;
+SIZG:	JSR	PC,RDDEC	;get max datagram size
+	MOV	R0,SIZE
+	JSR	PC,HASH		;get distribution switch
+	BIC	#RNDBIT,FLAGS
+	CMP	R0,#^RRAN	;is it "ran" (random)
+	BNE	2$		;branch if no
+	BIS	#RNDBIT,FLAGS	;yes. so declare
+2$:	RTS	PC
+;
+; TOS (opt) set type-of-service internet option
+; (segment of command language interpreter)
+; Arg1 = type-of-service, arg2 = port number (udp/tcp)
+;
+STOS:	JSR	PC,RDOCT	;get type-of-service
+	MOVB	R0,OPNBLK+CONOPT
+	JSR	PC,RDDEC	;get port number
+	BEQ	1$		;branch if missing
+	SWAB	R0
+	MOV	R0,OPNBLK+CONRMT+4
+1$:	RTS	PC
+;
+; Route (opt) set source-route internet option
+; (segment of command language interpreter)
+; Arg1 ... = host names
+;
+ROUT:	JSR	PC,DSCN		;close connection
+	MOV	#203,R0		;option code (loose source route)
+	BR	OPT10
+;
+; Option (opt) set source-route internet option
+; (segment of command language interpreter)
+; Arg1 = option code (3: loose, 7: record, 9: strict), arg2 ... = host names
+;
+OPTN:	JSR	PC,DSCN		;close connection
+	JSR	PC,RDOCT	;get option code
+	BIS	#200,R0		;(i got tired of forgetting that)
+OPT10:	MOV	#OPNBLK+CONOPT+1,R2 ;get options pointer
+	CLRB	(R2)+		;reset total option length
+	MOVB	R0,(R2)+	;option code
+	CLRB	(R2)+		;length
+	MOVB	#4,(R2)+	;route pointer
+1$:	GETARG	#ARG		;get host name
+	TSTB	ARG
+	BEQ	3$		;branch if missing
+	CALL	RNAME,#ARG,R2,#TEMP ;get host address
+	TST	R0
+	BEQ	2$		;branch if found
+	JSR	PC,PRIDNT	;print reason for failure
+	BR	1$
+;
+2$:	ADD	#4,R2		;advance to next field
+	BR	1$
+;
+3$:	SUB	#OPNBLK+CONOPT+2,R2 ;compute length
+	CMP	R2,#3
+	BLOS	4$		;branch if null route
+	MOVB	R2,OPNBLK+CONOPT+1
+	MOVB	R2,OPNBLK+CONOPT+3
+4$:	RTS	PC
+;
+; Verbose (ver) be very noisy
+; (segment of command language interpreter)
+; arg = error level
+;
+VERB:	JSR	PC,RDDEC	;set error level
+	MOV	R0,ERRLVL
+	RTS	PC
+	.PAGE
+	.SBTTL	.	COMMANDS TO RUN MEASUREMENTS
+;
+; Create (cre) create statistics file
+; (segment of command language interpreter)
+; Arg = statistics file name
+;
+CREA:	BIT	#FILBIT,FLAGS	;is file already open
+	BNE	2$		;branch if yes
+	GETARG	#ARG		;get file name
+	ENTER	#ARG,#FILFCB,#0
+	BCS	1$		;branch if error
+	CLR	FILFCB+FCBBLK	;rewind statistics file
+	MOV	#OUTBUF,OUTPTR
+	BIS	#FILBIT,FLAGS
+	RTS	PC
+;
+2$:	FORMAT	#COMJJ		;file already open
+	RTS	PC
+;
+1$:	FORMAT	#COMHH		;invalid file name
+	RTS	PC
+;
+; Close (clo) close statistics file
+; (segment of command language interpreter)
+; (no arguments)
+;
+CLOS:	BIT	#FILBIT,FLAGS	;is file open
+	BEQ	4$		;branch if no
+	JSR	PC,WRCLZ	;yes. close it
+	BCC	2$
+	FORMAT	#COMII		;null file
+2$:	BIC	#FILBIT,FLAGS
+4$:	RTS	PC
+;
+; Ping (pin) start ping sequence
+; (segment of command language interpreter)
+; Arg1 = sample count (default one)
+;
+PING:	JSR	PC,RDDEC	;get max sequence
+	BNE	1$		;branch if there
+	MOV	#1,R0		;missing. assume one
+1$:	MOV	R0,MAXSEQ
+	MOV	SAMBUF,SAMPTR	;initialize statistics
+	CLR	COUNT
+	CLR	TOTAL
+	CLR	TOTAL+2
+	MOV	#177777,MINMUM
+	CLR	MAXMUM
+	CLR	OVFLOW
+	CLR	FILFCB+FCBBLK	;rewind statistics file
+	MOV	#OUTBUF,OUTPTR
+	BIT	#RPYBIT,FLAGS	;use right code
+	BEQ	2$
+	MOV	#GC.RPY,TX.TYP
+	BIT	#TSPBIT,FLAGS
+	BEQ	3$
+	MOV	#GC.TSR,TX.TYP
+	BR	3$
+;
+2$:	MOV	#GC.ECH,TX.TYP
+	BIT	#TSPBIT,FLAGS
+	BEQ	3$
+	MOV	#GC.TSP,TX.TYP
+3$:	CLR	TX.SEQ
+	CLR	RX.SEQ
+	CLR	AX.SEQ
+	BIS	#XFRBIT,FLAGS	;mark operation in progress
+	JSR	PC,PACKET	;send packet
+	TST	R0		;did it go out
+	BEQ	4$		;branch if no
+	JSR	PC,PRIDNT	;yes. print reason for failure
+4$:	CLR	RTXCNT
+	CLR	SEQCNT
+	RTS	PC
+;
+; Restart (res) restart ping sequence
+; (segment of command language interpreter)
+; (no arguments)
+;
+REST:	BIT	#RTXBIT,FLAGS	;is mode fixed-interval
+	BEQ	1$		;branch if no
+	MOV	#-1,R0		;yes. indicate timeout
+	CLR	R1
+	JSR	PC,ACCUM
+1$:	BIT	#ACKBIT,FLAGS	;did ack arrive
+	BEQ	2$		;branch if yes
+	INC	RTXCNT		;no. reveal that
+2$:	JSR	PC,PACKET	;send packet
+	RTS	PC
+;
+; Timeout (res) set rtx timeout
+; (segment of command language interpreter)
+; Arg1 = timeout value (msec), arg2 = rtx switch (FIX, RTX)
+;
+TIME:	JSR	PC,RDDEC	;get value
+	BNE	1$		;branch if given
+	MOV	#5*1000.,R0	;default 5 seconds
+1$:	MUL	#3,R0		;convert to 60ths
+	DIV	#50.,R0
+	BNE	2$
+	INC	R0		;(one tick min)
+2$:	MOV	R0,TIMOUT+2
+	CLR	TIMOUT
+	BIC	#RTXBIT,FLAGS
+	JSR	PC,HASH		;get rtx switch
+	CMP	R0,#^RFIX	;is it "FIX" (fixed interval)
+	BNE	3$		;branch if no
+	BIS	#RTXBIT,FLAGS	;yes. so declare
+3$:	RTS	PC
+;
+; 'on' (cmd) set option bits on
+; (segment of command language interpreter)
+; Arg1... = option types
+;
+CMDON:	JSR	PC,CTLGET	;do the work
+	BCS	1$		;branch if error
+	BIS	R0,FLAGS
+1$:	RTS	PC
+;
+; 'off' (cmd) set option bits off
+; (segment of command language interpreter)
+; Arg1 ... = option types
+;
+CMDOFF:	JSR	PC,CTLGET	;do the work
+	BCS	1$		;branch if error
+	BIC	R0,FLAGS
+1$:	RTS	PC
+;
+; Subroutine to get bit mask
+; Returns r0 = control bits
+;
+CTLGET:	CLR	-(SP)		;preset bits
+9$:	JSR	PC,HASH		;get option type (rad50)
+	BEQ	10$		;branch if missing
+	MOV	#CTLTBL,R1	;get control table pointer
+5$:	TST	@R1		;is this last entry
+	BEQ	6$		;branch if yes
+	CMP	R0,(R1)+	;no. does it match
+	BEQ	7$		;branch if yes
+	TST	(R1)+		;no. go to next
+	BR	5$
+;
+7$:	BIS	(R1)+,@SP	;assemble flags
+	BR	9$
+;
+6$:	FORMAT	#COM28		;unrecognized option type
+	SEC
+	BR	8$
+;
+10$:	CLC
+8$:	MOV	(SP)+,R0	;get flags
+	RTS	PC
+	.PAGE
+	.SBTTL	TABLES, TEXT STRINGS AND VARIABLES
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+; Command table for kwik
+;
+KWKTBL:	.KWTAB	<HEL>,HELP	;send help information
+	.KWTAB	<SHO>,SHOW	;show ping status
+	.KWTAB	<QUI>,QUIT	;leave the game
+	.KWTAB	<CON>,CONN	;open ping connection
+	.KWTAB	<LOC>,LOCL	;set local address
+	.KWTAB	<DSC>,DSCN	;close ping connection
+	.KWTAB	<ABO>,ABOR	;abort net transfer
+	.KWTAB	<SIZ>,SIZG	;set datagram size
+	.KWTAB	<TOS>,STOS	;set type-of-service
+	.KWTAB	<ROU>,ROUT	;set source route
+	.KWTAB	<OPT>,OPTN	;set internet options
+	.KWTAB	<VER>,VERB	;set error level
+;
+	.KWTAB	<CRE>,CREA	;create statistics file
+	.KWTAB	<CLO>,CLOS	;close statistics file
+	.KWTAB	<PIN>,PING	;start ping sequence
+	.KWTAB	<RES>,REST	;restart ping sequence
+	.KWTAB	<TIM>,TIME	;set timeout
+	.KWTAB	<ON>,CMDON	;set option switch
+	.KWTAB	<OFF>,CMDOFF	;clear option switch
+	.KWTAB	<   >,NTFD	;end of table
+;
+; Miscellaneous tables and chairs
+;
+DEFTYP:	.RAD50	'TXTTXTTXTTXT'	;default file extensions
+;
+; Option bit table
+;
+CTLTBL:	.RAD50	'DUM'		;dump incoming packets
+	.WORD	DMPBIT
+	.RAD50	'TRA'		;trace incoming packets
+	.WORD	TRCBIT
+	.RAD50	'ACK'		;use icmp ack
+	.WORD	RPYBIT
+	.RAD50	'TIM'		;use icmp timestamp
+	.WORD	TSPBIT
+	.WORD	0		;end of table
+;
+; Text strings for ping protocol
+;
+HERALD:	.ASCIZ	'^A'<0>' PING User Process (25-Mar-86 Version) ^LD ^LT'
+COM00:	.ASCIZ	'?PING-^+'
+COM39:	.ASCIZ	'?PING-I-Operation complete'
+COM39A:	.ASCIZ	'?PING-I-Host not responding'
+COM05:	.ASCII	'^LD,^LT,^I'<TX.SIZ-STOBGN>
+	.ASCIZ	',^I'<DELAY+2-STOBGN>',^SI'<OFFSET+2-STOBGN>
+COM25:	.ASCIZ	'Flags: ^K'<TEMP1-STOBGN>'  host: ^+'
+COM24:	.ASCII	'(^R'<CONIDN>') ^C'<CONRMT>
+	.ASCIZ	'  max size: ^I'<CONSIZ>'  protocol: ^BI'<CONPRO>
+COM46:	.ASCIZ	'Options: ^BK'<CONOPT+2>'  ^BI'<CONOPT+3>'  ^BI'<CONOPT+4>
+COM47:	.ASCIZ	'^C'<0>
+COM45:	.ASCIZ	'File: ^F'<FCBNAM>'[^I'<FCBMAX>'] at ^I'<FCBBLK>
+COM02:	.ASCIZ	'^R'<0>' ^K'<2>' ^K'<4>' ^K'<6>' ^+T'<10>
+COM70:	.ASCII	'Samples: ^I'<COUNT-STOBGN>'  mean: ^I'<TEMP-STOBGN>
+	.ASCII	'  min: ^I'<MINMUM-STOBGN>'  max: ^I'<MAXMUM-STOBGN>
+	.ASCII	'  ovfl: ^I'<OVFLOW-STOBGN>'  rtx: ^I'<RTXCNT-STOBGN>
+	.ASCIZ	'  seq: ^I'<SEQCNT-STOBGN>
+COM75:	.ASCIZ	'Value	Count^/----------------+'
+COM76:	.ASCIZ	'Underflows ^I'<HSTUNF-STOBGN>
+COM77:	.ASCIZ	'Overflows ^I'<HSTOVF-STOBGN>
+COM74:	.ASCII	'^I'<TEMP-STOBGN>'	^I'<TEMP1-STOBGN>'	|'
+	.ASCIZ	'^G'<TEMP2-STOBGN>'*'
+DMP00:	.ASCIZ	'^K'<0>' ^+'
+DMP01:	.ASCIZ	' ^K'<0>'^+'
+DMP02:	.ASCIZ	'^/       ^+'
+DMP03:	.BYTE	0
+;
+; Text strings for error conditions
+;
+COM29:	.ASCIZ	'?PING-F-Unrecognized command'
+COM03:	.ASCIZ	'?PING-F-Net transfer aborted'
+COM28:	.ASCIZ	'?PING-F-Unrecognized option'
+COMJJ:	.ASCIZ	'?PING-F-File already open'
+COMHH:	.ASCIZ	'?PING-F-Invalid file name or size'
+COMGG:	.ASCIZ	'?PING-F-File write error'
+COMII:	.ASCIZ	'?PING-F-Null file'
+	.EVEN
+;
+	.PSECT	$DATA,RW,I
+;
+; Ping connection data
+;
+OPNBLK:	OPNBLK	0,PIN,,,NETSUB,P.IMP,320,,0 ;open block
+TIMOUT:	.WORD	0,5*60.		;rtx timeout (5 sec)
+;
+	.PSECT	$ERAS,RW,I
+STOBGN	=	.		;beginning of erasable storage
+;
+; Variables
+;
+TEMP:	.BLKW	1		;temp
+TEMP1:	.BLKW	1		;temp 1
+TEMP2:	.BLKW	1		;temp 2
+FILFCB:	.BLKW	8.		;file control block
+OUTBLK:	.BLKW	1		;output file block
+OUTPTR:	.BLKW	1		;output file buffer pointer
+RTXCNT:	.BLKW	1		;retransmissions
+SEQCNT:	.BLKW	1		;sequence errors
+MAXSEQ:	.BLKW	1		;max sequence
+SEED:	.BLKW	2		;rnd seed
+SAMPTR:	.BLKW	1		;sample buffer pointer
+SAMBUF:	.BLKW	1		;beginning of sample buffer
+BUFEND:	.BLKW	1		;end of sample buffer
+SIZE:	.BLKW	1		;datagram size
+COUNT:	.BLKW	1		;sample count
+TOTAL:	.BLKW	2		;total sample values
+MAXMUM:	.BLKW	1		;maximum sample value
+MINMUM:	.BLKW	1		;minimum sample value
+OVFLOW:	.BLKW	1		;overflow samples
+HSTSUM:	.BLKW	1		;histogram sample sum
+HSTBIN:	.BLKW	1		;histogram bin size
+HSTUNF:	.BLKW	1		;histogram underflow
+HSTMIN:	.BLKW	1		;min histogram sample
+HSTMAX:	.BLKW	1		;max histogram sample
+HSTOVF:	.BLKW	1		;histogram overflow
+DELAY:	.BLKW	2		;delay sample
+OFFSET:	.BLKW	2		;clock offset sample
+ARGBLK:	.BLKW	5		;rt-11 argument block
+AREA:	.BLKW	39.		;scratch area
+ARG:	.BLKB	40.		;argument
+	.EVEN
+;
+; Receive ping header
+;
+RX.HDR:	.BLKW	1		;label
+RX.SIZ:	.BLKW	1		;size
+RX.TYP:	.BLKB	1		;gateway type
+RX.COD:	.BLKB	1		;code
+RX.SEQ:	.BLKW	1		;sequence number
+RX.TIM:	.BLKW	2		;timestamp
+;
+; Transmit ping header
+;
+TX.HDR:	.BLKW	1		;label
+TX.SIZ:	.BLKW	1		;size
+TX.TYP:	.BLKB	1		;gateway type
+TX.COD:	.BLKB	1		;code
+TX.SEQ:	.BLKW	1		;sequence number
+TX.TIM:	.BLKW	2		;timestamp
+;
+; Acknowledgment ping header
+;
+AX.HDR:	.BLKW	1		;label
+AX.SIZ:	.BLKW	1		;size
+AX.TYP:	.BLKB	1		;gateway type
+AX.COD:	.BLKB	1		;code
+AX.SEQ:	.BLKW	1		;sequence number
+AX.TIM:	.BLKW	2		;timestamp
+;
+OUTBUF:	.BLKW	256.		;output file buffer
+OUTEND	=	.		;end of output file buffer
+;
+	.PSECT	$STOR,RW,I
+STOEND	=	.		;end of erasable storage
+;
+	.END
+                                                                                                                                                                                                                                                              

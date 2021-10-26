@@ -1,0 +1,1649 @@
+	.TITLE	RMN	RT-11 Emulator routines
+	.SBTTL	System and module definitions
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn basic operating system - rt-11 emulator routines
+;
+; External symbols
+;
+	.GLOBL	SMFMAX		;asect
+	.GLOBL	CSI,CHAIN	;$usei
+	.GLOBL	RENAME,ENTER,LOOKUP,DELETE,CLOSE,FPROT,SFDAT
+	.GLOBL	EXIT,$LOAD,TRPENB
+	.GLOBL	$RECV,$SEND,$INT
+	.GLOBL	$OFSET		;$used
+;
+; Entry symbols
+;
+	.GLOBL	EMTTRA		;transfer vector
+	.GLOBL	STRTIO,STAT,DELAY,SRESET,DATE,GTIM ;used by usr,etc
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.DFBLK,.NVT ;dcnlib definitions
+	.MCALL	.ERR,.PSA,.CLP,.FLG,.IOD,.TRDEF
+	.MCALL	.GDAT,.GCLK,.STIM,.CTIM,.WIND,.GPSA ;supervisor calls
+	.MCALL	.ASYN,.GETDA,.PUTDA,.TSEM,.VSEM,.TRAP
+	.MCALL	.EVENT		;dcnlib macros
+	.MCALL	$DFSIG		;moslib macros
+	.MCALL	.SPND,.RSUM,.MRKT ;rt-11 macros
+	.COM			;common definitions
+	.CHR			;ascii character codes
+	.DFBLK			;define block-transfer message codes
+	.NVT			;telnet nvt character codes
+	.ERR			;system error codes
+	.PSA			;supervisor psa and par definitions
+	.CLP			;rt-11 monitor area definitions
+	.FLG			;flag bit definitions
+	.IOD			;emulator monitor area extension
+	.TRDEF			;define trap codes
+	$DFSIG			;define interprocess signals
+;
+; Interprocess message formats
+;
+; Trap message format
+;
+;	           1                   0
+;	 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
+;	+-----------+---+---------------+
+;	|   code    |0 0|    dest pid   |
+;	+-----------+---+---------------+
+;	|                               |
+;	|      data (10 bytes max)      |
+;	|                               |
+;	+-------------------------------+
+;
+; Byte stream message format
+;
+;	           1                   0
+;	 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
+;	+-----------+---+---------------+
+;	|   count   |0 1|    dest pid   |
+;	+-----------+---+---------------+
+;	|                               |
+;	|     string (10 bytes max)     |
+;	|                               |
+;	+-------------------------------+
+;
+; Block transfer message format
+;
+;	           1                   0
+;	 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
+;	+-----+-----+---+---------------+
+;	| rpy | cmd |1 0|    dest pid   |
+;	+-----+-----+---+---------------+
+;	|     device    |    channel    |
+;	+---------------+---------------+
+;	|             block             |
+;	+-------------------------------+
+;	|            address            |
+;	+-------------------------------+
+;	|           word count          |
+;	+-------------------------------+
+;	|      completion routine       |
+;	+-------------------------------+
+;
+; Net signal message format
+;
+;	           1                   0
+;	 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
+;	+-----------+---+---------------+
+;	|  reserved |1 1|    dest pid   |
+;	+-----------+---+---------------+
+;	|   reply pid   |     signal    |
+;	+---------------+---------------+
+;	|         connection id         |
+;	+-------------------------------+
+;	|              data             |
+;	+-------------------------------+
+;	|        quench address         |
+;	+-------------------------------+
+;	|        quench address         |
+;	+-------------------------------+
+;	
+; User signal message format
+;
+;	           1                   0
+;	 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
+;	+-----------+---+---------------+
+;	|  reserved |1 1|    dest pid   |
+;	+-----------+---+---------------+
+;	|   reply pid   |     signal    |
+;	+---------------+---------------+
+;	|          ccb pointer          |
+;	+-------------------------------+
+;	|              data             |
+;	+-------------------------------+
+;	|          sequence id          |
+;	+-------------------------------+
+;	|      completion routine       |
+;	+-------------------------------+
+;
+; Module definitions
+;
+	.MACRO	TABLE ARG	;generate month table
+..N	=	0
+	.IRP	X,<ARG>
+	.WORD	..N
+..N	=	..N+X
+	.ENDR
+	.ENDM	TABLE
+;
+; Assembly parameters
+;
+DLC	=	DEL		;character delete
+DLL	=	NAK		;line delete
+TNECHO	=	001		;telnet echo option
+TNSUGA	=	003		;telnet suppress go-ahead option
+	.PAGE
+	.SBTTL	User process interface
+;
+; Procedure segment
+;
+; Process-state procedure
+; Dsects: r5 = $sysptr
+;
+	.PSECT	$USEI,RO,I
+;
+; Rt-11 emulator package
+; Called using ioh conventions
+;
+; Emt 374 (emt 374)
+; R0 = (chan,code), returns cc = c if error
+;
+EMT374:	MOV	R0,-(SP)	;save registers
+	SWAB	R0		;extract code
+	BIC	#^C377,R0
+	ASL	R0
+	CMP	R0,#E74END-E74TRA ;is code valid
+	BHIS	ERROR		;branch if no
+	ADD	PC,R0		;yes. compute entry address
+	ADD	#E74TRA-.,R0
+	ADD	@R0,R0
+	RTS	R0		;branch to entry
+;
+; Emt 375 (emt 375)
+; R0 = argument block ptr, returns cc = c if error
+;
+; Argument block format
+; R0 ->	.byte	chan,code	;channel, function code
+;	.word	blk		;block number
+;	.word	buf		;buffer pointer
+;	.word	wcnt		;word count
+;	.word	code		;modifier code
+;
+EMT375:	MOV	R0,-(SP)	;save registers
+	MOVB	1(R0),R0	;extract code
+	BIC	#^C377,R0
+	ASL	R0
+	CMP	R0,#E75END-E75TRA ;is code valid
+	BHIS	ERROR		;branch if no
+	ADD	PC,R0		;yes. compute entry address
+	ADD	#E75TRA-.,R0
+	ADD	@R0,R0
+	RTS	R0		;branch to entry
+;
+; Emt error return (returns cc = c to caller)
+;
+ERROR:	MOV	(SP)+,R0
+EMTERR:	MOVB	#ER.EMT,@#ERRBYT ;illegal emt
+	BR	EMT20
+;
+; Emt 376 - system error
+; (nonsense used by some rt-11 foolishness like overlay handler)
+;
+EMTSYS:	MOV	@4(SP),R0	;reach down into the muck
+	SWAB	R0
+	MOVB	R0,@#ERRBYT
+EMT20:	SEC
+	RTS	PC
+;
+; Event (evn) wait for event
+;
+EVENT:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	BIC	#SECBIT,IOHFLG(R5) ;you only go around in life once
+	MOV	MSGBUF(R5),R2	;wait for message
+	.GETDA	R2
+	BMI	EVNXIT		;branch if attention/timeout
+	MOVB	SD.CTL(R2),R0	;extract message type
+	BIC	#^C3,R0
+	ASL	R0		;branch to process
+	ADD	R0,PC
+	BR	EVNTRP		;0 (trpctl) trap message
+	BR	EVNSTR		;1 (strctl) byte stream message
+	BR	1$		;2 (chnctl) block transfer message
+	BR	EVNPKT		;3 (pktctl) user signal message
+;
+1$:	JMP	EVNCHN
+;
+; Byte stream message (format 1)
+;
+EVNSTR:	BITB	#^C3,SD.CTL(R2)	;is count zero
+	BEQ	EVNOUT		;branch if yes (output message)
+	MOVB	(R2)+,R0	;construct segment header
+	JSR	PC,SEGHDR
+	MOVB	(R2)+,R1	;copy data to segment
+	ASH	#-2,R1
+1$:	MOVB	(R2)+,R0
+	JSR	PC,EDTSUB
+	SOB	R1,1$
+	MOV	CSIBUF(R5),R0	;is length in yellow zone
+	SUB	IOHPTI(R5),R0
+	CMP	R0,#SD.END-SD.CHN
+	BHIS	2$		;branch if no
+	BIS	#TTIBIT,IOHFLG(R5) ;yes. arbitraily end line
+2$:	MOV	IOHISG(R5),R1
+	MOV	IOHPTI(R5),R0	;insert segment length
+	SUB	R1,R0
+	MOVB	R0,-1(R1)
+	MOV	#100000,R0	;pump out echoes
+	JSR	PC,XMIT
+	BIT	#TTIBIT,IOHFLG(R5) ;is input enabled
+	BNE	EVNXIT		;branch if no
+	MOVB	-2(R1),R0	;yes. send zck
+	JSR	PC,LOCTRM
+	BR	EVNXIT
+;
+EVNOUT:	BIC	#TTOBIT,IOHFLG(R5) ;output message. update state variable
+	BR	EVNXIT
+;
+; Trap message (format 0)
+;
+EVNTRP:	MOV	IOHPUT(R5),R1	;get queue pointer
+	BEQ	EVNXIT		;branch if not allocated
+	CMP	@R1,IOHGET(R5)
+	BNE	1$		;branch if no overflow
+	MOVB	#ER.QUE,@#ERRBYT ;event queue overflow
+	BR	EVNXIT
+;
+1$:	TST	(R1)+		;save signal information
+	MOV	#SD.END/2,R0
+2$:	MOV	(R2)+,(R1)+
+	SOB	R0,2$
+	MOV	@IOHPUT(R5),IOHPUT(R5) ;update queue pointer
+	INCB	QUESIG(R5)
+EVNXIT:	MOV	(SP)+,R2	;restore registers
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; User signal message (format 3)
+;
+EVNPKT:	CMP	SD.BLK(R2),IOHSRV(R5) ;is this server
+	BNE	EVNTRP		;branch if no
+	BIS	#OPEBIT,IOHFLG(R5) ;yes. set connection active
+	MOVB	SD.CHN(R2),R0	;get signal opcode
+	CMPB	R0,#SG.SC	;is this send completion
+	BEQ	EVNOUT		;branch if yes (simulate ttyou)
+	CMPB	R0,#SG.DAT	;no. is this data signal
+	BNE	1$		;branch if no
+	BIS	#NETRDY,IOHFLG(R5) ;yes. tinkle server
+	JSR	PC,SRVCPY
+	BR	EVNXIT
+;
+1$:	CMPB	R0,#SG.INT	;net signal. is it remote interrupt
+	BNE	3$		;branch if no
+	BIS	#INTBIT+TDMBIT,IOHFLG(R5) ;yes. mark as interrupt
+	BR	EVNXIT
+;
+3$:	CMPB	R0,#SG.CC	;is this close complete
+	BNE	44$		;branch if no
+	BIC	#OPEBIT+CLSBIT+TELBIT,IOHFLG(R5) ;yes. reset server
+	CLR	IOHSRV(R5)
+	MOV	R5,IOHTOP(R5)	;erase all traces
+	MOV	R5,IOHCLI(R5)
+	MOV	R5,IOHBRK(R5)
+44$:	MOV	IOHNCA(R5),SD.AST(R2) ;is net trap enabled
+	BNE	EVNTRP		;branch if yes
+	BIS	#INTBIT,IOHFLG(R5) ;no. mark as interrupt
+	CMPB	R0,#SG.EST	;is this open
+	BEQ	4$		;branch if yes
+	BIS	#TDMBIT,IOHFLG(R5) ;no. filter data
+4$:	BIC	#CLSBIT,IOHFLG(R5) ;net signal
+	ADD	#ER.SIG,R0	;save net signal info
+	MOVB	R0,IOHSIG(R5)
+	MOV	SD.ADR(R2),IOHDAT(R5)
+	BR	EVNXIT
+;
+; Block transfer message (format 2)
+;
+EVNCHN:	CLR	R1		;compute channel pointer
+	BISB	SD.CHN(R2),R1
+	ASL	R1
+	MOV	R1,-(SP)
+	ASL	R1
+	ASL	R1
+	ADD	(SP)+,R1
+	ADD	IOHCTP(R5),R1
+	BIC	#BUSY$,@R1	;mark non-busy
+	CMPB	SD.CTL(R2),#BR.EOF ;determine reply code
+	BLO	2$		;branch if ok
+	CMPB	SD.CTL(R2),#BR.ERR
+	BLO	1$		;branch if end-of-file
+	BIS	#HDERR$,@R1	;error. mark hard error
+	BR	2$
+;
+1$:	BIS	#EOF$,@R1	;mark end-of-file
+2$:	MOV	SD.CNT(R2),R0	;get words transferred
+	MOV	R0,IOHWCT(R5)	;save for later
+	ADD	#377,R0		;compute highest block written
+	BIC	#377,R0
+	SWAB	R0
+	ADD	SD.BLK(R2),R0
+	MOVB	C.DEVQ(R1),R2	;(offset for virtual disk)
+	BIC	#^C37,R2
+	ASH	#3,R2
+	ADD	IOHPAR(R5),R2
+	SUB	PARLDN+4(R2),R0
+	SUB	C.SBLK(R1),R0
+	CMP	R0,C.USED(R1)	;is this new max
+	BLOS	EVNXIT		;branch if no
+	TST	C.SBLK(R1)	;yes. is this device op
+	BEQ	EVNXIT		;branch if yes
+	MOV	R0,C.USED(R1)	;no. save max
+	BR	EVNXIT
+;
+; Subroutine to construct segment header
+; R0 = pid, returns r1 = segment pointer
+;
+SEGHDR:	MOV	IOHISG(R5),R1	;is segment empty
+	CMP	R1,IOHPTI(R5)
+	BEQ	1$		;branch if yes
+	CMPB	R0,-2(R1)	;no. is it for same process
+	BEQ	1$		;branch if yes
+	MOV	IOHPTI(R5),R1	;no. initialize new segment header
+	ADD	#2,R1
+	MOV	R1,IOHISG(R5)
+	MOV	R1,IOHPTI(R5)
+1$:	MOVB	R0,-2(R1)	;save pid
+	RTS	PC
+;
+; Subroutine to copy server input buffer
+;
+SRVCPY:	MOV	R1,-(SP)	;saving is prudent
+	MOV	R2,-(SP)
+	BIT	#TTIBIT,IOHFLG(R5) ;is input buffer ready
+	BNE	10$		;branch if no
+	BIT	#NETRDY,IOHFLG(R5) ;yes. is tcp input waiting
+	BEQ	10$		;branch if no
+	BIC	#NETRDY,IOHFLG(R5) ;read tcp data
+	CLR	R0		;construct segment header
+	JSR	PC,SEGHDR
+	MOV	#80.,R0
+	MOV	IOHSRV(R5),R2
+	JSR	PC,$RECV
+	BIC	#100000,R0	;(strip push bit)
+	BEQ	10$		;branch if none (error)
+	MOV	R0,R2		;scan for telnet controls
+2$:	CLR	R0		;fetch next character
+	BISB	(R1)+,R0
+	BIT	#IACBIT,IOHFLG(R5) ;is this telnet command
+	BEQ	5$		;branch if no
+	CMPB	R0,#IAC		;yes. is this iac
+	BEQ	6$		;branch if yes
+	CMPB	R0,#WILL	;no. is this end of sequence
+	BHIS	9$		;branch if no
+	CMPB	R0,#DM		;yes. is this data mark
+	BEQ	7$		;branch if yes
+	CMPB	R0,#360		;no. is this option
+	BHIS	8$		;branch if no
+	CMPB	TELOPT(R5),#WONT ;yes. decode command
+	BEQ	8$		;branch if wont
+	BLO	3$		;branch if will
+	CMPB	R0,#TNECHO	;do/dont. is this echo option
+	BNE	1$		;branch if no
+	CMPB	TELOPT(R5),#DO	;yes. is this do
+	BNE	1$		;branch if no
+	BIT	#TTSPC$,@#JSW	;yes. is local edit/echo on
+	BEQ	1$		;branch if yes
+	BIS	#WILL*400,R0	;no. will do that
+	BR	4$
+;
+1$:	BIS	#WONT*400,R0	;wont do that
+	BR	4$
+;
+3$:	BIS	#DONT*400,R0	;will. dont do that
+4$:	SWAB	R0		;send iac-command-option
+	JSR	PC,SNDOPT
+	BR	8$
+;
+5$:	BIT	#TELBIT,IOHFLG(R5) ;is telnet disabled
+	BNE	6$		;branch if yes
+	CMPB	R0,#IAC		;no. is this interpet-as-command
+	BNE	6$		;branch if no
+	BIS	#IACBIT,IOHFLG(R5) ;yes. flag for next
+	BR	9$
+;
+6$:	BIT	#TDMBIT,IOHFLG(R5) ;is input blinded
+	BNE	8$		;branch if yes
+	MOVB	R0,@IOHPTI(R5)	;no. save char in buffer segment
+	INC	IOHPTI(R5)
+7$:	BIC	#TDMBIT,IOHFLG(R5)
+8$:	BIC	#IACBIT,IOHFLG(R5)
+9$:	MOVB	R0,TELOPT(R5)	;save char for option
+	DEC	R2
+	BNE	2$		;continue if more
+	MOV	IOHISG(R5),R1
+	MOV	IOHPTI(R5),R0	;insert segment length
+	SUB	R1,R0
+	MOVB	R0,-1(R1)
+	BEQ	10$		;branch if empty
+	BIS	#TTIBIT,IOHFLG(R5) ;end record
+10$:	MOV	(SP)+,R2	;restore registers
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to send telnet option
+; R0 = command (low byte), option (high byte)
+;
+SNDOPT:	MOV	R1,-(SP)	;save option info
+	MOV	R0,R1
+	MOV	#<^RTT >,R0	;switch to telnet stream
+	JSR	PC,MSG
+	MOV	R0,-(SP)
+	MOVB	#IAC,R0		;send iac
+	JSR	PC,TTYOU1
+	MOV	R1,R0		;send command
+	JSR	PC,TTYOU
+	SWAB	R0		;send option
+	JSR	PC,TTYOU
+	MOV	(SP)+,R0	;restore output stream
+	JSR	PC,MSG
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to edit input buffer
+; R0 = char, iohisg = segment pointer, iohpti = buffer pointer
+;
+EDTSUB:	CLR	-(SP)		;construct echo string
+	MOV	R0,-(SP)
+	MOVB	#200,1(SP)
+	MOVB	R0,@IOHPTI(R5)	;stash char
+	CMPB	R0,#ETX		;is this ip
+	BNE	1$		;branch if no
+	BIC	#TDMBIT,IOHFLG(R5) ;yes. reset blind bit
+1$:	BIT	#TDMBIT,IOHFLG(R5) ;is input blinded
+	BNE	13$		;branch if yes
+	BIT	#TTSPC$,@#JSW	;no. is line edit mode
+	BEQ	2$		;branch if yes
+	MOVB	#200,@SP	;no. suppress echo
+	BR	10$
+;
+2$:	INC	R0		;line edit mode. decode char
+	BIC	#^C177,R0
+	CMPB	R0,#040
+	BHI	11$		;branch if printing
+	ADD	PC,R0		;control. decode function
+	MOVB	ECOTAB-.(R0),R0
+	ADD	R0,PC
+	BR	11$		;0 as-is
+	BR	8$		;2 fancy echo
+	BR	9$		;4 etx
+	BR	7$		;6 sub
+	BR	6$		;10 esc
+	BR	5$		;12 nak
+	BR	3$		;14 del
+	BR	10$		;16 lf
+;
+3$:	CMP	IOHISG(R5),IOHPTI(R5) ;del. is line empty
+	BEQ	4$		;branch if yes
+	DEC	IOHPTI(R5)	;no. back up pointer
+	MOV	#<' >*400+BS,@SP ;echo bs-sp-bs
+	MOV	#200*400+BS,2(SP)
+	BR	12$
+;
+4$:	CLRB	@SP		;echo cr-lf
+	BR	12$
+;
+5$:	MOV	IOHISG(R5),IOHPTI(R5) ;nak. reset pointer
+	MOV	#<'U>*400+<'^>,@SP ;echo nak-cr-lf
+	BR	12$
+;
+6$:	MOVB	#'$,@SP		;esc. fancy echo
+	BR	11$
+;
+7$:	BIS	#TTIBIT,IOHFLG(R5) ;sub. end record
+8$:	MOVB	@SP,R0		;fancy echo. echo ^-char
+	MOV	#100*400+<'^>,@SP
+	BISB	R0,1(SP)
+	MOV	#0*400+200,2(SP)
+	BR	11$
+;
+9$:	MOV	IOHISG(R5),IOHPTI(R5) ;etx. reset pointer
+	MOVB	@SP,@IOHPTI(R5)
+	MOV	#<100+ETX>*400+<'^>,@SP ;echo etx-cr-lf
+10$:	BIS	#TTIBIT,IOHFLG(R5) ;lf. end record
+11$:	INC	IOHPTI(R5)	;it's a real char
+12$:	BIT	#TTOBIT,IOHFLG(R5) ;is output busy
+	BNE	13$		;branch if yes
+	MOV	INPBUF(R5),R0	;no. is there room in buffer
+	SUB	IOHPTO(R5),R0
+	CMP	R0,#4		;(longest sequence is 4)
+	BLOS	13$		;brnach if no
+	MOV	SP,R0		;yes. echo whatever
+	JSR	PC,PRINT
+13$:	CMP	(SP)+,(SP)+	;restore stack
+	RTS	PC
+;
+; .qset (emt 353) allocate completion queue elements
+; Stack = area, r0 = count
+;
+QSET:	MOV	6(SP),QUEBUF(R5) ;save area pointer
+	MOV	4(SP),6(SP)	;pop argument off stack
+	MOV	2(SP),4(SP)
+	MOV	@SP,2(SP)
+	TST	(SP)+
+	MOV	R1,-(SP)	;set queue pointers
+	MOV	QUEBUF(R5),R1
+	MOV	R1,IOHPUT(R5)
+	MOV	R1,IOHGET(R5)
+	TST	R0		;is area full
+	BEQ	1$		;branch if yes
+2$:	MOV	R1,@R1		;no. chain element on queue
+	ADD	#SD.END+2,@R1
+	MOV	@R1,R1
+	SOB	R0,2$
+	MOV	QUEBUF(R5),-<SD.END+2>(R1)
+1$:	MOV	R1,R0		;dratted fortran
+	MOV	(SP)+,R1	;easy exit
+	CLC
+	RTS	PC
+	.PAGE
+	.SBTTL	Control process input/output
+;
+; .ttyin (emt 340) read byte from operator console
+; Returns r0 = char
+;
+TTYIN:	MOV	R1,-(SP)	;save registers
+	BIT	#SROBIT,IOHFLG(R5) ;is server active
+	BEQ	3$		;branch if no
+	BIT	#TELBIT,IOHFLG(R5) ;yes. is telnet disabled
+	BNE	3$		;branch if yes
+	BIT	#TTSPC$,@#JSW	;no. is local edit/echo on
+	BNE	1$		;branch if no
+	BIT	#CHRBIT,IOHFLG(R5) ;yes. is sender in line mode
+	BEQ	3$		;branch if yes
+	BIC	#CHRBIT,IOHFLG(R5) ;no. switch to line mode
+	MOV	#TNECHO*400+WONT,R0 ;send iac-wont-echo
+	BR	2$
+;
+1$:	BIT	#CHRBIT,IOHFLG(R5) ;char mode. is sender in char mode
+	BNE	3$		;branch if yes
+	BIS	#CHRBIT,IOHFLG(R5) ;no. switch to char mode
+	MOV	#TNECHO*400+WILL,R0 ;send iac-will-echo
+2$:	JSR	PC,SNDOPT
+3$:	BIT	#INTBIT+TIMBIT,IOHFLG(R5) ;is interrupt pending
+	BNE	5$		;branch if yes
+	CMP	IOHGET(R5),IOHPUT(R5)
+	BNE	5$		;branch if yes
+	BIT	#TTIBIT,IOHFLG(R5) ;no. is buffer ready
+	BNE	6$		;branch if yes
+	BIT	#TCBIT$,@#JSW	;is this inhibit mode
+	BEQ	4$		;branch if no
+	BIT	#SECBIT,IOHFLG(R5) ;has c bit indicated before
+	BEQ	5$		;branch if no
+4$:	MOV	#100000,R0	;yes. clean output buffer
+	JSR	PC,XMIT
+	JSR	PC,EVENT
+	BR	3$
+;
+5$:	BIS	#SECBIT,IOHFLG(R5) ;remember c bit
+	MOV	(SP)+,R1
+	SEC
+	RTS	PC
+;
+6$:	MOV	IOHGTI(R5),R1	;set buffer pointer
+7$:	TSTB	IOHOSG(R5)	;is segment empty
+	BNE	8$		;branch if no
+	MOVB	(R1)+,IOHACK(R5) ;yes. get next segment
+	MOVB	(R1)+,IOHOSG(R5)
+	BEQ	7$
+8$:	DECB	IOHOSG(R5)
+	CLR	R0		;assemble bits
+	BIT	#ESCFL$,@#JSW
+	BEQ	9$
+	BISB	IOHACK(R5),R0
+	SWAB	R0
+9$:	BISB	(R1)+,R0
+	BIT	#TTLC$,@#JSW	;is lower-case bit on
+	BNE	10$		;branch if yes
+	CMPB	R0,#'a		;no. is char lower-case
+	BLO	10$		;branch if no
+	CMPB	R0,#'z
+	BHI	10$		;branch if no
+	ADD	#'A-'a,R0	;yes. convert to upper case
+10$:	MOV	R1,IOHGTI(R5)
+	CMP	R1,IOHPTI(R5)	;is buffer empty
+	BNE	TTO3		;branch if no
+	MOV	R0,-(SP)	;yes. initialize for segment scan
+	MOV	INPBUF(R5),R1
+11$:	CMP	R1,IOHPTI(R5)	;is this last segment
+	BEQ	13$		;branch if yes
+	MOVB	(R1)+,R0	;no. ack this segment
+	TSTB	@R1
+	BEQ	12$		;not if it's empty
+	JSR	PC,LOCTRM
+12$:	MOVB	(R1)+,R0
+	ADD	R0,R1		;link to next segment
+	BR	11$
+;
+13$:	MOV	INPBUF(R5),R1	;reset buffer pointers
+	MOV	R1,IOHGTI(R5)
+	ADD	#2,R1
+	MOV	R1,IOHPTI(R5)
+	MOV	R1,IOHISG(R5)
+	BIC	#TTIBIT,IOHFLG(R5) ;tinkle server
+	JSR	PC,SRVCPY
+	MOV	(SP)+,R0	;return with char
+	BR	TTO3
+;
+; .ttyou (emt 341) write byte to operator console
+; R0 = char, returns r0 = char, cc = 0
+;
+TTYOU:	BIT	#SROBIT,IOHFLG(R5) ;is server active
+	BEQ	TTYOU1		;branch if no
+	BIT	#TELBIT,IOHFLG(R5) ;yes. is telnet disabled
+	BNE	TTYOU1		;branch if yes
+	CMPB	R0,#IAC		;no. is this iac
+	BNE	TTYOU1		;branch if no
+	JSR	PC,TTYOU1	;yes. double it
+TTYOU1:	MOV	R0,-(SP)	;preserve r0
+	BIC	#SECBIT,IOHFLG(R5) ;forget c bit
+1$:	BIT	#TTOBIT,IOHFLG(R5) ;is output busy
+	BEQ	3$		;branch if no
+	JSR	PC,EVENT	;yes. make him wait
+	BR	1$
+;
+3$:	CMP	IOHPTO(R5),INPBUF(R5) ;is buffer full
+	BLO	4$		;branch if no
+	CLR	R0		;yes. clean output buffer (no push)
+	JSR	PC,XMIT
+	BR	1$
+;
+4$:	MOV	(SP)+,R0	;store byte
+	MOVB	R0,@IOHPTO(R5) 
+	INC	IOHPTO(R5)
+	CLC			;clean exit
+	RTS	PC
+;
+; Subroutine to reply local terminal
+;
+LOCTRM:	MOV	R1,-(SP)	;saving is prudent
+	MOV	R2,-(SP)
+	MOV	MSGBUF(R5),R2	;send local terminal reply
+	MOV	R2,R1
+	MOVB	R0,(R1)+	;SD.DST
+	BEQ	TTO2
+	MOVB	#STRCTL,(R1)+	;SD.CTL
+	.PUTDA	R2
+	CLRB	IOHACK(R5)
+TTO2:	MOV	(SP)+,R2
+TTO3:	MOV	(SP)+,R1
+	CLC
+	RTS	PC
+;
+; Xmit (xmt) start output buffer transfer
+; R0 = push flag (bit 15)
+;
+XMIT:	MOV	R1,-(SP)	;preserve registers
+	MOV	R2,-(SP)
+	MOV	R0,-(SP)	;save push flag
+1$:	MOV	IOHGTO(R5),R1	;is output buffer empty
+	MOV	IOHPTO(R5),R0
+	SUB	R1,R0
+	BEQ	2$		;branch if yes
+	BIT	#TTOBIT,IOHFLG(R5) ;no. is output busy
+	BNE	5$		;branch if yes
+	MOV	R1,IOHPTO(R5)	;no. reset buffer pointer
+	BIT	#SROBIT,IOHFLG(R5) ;is server active
+	BEQ	3$		;branch if no
+	BIS	@SP,R0		;yes. call tcp
+	MOV	IOHSRV(R5),R2
+	JSR	PC,$SEND
+	TST	R0		;did tcp accept it
+	BEQ	4$		;branch if yes
+2$:	TST	(SP)+		;no. forget it
+	BR	TTO2
+;
+3$:	MOV	OUTBUF(R5),R2	;local terminal. complete header
+	ASL	R0
+	ASL	R0
+	BICB	#^C3,SD.CTL(R2)
+	BISB	R0,SD.CTL(R2)
+	.PUTDA	R2		;start transfer
+4$:	BIS	#TTOBIT,IOHFLG(R5)
+5$:	TST	@SP		;was push set
+	BPL	2$		;branch if no
+	JSR	PC,EVENT	;yes. wait for completion
+	BR	1$
+;
+; .print (emt 351) write string to operator console
+; R0 = string pointer (term by zero byte)
+;
+PRINT:	MOV	R1,-(SP)	;save register
+	MOV	R0,R1		;send line
+1$:	MOVB	(R1)+,R0	;write next char
+	BEQ	2$		;end on zero byte
+	BIT	#177,R0		;is no-crlf
+	BEQ	TTO3		;branch if yes
+	JSR	PC,TTYOU	;no. send char
+	BR	1$
+;
+2$:	MOV	#CR,R0		;print crlf
+	JSR	PC,TTYOU
+	MOV	#LF,R0
+	JSR	PC,TTYOU
+	BR	TTO3
+;
+; .msg (emt 362) switch output stream for .ttyou
+; R0 = device name
+;
+MSG:	MOV	R1,-(SP)	;save register
+	MOV	IOHDEV(R5),-(SP)
+	SUB	#10,SP
+	MOV	SP,R1
+	MOV	R0,-(SP)	;save new name
+	MOV	#100000,R0	;clean output buffer
+	JSR	PC,XMIT
+	MOV	SP,R0		;find device parameters
+	JSR	PC,STAT
+	BCS	4$		;branch if not found
+	MOV	@SP,IOHDEV(R5)	;found. save name
+	MOV	OUTBUF(R5),R0	;set output buffer pointer
+	CMP	@SP,#<^RTT >	;is device "tt"
+	BNE	3$		;branch if no
+	BIT	#OPEBIT,IOHFLG(R5) ;yes. is server active
+	BEQ	3$		;branch if no
+	BIS	#SROBIT,IOHFLG(R5) ;yes. set net output
+	BR	4$
+;
+3$:	BIC	#SROBIT,IOHFLG(R5) ;set local output
+	MOV	4(R1),R1	;SD.DST
+	MOVB	PARPID(R1),(R0)+
+	MOVB	#STRCTL,(R0)+	;SD.CTL
+4$:	MOV	R0,IOHGTO(R5)
+	MOV	R0,IOHPTO(R5)
+	ADD	#12,SP		;restore register
+	MOV	(SP)+,R0	;return old device name
+	BR	TTO3
+	.PAGE
+	.SBTTL	Trap catchers, peekers and pokers
+;
+; .setto (emt 354) return high address
+; R0 = requested addr, returns r0 = permitted addr
+;
+SETTOP:	CMP	R0,IOHTOP(R5)	;is request too high
+	BLO	2$		;branch if no
+	MOV	IOHTOP(R5),R0	;yes. use highest permitted
+	TST	-(R0)
+2$:	MOV	R0,@#USRTOP	;store in approved place
+	CMP	R0,IOHCLI(R5)	;will this clobber the cli
+	BLO	EMTNOP		;branch if no
+	MOV	IOHTOP(R5),IOHCLI(R5) ;yes. restore cli limit
+	BR	EMTNOP
+;
+; .serr (emt 374/4) enable soft error recovery
+; Emt 374 linkage
+;
+SERR:	BIS	#SERBIT,IOHFLG(R5) ;let user do recovery
+	BR	EMTNOP
+;
+; .herr (emt 374/5) disable soft error recovery
+; Emt 374 linkage
+;
+HERR:	BIC	#SERBIT,IOHFLG(R5) ;let system do recovery
+	BR	EMTNOP
+;
+; .trpse (emt 375/3) intercept bus/instruction traps
+; Emt 375 linkage, returns r0 = old arg
+;
+TRPSET:	MOV	IOHERR(R5),-(SP) ;save old value
+	MOV	2(R0),IOHERR(R5) ;stash where needed
+	BR	TRP3
+;
+; .sfpa (emt 375/30) intercept floating-point traps
+; Emt 375 linkage, returns r0 = old arg
+;
+SFPA:	MOV	IOHFPA(R5),-(SP) ;save old value
+	MOV	2(R0),IOHFPA(R5) ;stash where needed
+	BR	TRP3
+;
+; .snca (emt 375/17) intercept network traps (dcn/bos only)
+; Emt 375 linkage, returns r0 = old arg
+;
+SNCA:	MOV	IOHNCA(R5),-(SP) ;save old value
+	MOV	2(R0),IOHNCA(R5) ;stash where needed
+	BR	TRP3
+;
+; .scca (emt 375/35) enable attention-interrupt fiddle
+; Emt 375 linkage, returns r0 = old arg
+;
+SCCA:	MOV	IOHSCC(R5),-(SP) ;save old value
+	MOV	2(R0),IOHSCC(R5) ;stash where needed
+TRP3:	MOV	(SP)+,R0
+EMTNOP:	CLC			;clean exit
+	RTS	PC
+;
+; .date (emt 374/10) gets current date
+; Emt 374 linkage, returns r0 = date (rt-11 format)
+;
+DATE:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	.GDAT			;get system date
+	BIC	#140000,R0
+	MOV	R0,R1		;convert to rt-11 format
+	CLR	R0
+	DIV	#1461.,R0	;(4*365+1)
+	ASH	#2,R0
+	MOV	R0,R2
+	CMP	R1,#366.	;is this leap year
+	BHIS	1$		;branch if no
+	MOV	PC,R0		;yes. use leap year table
+	ADD	#LEPYER-.,R0
+	BR	2$
+;
+1$:	SUB	#366.,R1	;standard year. account for leap
+	INC	R2
+	CLR	R0
+	DIV	#365.,R0
+	ADD	R0,R2
+	MOV	PC,R0		;use standard year table
+	ADD	#STDYER-.,R0
+2$:	ADD	#2000,R2	;accumulate month
+	TST	(R0)+
+	CMP	@R0,R1
+	BLOS	2$
+	SUB	-(R0),R1
+	INC	R1		;accumulate day
+	ASH	#5,R1
+	ADD	R1,R2
+	MOV	R2,R0
+EMTPOP:	MOV	(SP)+,R2	;evas
+	MOV	(SP)+,R1
+	BR	EMTNOP
+;
+; .gtim (emt 375/21) gets time-of-day
+; Emt 375 linkage, returns time-of-day (line ticks past midnight),
+; Cc(c) = 1 if not set
+;
+GTIM:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	MOV	2(R0),R2	;get buffer pointer
+	.GCLK			;get time-of-day
+	MOV	R0,(R2)+	;convert to line ticks
+	MOV	R1,@R2
+	ASL	R1		;multiply by 3
+	ROL	R0
+	ADD	R1,@R2
+	ADC	-(R2)
+	ADD	R0,@R2
+	CLR	R0		;divide by 50
+	MOV	#33.,R1
+1$:	ROL	R0
+	ADD	#-50.,R0
+	BCS	2$
+	SUB	#-50.,R0
+2$:	ROL	2(R2)
+	ROL	@R2
+	SOB	R1,1$
+	BR	EMTPOP
+;
+; .gtjb (emt 375/20) return rt-11 job parameters
+; Emt 375 linkage, returns job parameters
+;
+GTJB:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	MOV	2(R0),R2	;get area pointer
+	MOVB	IOHRPY(R5),(R2)+ ;0 job number (port id)
+	CLRB	(R2)+
+	MOV	IOHBRK(R5),@R2	;2 high-memory limit
+	SUB	#2,(R2)+
+	MOV	IOHBOT(R5),(R2)+ ;4 low-memory limit
+	MOV	IOHCTP(R5),(R2)+ ;6 pointer to i/o channel space
+	MOV	@#USRTOP,@R2	;10 address of impure area (program break)
+	BNE	1$		;branch if nonzero
+	MOV	IOHBOT(R5),@R2	;zero. use low address
+1$:	TST	(R2)+
+	CLR	(R2)+		;12 control terminal unit number
+	MOV	CSIBUF(R5),(R2)+ ;14 virtual high limit
+	MOV	IOHPAR(R5),R1
+	MOV	R1,(R2)+	;16 reserved (par pointer)
+	CMP	4(R0),#-1	;is this long format
+	BNE	EMTPOP		;branch if no	
+	MOVB	PARPID(R1),R1	;yes. keep going
+	.GPSA
+	MOV	R1,(R2)+	;20 reserved (psa pointer)
+	MOV	IOHPAR(R5),R1
+	MOVB	PARIDX(R1),R1
+	BIC	#^C377,R1
+	ADD	R5,R1
+	ADD	PNPTR(R5),R1
+	MOV	@R1,(R2)+	;22 job name (rad50 process name)
+	BR	EMTPOP
+;
+; .gval/.pval/.peek/.poke (emt 375/34) diddle memory
+; Returns r0 = value
+;
+GVAL:	MOV	R1,-(SP)	;get word pointer
+	MOV	R2,-(SP)
+	MOV	2(R0),R1
+	BIT	#1,@R0		;is this .peek/.poke
+	BNE	1$		;branch if yes
+	ADD	R5,R1		;no. add monitor offset
+1$:	MOV	@R1,R2		;save value
+	BIT	#2,@R0		;is this .pval/.poke
+	BEQ	2$		;branch if no
+	MOV	4(R0),@R1	;yes. store new value
+2$:	MOV	R2,R0		;restore value
+	BR	EMTPOP
+	.PAGE
+	.SBTTL	DCN/BOS Device interface
+;
+; Return device status
+; R0 = device name pointer, r1 = destination address
+;
+STAT:	MOV	R0,-(SP)	;save registers
+	MOV	R1,-(SP)
+	BR	DST2
+;
+; .dstat (emt 342) return device status fiddle
+; Stack = arg1 (destination address), r0 = arg2 (device name pointer)
+;
+DSTAT:	MOV	R1,-(SP)	;stack contortions
+	MOV	10(SP),R1	;get destination address
+	MOV	6(SP),10(SP)
+	MOV	4(SP),6(SP)
+	MOV	2(SP),4(SP)
+	MOV	R0,2(SP)
+DST2:	MOV	R2,-(SP)	;r0 = dev name ptr, r1 = dest ptr
+	MOV	R3,-(SP)
+	MOV	R1,-(SP)	;save destination pointer
+	MOV	@R0,R1		;is this a null entry
+	BEQ	6$		;branch if yes (pip cheats again)
+1$:	MOV	IOHPAR(R5),R0	;no. search logical name table
+	MOVB	PARLNG(R0),R2
+	ADD	#PARLDN,R0
+2$:	CMP	@R0,R1		;do entries match
+	BNE	3$		;branch if no
+	MOV	2(R0),R2	;yes. get par pointer
+	CLR	R3
+	BISB	R2,R3
+	ADD	PC,R3
+	ADD	#$OFSET-.,R3
+	ADD	@R3,R3
+	SUB	IOHPAR(R5),R0	;compute ldn/unit
+	SUB	#PARLDN,R0
+	ASH	#-3,R0
+	BIC	#377,R2
+	BIS	R2,R0
+	BR	9$
+
+3$:	ADD	#10,R0		;step to next entry
+	SOB	R2,2$
+	MOV	R1,-(SP)	;no. found. save name
+	CLR	R0		;save unit
+	DIV	#50,R0
+	SUB	#36,R1
+	BIC	#^C7,R1
+	MOV	R1,-(SP)
+	MUL	#50,R0
+	MOV	R5,R0		;search physical device table
+	ADD	PNPTR(R5),R0
+	MOV	-2(R0),R2
+	ASR	R2
+4$:	MOV	R5,R3		;get par pointer
+	ADD	PNPTR(R5),R3
+	MOV	-2(R3),R3
+	ADD	R0,R3
+	ADD	@R3,R3
+	CMP	@R0,2(SP)	;do original entries match
+	BEQ	7$		;branch if yes
+	TSTB	PARTPE(R3)	;no. is this direct-access device
+	BPL	5$		;branch if no
+	CMP	@R0,R1		;yes. do truncated entries match
+	BEQ	8$		;branch if yes
+5$:	TST	(R0)+		;no. advance to next entry
+	SOB	R2,4$
+	CMP	(SP)+,(SP)+	;not found. signal error
+6$:	TST	(SP)+
+	SEC
+	BR	11$
+;
+7$:	CLR	@SP		;unit zero
+8$:	MOV	(SP)+,R0	;get unit
+	SWAB	R0		;assume ldn zero
+	TST	(SP)+		;discard original name
+9$:	MOV	(SP)+,R1	;restore destination pointer
+	MOV	PARTPE(R3),@R1	;0 device type
+	TSTB	@R1		;is it direct-access
+	BPL	10$		;branch if no
+	MOV	#100406,@R1	;(filst$+varsz$) yes. pretend floppy
+10$:	TST	(R1)+
+	MOV	R0,(R1)+	;2 handler size (ldn)
+	MOV	R3,(R1)+	;4 load address (par pointer)
+	MOV	PARMAX(R3),(R1)+ ;6 max blocks
+	CLC
+11$:	MOV	(SP)+,R3	;restore registers
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	MOV	(SP)+,R0	;(fortran ots breaks the rules)
+	RTS	PC
+;
+; .spfun (emt 375/32) return device size (code 373 only)
+; Emt 375 linkage
+;
+SPFUN:	MOV	R1,-(SP)	;save argument pointer
+	MOV	R2,-(SP)
+	MOV	R0,R1
+	MOV	@R0,R0		;get channel table pointer
+	JSR	PC,DELAY
+	BCS	2$		;branch if not open or error
+	CMPB	#377,10(R1)	;is code legal
+	BNE	2$		;branch if no
+	MOV	@R0,R2		;get device table pointer
+	BIC	#^CINDX$M,R2
+	ADD	PC,R2
+	ADD	#$OFSET-.,R2
+	ADD	@R2,R2
+	CMPB	#373,11(R1)	;is this device size
+	BNE	1$		;branch if no
+	MOV	PARMAX(R2),@4(R1) ;yes. return max blocks
+	MOVB	10(R0),R2	;get device table pointer
+	BIC	#^C37,R2
+	ASH	#3,R2
+	ADD	IOHPAR(R5),R2
+	MOV	PARLDN+6(R2),R2	;is this virtual volume
+	BEQ	1$		;branch if no
+	MOV	R2,@4(R1)	;yes. return virtual size
+1$:	CLC
+	BR	3$
+;
+2$:	SEC			;error exit
+3$:	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; .fetch/.relea (emt 343) dummy for happy rt-11
+; Stack = arg1, r0 = arg2, return r0 = arg1
+;
+FETCH:	MOV	6(SP),R0	;return r0 = arg1
+	MOV	4(SP),6(SP)
+	MOV	2(SP),4(SP)	;pop argument off stack
+	MOV	@SP,2(SP)
+	TST	(SP)+
+	CLC
+	RTS	PC
+;
+; .gtlin (emt 345) get command string
+; Rt-11 macro: .gtlin linbuf,pstrng
+; Sp ->	.word	0		;flag
+;	.word	pstrng		;.asciz prefix string (0 = none)
+;	.word	1/3		;flag
+;	.word	linbuf		;.asciz returned string
+;
+; .csisp (emt 345) get command string and filespecs
+; Rt-11 macro: .csisp outspc,deftyp,cstrng,linbuf
+; Sp ->	.word	cstrng		;.asciz input string (0 = .ttyin)
+;	.word	deftyp		;rad50 default extensions (4 wds)
+;	.word	outspc+1	;output file specs (39. words)
+;	.word	linbuf		;.asciz returned string
+;
+; .csige (emt 344) get command string and filespecs
+; Rt-11 macro: .csige devspc,deftyp,cstrng,linbuf
+; Sp ->	.word	cstrng		;.asciz input string (0 = .ttyin)
+;	.word	deftyp		;rad50 default extensions (4 wds)
+;	.word	devspc+1	;device handler area (not used)
+;	.word	linbuf		;.asciz returned string
+;
+CSIGE:	CLRB	FLAG1(R5)	;set flag
+	BR	CSI1
+;
+CSISP:	MOVB	#1,FLAG1(R5)	;set flag
+CSI1:	JMP	CSI		;continue elsewhere
+;
+; .spnd (emt 374/1) suspend main-line code
+; Emt 374 linkage
+;
+SPND:	DECB	IOHSPD(R5)	;decrement suspend counter
+	JSR	PC,TRPENB	;enter user mode
+	MOV	R5,-(SP)	;point to useful place
+	MOV	@#SYSPTR,R5
+1$:	TSTB	IOHSPD(R5)	;is suspend counter >= 0
+	BGE	2$		;branch if yes
+	.EVENT			;no. wait for something
+	BR	1$
+;
+2$:	MOV	(SP)+,R5	;back to work
+	RTS	PC
+;
+; .rsum (emt 374/2) resume main-line code
+; Emt 374 linkage
+;
+RSUM:	INCB	IOHSPD(R5)	;increment suspend counter
+	RTS	PC
+;
+; .enbcr (emt 365) enable completion interrupt
+; (bos/vos only)
+;
+ENBCR:	DECB	QUEENB(R5)	;enable completion interrupt
+	RTS	PC
+;
+; .dsbcr (emt 366) disable completion interrupt
+; (bos/vos only)
+;
+DSBCR:	INCB	QUEENB(R5)	;disable completion interrupt
+	RTS	PC
+;
+; .mrkt (emt 375/22) set timer interrupt (line ticks)
+; Emt 375 linkage
+;
+MRKT:	MOV	R1,-(SP)	;save register
+	TST	(R0)+		;save parameters
+	MOV	(R0)+,R1	;time pointer
+	MOV	(R0)+,IOHTIA(R5) ;crtn
+	MOV	(R0)+,IOHTID(R5) ;id
+	.CTIM			;safety first
+	MOV	(R1)+,R0	;convert ticks to milliseconds
+	MOV	(R1)+,R1
+	JSR	PC,LINMS
+	MOV	R1,IOHTIM+2(R5)	;stash for later
+	MOV	R0,IOHTIM(R5)	;is value > 30 seconds
+	BNE	2$		;branch if yes
+	MOV	R1,R0
+	CMP	R0,#30000.
+	BLOS	1$		;branch if no
+2$:	MOV	#30000.,R0	;yes. clamp at 30 seconds
+1$:	SUB	R0,IOHTIM+2(R5)	;update residual time
+	SBC	IOHTIM(R5)
+	.STIM			;start timer
+	BR	DLY3
+;
+; .cmkt (emt 375/23) clear timer interrupt
+; Emt 375 linkage
+;
+CMKT:	.CTIM			;clear timer
+	BIC	#TIMBIT,IOHFLG(R5)
+	RTS	PC
+;
+; .twait (emt 375/23) wait for timer interrupt (line ticks)
+; Emt 375 linkage
+;
+TWAIT:	JSR	PC,TRPENB	;enter user mode
+	CLR	-(SP)		;id
+	MOV	PC,-(SP)	;crtn
+	ADD	#TWA1-.,@SP
+	MOV	2(R0),-(SP)	;time pointer
+	CLR	-(SP)		;emt code
+	.MRKT	SP		;set timer interrupt
+	.SPND			;wait for completion
+	ADD	#2*4,SP
+	RTS	PC
+;
+TWA1:	.RSUM			;.twait completion routine
+	RTS	PC
+	.PAGE
+	.SBTTL	RT-11 Channel interface
+;
+; .cdfn (dly) alter channel table pointer
+; Emt 375 linkage
+;
+CDFN:	MOV	R1,-(SP)	;save
+	MOV	2(R0),R1	;get pointers
+	MOV	4(R0),R0
+	CMP	R0,#16.
+	BLE	DLY4
+	MOV	R2,-(SP)
+	MOV	R1,R2
+1$:	CLR	(R1)+		;clear channel table
+	CLR	(R1)+
+	CLR	(R1)+
+	CLR	(R1)+
+	CLR	(R1)+
+	SOB	R0,1$
+	MOV	IOHCTP(R5),R1
+	MOV	R2,IOHCTP(R5)
+	MOV	#16.*5,R0
+2$:	MOV	(R1)+,(R2)+	;(note: channels remain open)
+	SOB	R0,2$
+	MOV	(SP)+,R2
+	BR	DLY3
+;
+; Delay (dly) wait for channel op and set channel pointer
+; R0 = channel number, returns r0 = channel pointer
+;
+DELAY:	MOV	R1,-(SP)	;save
+	BIC	#^C377,R0	;compute channel pointer
+	MOV	R0,R1
+	ASL	R1
+	MOV	R1,-(SP)
+	ASL	R1
+	ASL	R1
+	ADD	(SP)+,R1
+	ADD	IOHCTP(R5),R1
+2$:	BIT	#ACTIV$,@R1	;is channel open
+	BEQ	DLY2		;branch if no
+	BIT	#BUSY$,@R1	;is channel busy
+	BEQ	1$		;branch if no
+	JSR	PC,EVENT	;yes. wait for something
+	BR	2$
+;
+1$:	MOV	R1,R0		;return channel pointer
+DLY3:	MOV	(SP)+,R1	;return c(cc) = 0
+	CLC
+	RTS	PC
+;
+DLY2:	MOV	R1,R0		;return channel pointer
+DLY4:	MOV	(SP)+,R1	;return c(cc) = 1
+	SEC
+	RTS	PC
+;
+; .purge (emt 374/3) purge i/o channel
+; Emt 374 linkage
+;
+PURGE:	JSR	PC,DELAY	;get table offset
+	BCS	1$		;branch if not open or error
+	BIC	#ACTIV$,@R0	;zap active bit
+1$:	RTS	PC
+;
+; .srese/.hrese (emt 352/357) stop 'em in their tracks
+;
+SRESET:	MOV	R1,-(SP)	;save register
+	MOV	#160000,R1	;restore window segment
+	MOV	#77,R0
+	.WIND
+	CLRB	IOHSPD(R5)	;.spnd/.rsum
+	JSR	PC,CMKT		;.mrkt
+	CLRB	QUEENB(R5)	;clear completion queue
+	CLRB	QUESIG(R5)
+	CLR	QUEBUF(R5)
+	CLR	IOHPUT(R5)
+	CLR	IOHGET(R5)
+	MOV	#SMFMAX*2,R1	;clear dangling semaphores
+1$:	.TSEM			;is this one for this proc
+	BNE	3$		;branch if no
+	.VSEM			;yes. f*i*x it
+3$:	SUB	#2,R1
+	BGE	1$
+	MOV	#14.,R1		;set up (avoid overlay channel)
+2$:	MOV	R1,R0		;purge channel
+	JSR	PC,PURGE
+	DEC	R1
+	BGE	2$
+	BR	DLY3		;yes. sneak out
+;
+; .cstat (emt 375/27) return channel status
+; Emt 375 linkage
+;
+CSTAT:	MOV	R1,-(SP)	;save
+	MOV	R2,-(SP)
+	MOV	2(R0),R2	;get source address
+	MOV	@R0,R0		;get channel number
+	JSR	PC,DELAY	;get table pointer
+	BCS	DLY4		;branch if not open
+	MOV	(R0)+,R1	;save channel table entry
+	MOV	R1,(R2)+
+	MOV	(R0)+,(R2)+
+	MOV	(R0)+,(R2)+
+	MOV	(R0)+,(R2)+
+	TSTB	(R0)+		;get unit number
+	MOVB	(R0)+,(R2)+
+	CLRB	(R2)+
+	BIC	#^CINDX$M,R1	;get par pointer
+	ADD	PC,R1
+	ADD	#$OFSET-.,R1
+	ADD	@R1,R1
+	CLR	R0		;get name pointer
+	MOVB	PARIDX(R1),R0
+	ADD	R5,R0
+	ADD	PNPTR(R5),R0
+	MOV	@R0,(R2)+	;brutal attack
+	MOV	(SP)+,R2	;evas
+	BR	DLY3
+;
+; .saves (emt 375/5) save channel status
+; Emt 375 linkage
+;
+SAVEST:	MOV	R1,-(SP)	;save
+	MOV	2(R0),R1	;get destination address
+	MOV	@R0,R0		;get channel pointer
+	JSR	PC,DELAY
+	BCS	DLY4		;branch if not open
+	MOV	@R0,(R1)+	;save channel table entry
+	BIC	#ACTIV$,(R0)+	;mark non busy
+	MOV	(R0)+,(R1)+
+	MOV	(R0)+,(R1)+
+	MOV	(R0)+,(R1)+
+	MOV	(R0)+,(R1)+
+	BR	DLY3
+;
+; .reope (emt 375/6) restore channel status
+; Emt 375 linkage
+;
+REOPEN:	MOV	R1,-(SP)	;save
+	MOV	2(R0),R1	;get source address
+	MOV	@R0,R0		;get channel pointer
+	JSR	PC,DELAY
+	BCC	DLY4		;branch if already open
+	MOV	(R1)+,(R0)+	;restore channel table entry
+	MOV	(R1)+,(R0)+
+	MOV	(R1)+,(R0)+
+	MOV	(R1)+,(R0)+
+	MOV	(R1)+,(R0)+
+	BR	DLY3
+;
+; .wait (emt 374/0) wait for i/o completion
+; Emt 374 linkage, returns r0 = words transferred
+;
+WAIT:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	BR	SIOWAT
+;
+; .read/.readc/.readw (emt 375/10) i/o read
+; .write/.writc/.writw (emt 375/11) i/o write
+; Emt 375 linkage, returns r0 = words transfered
+;
+STRTIO:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R0,R2		;stash arg pointer
+	MOV	@R2,R0		;get channel number
+	JSR	PC,DELAY	;test open and get table pointer
+	BCS	SIONOT		;branch if not open
+	MOV	R0,R3		;stash channel pointer
+	BIT	#HDERR$,@R0	;is error bit set
+	BNE	SIOERR		;branch if yes
+	BIT	#EOF$,@R0	;no. is end of file bit set
+	BNE	SIOEOF		;branch if yes
+	MOV	6(R2),IOHWCT(R5) ;no. is transfer null
+	BEQ	SIOEND		;branch if yes
+	MOV	2(R2),R1	;no. get block number
+	TST	C.SBLK(R3)	;is this non-file op
+	BEQ	1$		;branch if yes (pip cheats)
+	BITB	#CD.SPQ,C.DEVQ(R3) ;no. is this spool pseudo-device
+	BEQ	2$		;branch if no
+	TST	C.SBLK(R3)	;yes. is this customer data
+	BEQ	2$		;branch if no
+	TST	C.USED(R3)
+	BEQ	2$		;branch if no
+	INC	R1		;yes. offset by one block
+2$:	MOV	C.LENG(R3),R0	;is block number in range
+	SUB	R1,R0
+	BLE	SIOEOF		;branch if no
+	SWAB	R0		;yes. compute words remaining
+	TSTB	R0
+	BNE	1$		;branch if enough
+	CMP	IOHWCT(R5),R0
+	BLOS	1$		;branch if enough
+	MOV	R0,IOHWCT(R5)	;not enough. truncate
+1$:	BITB	#340,C.DEVQ(R3)	;is this block-transfer device
+	BEQ	SIOSEQ		;branch if no
+;
+; Block i/o
+;
+	MOV	MSGBUF(R5),R0	;construct parameters
+	ADD	#2*5,R0
+	MOV	IOHWCT(R5),-(R0) ;SD.CNT
+	MOV	4(R2),-(R0)	;SD.ADR
+	MOV	R1,-(R0)	;SD.BLK
+	ADD	C.SBLK(R3),@R0
+	MOVB	C.DEVQ(R3),R1	;(offset for virtual disk)
+	BIC	#^C37,R1
+	ASH	#3,R1
+	ADD	IOHPAR(R5),R1
+	ADD	PARLDN+4(R1),@R0
+	MOVB	C.DEVQ+1(R3),-(R0) ;SD.DEV
+	MOVB	@R2,-(R0)	;SD.CHN
+	MOVB	#BC.RED+CHNCTL,-(R0) ;SD.CTL
+	CMPB	1(R2),#11
+	BNE	3$
+	MOVB	#BC.WRT+CHNCTL,@R0
+3$:	MOV	@R3,R1		;get device table pointer
+	BIC	#^CINDX$M,R1
+	ADD	PC,R1
+	ADD	#$OFSET-.,R1
+	ADD	@R1,R1
+	MOVB	PARPID(R1),-(R0) ;SD.DST
+	.PUTDA	R0
+	BIS	#BUSY$,@R3	;mark busy
+;
+; Operation started. set up returns
+;
+SIOEND:	TST	10(R2)		;is wait requested
+	BNE	SIO13		;branch if no
+	MOV	@R2,R0		;yes. wait
+SIOWAT:	JSR	PC,DELAY	;test channel and delay
+	BCC	SIOERR		;branch if open
+SIONOT:	MOVB	#2*2+1,R3	;channel not open. set error code 2
+	BR	SIO10
+;
+SIOERR:	BIT	#HDERR$,@R0	;is error bit set
+	BEQ	SIO13		;branch if no
+	BIC	#HDERR$,@R0	;reset flag bits
+	MOVB	#1*2+1,R3	;channel error. set error code 1
+	BR	SIO10
+;
+SIOEOF:	MOVB	#0*2+1,R3	;end of file. set error code 0
+SIO10:	CLR	IOHWCT(R5)	;zero word count for errors
+	BR	SIO12
+;
+SIO13:	CLRB	R3		;no error
+SIO12:	ASRB	R3		;set error code
+	BCC	1$
+	MOVB	R3,@#ERRBYT
+1$:	MOV	IOHWCT(R5),R0	;return word count
+	MOV	(SP)+,R3	;evas
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Stream i/o
+;
+SIOSEQ:	MOV	R4,-(SP)	;stream device. save register
+	MOV	4(R2),R4	;get current address
+	MOV	IOHWCT(R5),R1	;convert to byte count
+	ASL	R1
+	CMPB	1(R2),#11	;is this write operation
+	BNE	SIO14		;branch if no
+	MOVB	10(R3),R0	;yes. change to new device
+	BIC	#^C37,R0
+	ASH	#3,R0
+	ADD	IOHPAR(R5),R0
+	MOV	PARLDN(R0),R0
+	JSR	PC,MSG
+	MOV	R0,-(SP)
+1$:	BIT	#INTBIT,IOHFLG(R5) ;is interrupt pending
+	BNE	2$		;branch if yes
+	MOVB	(R4)+,R0	;no. get next byte
+	JSR	PC,TTYOU
+	SOB	R1,1$
+2$:	MOV	(SP)+,R0	;change to original device
+	JSR	PC,MSG
+SIO11:	MOV	(SP)+,R4
+	BR	SIOEND
+;
+SIO14:	JSR	PC,TTYIN	;get next byte
+	BCS	1$		;branch if cant
+	CMPB	R0,#SUB		;is this end of file
+	BEQ	1$		;branch if yes
+	MOVB	R0,(R4)+	;no. stash in buffer
+	SOB	R1,SIO14
+	BR	SIO11
+;
+1$:	BIS	#EOF$,@R3	;mark end of file
+2$:	CLRB	(R4)+		;fill zeros to end of buffer
+	SOB	R1,2$
+	BR	SIO11
+;
+; Subroutine to convert line ticks to milliseconds
+; R0-r1 = line ticks, returns r0-r1 = milliseconds
+;
+LINMS:	MOV	R2,-(SP)	;preservatives
+	MOV	R3,-(SP)
+	CLR	R2		;initialize to multiply by 50
+	MOV	#33.,R3
+3$:	ASR	R2		;shift partial product right
+	ROR	R0
+	ROR	R1
+	BCC	4$		;branch if lsb = 0
+	ADD	#50.,R2		;lsb ~= 0. add multiplier
+4$:	DEC	R3
+	BNE	3$
+	CLR	R2		;initialize to divide by 3
+	MOV	#33.,R3
+1$:	ROL	R2		;shift partial remainder left
+	ADD	#-3.,R2
+	BCS	2$		;branch if no underflow
+	SUB	#-3.,R2		;underflow. restore partial remainder
+2$:	ROL	R1		;rotate partial quotient left
+	ROL	R0
+	DEC	R3
+	BNE	1$
+	MOV	(SP)+,R3
+	MOV	(SP)+,R2
+	RTS	PC
+	.PAGE
+	.SBTTL	Tables and read-only data
+;
+; Data segment
+;
+	.PSECT	$USED,RO,D
+;
+; Transfer table used by trap processor
+; (* = f/b monitor only, + = usr required, # = dcn/bos)
+;
+EMTTRA:	.WORD	TTYIN-.		;340 .ttyin
+	.WORD	TTYOU-.		;341 .ttyou
+	.WORD	DSTAT-.		;342 .statu (+)
+	.WORD	FETCH-.		;343 .fetch/.relea (+)
+	.WORD	CSIGE-.		;344 .csige (+)
+	.WORD	CSISP-.		;345 .csisp/.gtlin (+)
+	.WORD	EMTNOP-.	;346 .lock (+)
+	.WORD	EMTNOP-.	;347 .unloc
+	.WORD	EXIT-.		;350 .exit
+	.WORD	PRINT-.		;351 .print
+	.WORD	SRESET-.	;352 .srese (+)
+	.WORD	QSET-.		;353 .qset (+)
+	.WORD	SETTOP-.	;354 .setto
+	.WORD	EMTNOP-.	;355 .rctrl
+	.WORD	EMTERR-.	;356 unassigned
+	.WORD	SRESET-.	;357 .hrese (+)
+	.WORD	EMTERR-.	;360 unassigned
+	.WORD	EMTERR-.	;361 unassigned
+	.WORD	MSG-.		;362 .msg (#)
+	.WORD	EMTERR-.	;363 unassigned
+	.WORD	EVENT-.		;364 .event (#)
+	.WORD	ENBCR-.		;365 .enbcr (#)
+	.WORD	DSBCR-.		;366 .dsbcr (#)
+	.WORD	$LOAD-.		;367 load program (#)
+	.WORD	$RECV-.		;370 tcp receive data (#)
+	.WORD	$SEND-.		;371 tcp send data (#)
+	.WORD	EMTERR-.	;372 unassigned
+	.WORD	$INT-.		;373 tcp send interrupt (#)
+	.WORD	EMT374-.	;374 argument in r0
+	.WORD	EMT375-.	;375 argument pointer in r0
+	.WORD	EMTSYS-.	;376 system error
+	.WORD	EMTERR-.	;377 unassigned
+;
+; Transfer table used by emt374
+;
+E74TRA:	.WORD	WAIT-.		;00 .wait
+	.WORD	SPND-.		;01 .spnd (*)
+	.WORD	RSUM-.		;02 .rsum (*)
+	.WORD	PURGE-.		;03 .purge
+	.WORD	SERR-.		;04 .serr
+	.WORD	HERR-.		;05 .herr
+	.WORD	CLOSE-.		;06 .close (+)
+	.WORD	EMTERR-.	;07 .tlock (*)
+	.WORD	CHAIN-.		;10 .chain
+	.WORD	EMTERR-.	;11 .mwait (*)
+	.WORD	DATE-.		;12 .date
+E74END	=	.		;end of table
+;
+; Transfer table used by emt375
+;
+E75TRA:	.WORD	DELETE-.	;00 .delet (+)
+	.WORD	LOOKUP-.	;01 .looku (+)
+	.WORD	ENTER-.		;02 .enter (+)
+	.WORD	TRPSET-.	;03 .trpse
+	.WORD	RENAME-.	;04 .renam (+)
+	.WORD	SAVEST-.	;05 .saves
+	.WORD	REOPEN-.	;06 .reope
+	.WORD	EMTERR-.	;07 unassigned
+	.WORD	STRTIO-.	;10 .read/.readc/.readw
+	.WORD	STRTIO-.	;11 .write/.writc/.writw
+	.WORD	EMTERR-.	;12 unassigned
+	.WORD	EMTERR-.	;13 .chcop (*)
+	.WORD	EMTERR-.	;14 .devic (*)
+	.WORD	CDFN-.		;15 .cdfn (*)
+	.WORD	EMTERR-.	;16 unassigned
+	.WORD	SNCA-.		;17 .snca (#)
+	.WORD	GTJB-.		;20 .gtjb
+	.WORD	GTIM-.		;21 .gtim
+	.WORD	MRKT-.		;22 .mrkt (*)
+	.WORD	CMKT-.		;23 .cmkt (*)
+	.WORD	TWAIT-.		;24 .twait (*)
+	.WORD	EMTERR-.	;25 .sdat/.sdatc/.sdatw (*)
+	.WORD	EMTERR-.	;26 .rcvd/.rcvdc/.rcvdw (*)
+	.WORD	CSTAT-.		;27 .cstat
+	.WORD	SFPA-.		;30 .sfpa
+	.WORD	EMTNOP-.	;31 .prote/.unpro (*)
+	.WORD	SPFUN-.		;32 .spfun
+	.WORD	EMTERR-.	;33 .cntxs (*)
+	.WORD	GVAL-.		;34 .gval
+	.WORD	SCCA-.		;35 .scca
+	.WORD	EMTERR-.	;36 xm primitives
+	.WORD	EMTERR-.	;37 mt primitives
+	.WORD	EMTERR-.	;40 .sdttm
+	.WORD	EMTERR-.	;41 .spcps (*)
+	.WORD	SFDAT-.		;42 .sfdat
+	.WORD	FPROT-.		;43 .fprot
+
+E75END	=	.		;end of table
+;
+; Date conversion tables
+;		 jan feb mar apr may jun jul aug sep oct nov dec
+STDYER:	TABLE	<31.,28.,31.,30.,31.,30.,31.,31.,30.,31.,30.,31.,999.>
+LEPYER:	TABLE	<31.,29.,31.,30.,31.,30.,31.,31.,30.,31.,30.,31.,999.>
+;
+; Echo control table
+;
+ECOTAB:	.BYTE	14		;177 del
+	.BYTE	0		;000 nul
+	.BYTE	2		;001 soh
+	.BYTE	2		;002 stx
+	.BYTE	4		;003 etx
+	.BYTE	2		;004 eot
+	.BYTE	2		;005 enq
+	.BYTE	2		;006 ack
+	.BYTE	2		;007 bel
+	.BYTE	0		;010 bs
+	.BYTE	0		;011 ht
+	.BYTE	16		;012 lf
+	.BYTE	0		;013 vt
+	.BYTE	0		;014 ff
+	.BYTE	0		;015 cr
+	.BYTE	2		;016 so
+	.BYTE	2		;017 si
+	.BYTE	2		;020 dle
+	.BYTE	0		;021 dc1
+	.BYTE	2		;022 dc2
+	.BYTE	0		;023 dc3
+	.BYTE	2		;024 dc4
+	.BYTE	12		;025 nak
+	.BYTE	2		;026 syn
+	.BYTE	2		;027 etb
+	.BYTE	2		;030 can
+	.BYTE	2		;031 em
+	.BYTE	6		;032 sub
+	.BYTE	10		;033 esc
+	.BYTE	2		;034 fs
+	.BYTE	2		;035 gs
+	.BYTE	2		;036 rs
+	.BYTE	2		;037 us
+	.EVEN
+;
+	.END
+                                                                                                                                                          

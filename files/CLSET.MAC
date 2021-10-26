@@ -1,0 +1,882 @@
+	.TITLE	CLSET	CL PROCESS OPTIONS
+	.SBTTL	SYSTEM DEFINITIONS
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Cl process options
+;
+; Conditional assembly switches
+;
+.IIF NDF,CS.BIG CS.BIG == 1	;0: standard, 1: extended features
+;
+; External symbols
+;
+	.GLOBL	FORMAT,RDASC,RDOCT,HASH,PROCT,PROCB,PRD50
+	.GLOBL	RDDEC,PRDEC,RDCLK,PRCLK,RDDAT,PRDAT
+	.GLOBL	RDBYT,PRBYT
+	.GLOBL	TTOPT,DKOPT,HLOPT,IPOPT,GTOPT,SQOPT
+	.IF	NE,CS.BIG
+	.GLOBL	SPOPT,FXOPT
+	.ENDC
+	.GLOBL	HASH,PRINT
+;
+; Entry symbols
+;
+	.GLOBL	CLI,CMDHLP,CMDON,CMDOFF,CMDASG,CMDVIC,CMDSHO,CMDNTF
+	.GLOBL	RDBYT,PRBYT
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.ERR,.PSA,.SUP,.CLP,.FLG ;definitions
+	.MCALL	.IOD,.KWTAB,.LGD,.TRDEF,.BOOT
+	.MCALL	.INIT,.GPSA,.GCLK,.GDAT,.WIND,.TRAP ;supervisor calls
+	.MCALL	.EXIT,$LOAD,.MSG ;monitor calls
+	.MCALL	.TTYIN,.TTYOU,.GTLIN,.PRINT ;rt-11 calls
+	.MCALL	.CSIGE,.CSISP,.SRESE,.SAVES
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.ERR			;define system error codes
+	.PSA			;define psa and par areas
+	.SUP			;define host process par areas
+	.CLP			;define rt-11 monitor area extension
+	.FLG			;flag bit definitions
+	.IOD			;emulator monitor area extension
+	.LGD			;define login file entry
+	.TRDEF			;define trap codes
+;
+; Module definitions
+;
+.MACRO	.CRLF			;cr/lf to console
+	.TTYOU	#CR
+	.TTYOU	#LF
+.ENDM	.CRLF
+	.PAGE
+	.SBTTL	PROCEDURE SEGMENT
+;
+; Dsects: r3 = par, r5 = ulp
+;
+	.PSECT	$BOSI,RO,I
+;
+; Cli (cli) interpret command line
+; Entered usually by .exit call (return from .save)
+;
+CLI:	MOV	R0,R4		;save chain area pointer
+	MOV	@#SYSPTR,R5	;rebuild addressability
+	MOV	IOHBRK(R5),IOHCLI(R5) ;save cli pointer
+	MOV	IOHPAR(R5),R3
+	BIS	#TTLC$,@#JSW	;specify lower-case
+	TST	PAROPT(R3)	;is process in use
+	BMI	1$		;branch if yes
+	BIS	#TTSPC$,@#JSW	;no. force char mode
+1$:	MOVB	@#ERRBYT+1,R0	;get return code
+	CLR	@#ERRBYT
+	CMP	R0,#ER.ERR	;is this exception
+	BLO	3$		;branch if no
+	CMP	R0,#ER.ATN	;yes. is it attention
+	BNE	2$		;branch if no
+	.TTYIN			;yes. discard etx
+	.EXIT
+;
+2$:	NEG	R0		;yes. compute text string address
+	ASL	R0
+	ADD	PC,R0
+	ADD	#ERRTAB-.,R0
+	ADD	@R0,R0
+	MOV	R5,R1
+	ADD	#IOHBLK,R1
+	JSR	PC,FORMAT
+	.EXIT
+;
+3$:	BIT	#CHAIN$,@#JSW	;did this come in side door
+	BEQ	4$		;branch if no
+	ADD	#12,R4		;point to argument
+	TSTB	@R4
+	BNE	11$		;branch if present
+4$:	BIT	#LOGIN$,PAROPT(R3) ;is login required
+	BEQ	5$		;branch if no
+	BITB	#AF.LOG,IOHCAP(R5) ;yes. is login complete
+	BNE	5$		;branch if yes
+	MOV	PC,R0		;no. polite herald
+	ADD	#HERALD-.,R0
+	JSR	PC,FORMAT
+	MOV	PC,R4		;sell no login before it's time
+	ADD	#RUN10-.,R4
+	BR	11$
+;
+5$:	BITB	#AF.MSG,IOHCAP(R5) ;was there smtp mail
+	BEQ	6$		;branch if no
+	MOV	PC,R0		;(new smtp mail since last login)
+	ADD	#COM60A-.,R0
+	JSR	PC,FORMAT
+6$:	BITB	#AF.MPM,IOHCAP(R5) ;was there mpm mail
+	BEQ	7$		;branch if no
+	MOV	PC,R0		;(new mpm mail since last login)
+	ADD	#COM60C-.,R0
+	JSR	PC,FORMAT
+7$:	BITB	#AF.FTP,IOHCAP(R5) ;was there remote file access
+	BEQ	8$		;branch if no
+	MOV	PC,R0		;(remote file access since last login)
+	ADD	#COM60B-.,R0
+	JSR	PC,FORMAT
+8$:	BITB	#AF.PRT,IOHCAP(R5) ;was there spool completes
+	BEQ	18$		;branch if no
+	MOV	PC,R0		;(spool complete since last login)
+	ADD	#COM60D-.,R0
+	JSR	PC,FORMAT
+18$:	BICB	#AF.MSG+AF.MPM+AF.FTP+AF.PRT,IOHCAP(R5) ;erase teltales
+	SUB	#80.,SP		;make room for input line
+	MOV	SP,R0
+	TST	PAROPT(R3)	;is process in use
+	BPL	9$		;branch if no
+	MOV	PC,R1		;yes. read with prompt
+	ADD	#COM8-.,R1
+	.GTLIN	R0,R1
+	BR	10$
+;
+9$:	.GTLIN	R0		;no prompt
+10$:	MOV	SP,R4		;set up for rdbyt
+11$:	MOV	PC,R0		;call kwik
+	ADD	#CLOPT-.,R0
+	JSR	PC,KWIK
+	.EXIT			;safety first
+;
+; Command not found
+; (segment of command language interpreter)
+; (no arguments)
+;
+CMDNTF:	MOV	PC,R0		;command not found
+	ADD	#COM1A-.,R0
+	.PRINT
+	RTS	PC
+;
+; 'reset' (cmd12) reinitialize system
+; (segment of command language interpreter)
+; Arg = "reboot" or "restart"
+;
+CMDRST:	JSR	PC,HASH		;get argument
+	CMP	R0,#<^RREB>	;is this "reboot"
+	BNE	1$		;branch if no
+	.BOOT			;system reboot
+;
+1$:	CMP	R0,#<^RRES>	;is this "restart"
+	BNE	2$		;branch if no
+	.INIT			;system reset
+;
+2$:	RTS	PC		;no help for hackers
+;
+; 'base' (cmd) set display/alter base
+; (segment of command language interpreter)
+; Arg = pid (zero for supervisor space)
+;
+CMDBAS:	MOVB	IOHRPY(R5),IOHBAS(R5)
+	JSR	PC,RDOCT	;get pid
+	BEQ	1$		;branch if missing
+	MOVB	R0,IOHBAS(R5)	;stashit
+1$:	RTS	PC
+;
+; 'alter' (cmd10) change memory contents
+; Arg1 = starting adr, arg2...argn = new values
+;
+CMDALT:	JSR	PC,RDOCT	;get initial address
+	MOV	R0,R2
+1$:	MOV	R2,R1
+	ADD	#2,R2		;(not a tst!)
+	MOV	#100000,R0	;map window into virtual space
+	BISB	IOHBAS(R5),R0
+	.WIND
+	BCS	CMD11B		;branch if error
+	JSR	PC,RDOCT
+	BEQ	2$
+	MOV	R0,@R1		;stash the little devil
+	BR	1$
+;
+2$:	RTS	PC
+;
+; 'display' (cmd11) display memory contents
+; Arg1 = starting adr, arg2 = number of words
+;
+CMDISP:	JSR	PC,RDOCT	;get starting address
+	MOV	R0,R2
+	JSR	PC,RDOCT	;get number of words to dump
+CMD11A:	MOV	R0,R1
+1$:	MOV	R2,R0		;get current address
+	JSR	PC,PROCT	;output it
+	.TTYOU	<#' >		;first send two blanks
+	MOV	#8.,R3		;set loop count
+2$:	MOV	R1,-(SP)
+	.TTYOU	<#' >
+	MOV	R2,R1		;fetch pointer
+	ADD	#2,R2		;(not a tst!)
+	MOV	#100000,R0	;map window into virtual space
+	BISB	IOHBAS(R5),R0
+	.WIND
+	BCS	4$		;branch if error
+	MOV	@R1,R0		;snatch the little devil
+	JSR	PC,PROCT	;perform function
+	MOV	(SP)+,R1
+	DEC	R1
+	BLE	3$		;do it until finished
+	DEC	R3		;
+	BNE	2$		;loop back
+	.CRLF			;end line
+	BR	1$
+;
+3$:	.CRLF			;end line
+	RTS	PC
+;
+4$:	TST	(SP)+		;pop off junk
+	.CRLF			;end line
+CMD11B:	MOV	PC,R0		;invalid virtual address
+	ADD	#COM7-.,R0
+	.PRINT
+	RTS	PC
+;
+; 'cpu' (cmd13) display elapsed cpu time of process
+; Arg = ldn
+;
+CMDCPU:	JSR	PC,RDOCT	;get pid
+	MOV	R0,R1
+	BNE	1$
+	MOVB	IOHRPY(R5),R1
+1$:	.GPSA			;get psa pointers
+	CLR	R0		;map window into virtual space
+	.WIND
+	BCS	2$		;branch if nonsense
+	MOV	PSACPU(R1),R0	;convert time
+	CLR	PSACPU(R1)
+	MUL	#50.,R0		;*** convert to milliseconds
+	DIV	#3.,R0		;(linfrq = 60)
+	JSR	PC,PRDEC
+	.CRLF
+2$:	RTS	PC
+;
+; 'psa' (cmd13) display psa of process
+; Arg = ldn
+;
+CMDSNS:	CLRB	IOHBAS(R5)
+	JSR	PC,RDOCT	;get id to dump
+	MOV	R0,R1
+	BNE	1$
+	MOVB	IOHRPY(R5),R1
+1$:	.GPSA			;get psa pointers
+	MOV	R1,R2		;save base
+	ASR	R0
+	BR	CMD11A		;go dump
+;
+; 'test' (cmd14) generate test message
+; Arg1 = repeat count
+;
+CMDTST:	JSR	PC,RDDEC	;get repeat count
+	MOV	R0,R2
+1$:	MOV	#40,R1		;initialize print loop
+2$:	MOV	R1,R0
+	.TTYOU			;print char
+	INC	R1
+	CMP	R1,#140
+	BLO	2$
+	.CRLF			;end line
+	DEC	R2		;is repeat through
+	BGT	1$		;branch if no
+	RTS	PC
+;
+; 'cmd' (cmd14) print command list
+; (segment of command language interpreter)
+; Arg = process name
+;
+CMDHLP:	MOV	R3,-(SP)	;save par pointer
+	JSR	PC,GETPAR	;get par pointer
+	BNE	4$		;branch if given
+	MOV	@SP,R3		;missing. default this proc
+4$:	MOV	PARTPE(R3),R1	;extract process type
+	BIC	#^C37,R1
+	ASL	R1
+	ADD	PC,R1
+	ADD	#CMDTAB-.,R1
+	TST	@R1		;is it valid
+	BEQ	30$		;branch if no
+	ADD	@R1,R1		;yes get options table pointer
+	MOV	PC,R0		;print header
+	ADD	#COM10-.,R0	;commands are:
+	.PRINT
+2$:	MOV	#8.,R2		;fields per line
+3$:	MOV	(R1)+,R0	;print command name
+	JSR	PC,PRD50	;print it
+	TST	(R1)+		;skip over entry offset
+	TST	@R1		;is this end of list
+	BEQ	6$		;branch if yes
+	DEC	R2		;no. is this end of line
+	BEQ	5$		;branch if end of line
+	.TTYOU	#HT		;no. tab a stop
+	BR	3$
+;
+5$:	.TTYOU	#CR		;end line
+	.TTYOU	#LF
+	BR	2$
+;
+6$:	.TTYOU	#CR		;last entry. end line
+	.TTYOU	#LF
+30$:	MOV	(SP)+,R3
+	RTS	PC
+;
+; 'set' (cmd12) set device options
+; (segment of command language interpreter)
+; Arg = device name
+;
+CMDSET:	MOV	R3,-(SP)	;save par pointer
+	JSR	PC,GETPAR	;get par pointer
+	BEQ	1$		;branch if missing
+	MOV	PARTPE(R3),R0	;got device. now find type
+	BIC	#^C37,R0
+	ASL	R0
+	ADD	PC,R0
+	ADD	#CMDTAB-.,R0
+	TST	@R0		;is this valid
+	BEQ	1$		;branch if no
+	ADD	@R0,R0		;yes. interpret commands
+	JSR	PC,KWIK
+1$:	MOV	(SP)+,R3
+	RTS	PC
+;
+; 'show' (cmd12) print process info
+; (segment of command language interpreter)
+; Arg = device name
+;
+CMDSHO:	MOV	R3,-(SP)	;save par pointer
+	JSR	PC,GETPAR	;get par pointer
+	BNE	3$		;branch if given
+	MOV	PC,R0		;print header
+	ADD	#COM2-.,R0
+	JSR	PC,FORMAT
+	MOV	R5,R1		;get pointers
+	ADD	PNPTR(R5),R1
+	MOV	-2(R1),R2
+	ADD	R1,R2
+5$:	JSR	PC,SHOW		;display next line
+	TST	(R1)+
+	CMP	R1,R2
+	BLO	5$
+	BR	30$
+;
+3$:	CLR	R1		;display one line
+	BISB	PARIDX(R3),R1
+	ADD	R5,R1
+	ADD	PNPTR(R5),R1
+	JSR	PC,SHOW
+30$:	MOV	(SP)+,R3
+	RTS	PC
+;
+; Subroutine to display process info
+; R1 = par pointer
+;
+SHOW:	MOV	R1,-(SP)
+	MOV	@R1,R0		;display process name
+	JSR	PC,PRD50
+	MOV	R5,R0		;get par pointer
+	ADD	PNPTR(R5),R0
+	ADD	-2(R0),R1
+	ADD	@R1,R1
+	MOV	PC,R0		;display rest
+	ADD	#FMT1-.,R0
+	JSR	PC,FORMAT
+	MOV	(SP)+,R1
+	RTS	PC
+;
+; Subroutine to get par pointer
+; Returns r3 = par pointer
+;
+GETPAR:	JSR	PC,HASH		;get process name
+	BEQ	4$		;branch if missing
+	MOV	R5,R1		;get $pname pointer
+	ADD	PNPTR(R5),R1
+	MOV	-2(R1),R3
+1$:	TST	@R1		;is this end of list
+	BEQ	2$		;branch if yes
+	CMP	R0,@R1		;is this the one
+	BEQ	5$		;branch if yes
+	TST	(R1)+		;no. advance to next entry
+	BR	1$
+;
+5$:	ADD	R1,R3		;get par pointer
+	ADD	@R3,R3
+	CLZ
+4$:	RTS	PC
+;
+2$:	MOV	PC,R0		;name not found
+	ADD	#COM1-.,R0
+	.PRINT
+	.EXIT
+;
+; 'device' (cmd12) print device table
+; (segment of command language interpreter)
+; Arg = ldn
+;
+CMDVIC:	JSR	PC,RDOCT	;get ldn
+	BEQ	1$		;branch if missing
+	JSR	PC,DEVICE
+	RTS	PC
+;
+1$:	MOV	PC,R0		;print all
+	ADD	#COM3-.,R0
+	JSR	PC,FORMAT
+	CLR	R1
+2$:	MOV	R1,R0
+	JSR	PC,DEVICE
+	INC	R1
+	CMPB	R1,PARLNG(R3)
+	BLO	2$
+	RTS	PC
+;
+; Subroutine to print device table entries
+; R0 = ldn
+;
+DEVICE:	MOV	R1,-(SP)
+	MOV	R0,R1
+	ASH	#3,R1
+	ADD	R3,R1
+	ADD	#PARLDN,R1
+	TST	@R1		;is entry defined
+	BEQ	4$		;branch if no
+	JSR	PC,PROCB
+	.TTYOU	#HT
+	MOV	(R1)+,R0	;print logical name
+	JSR	PC,PRD50
+	.TTYOU	#HT
+	CLR	R0		;print physical name
+	BISB	(R1)+,R0
+	ADD	R5,R0
+	ADD	PNPTR(R5),R0
+	MOV	@R0,R0
+	JSR	PC,PRD50
+	.TTYOU	#HT
+	MOVB	(R1)+,R0	;print unit number
+	JSR	PC,PRDEC
+	.TTYOU	#HT
+	MOV	(R1)+,R0	;print start block
+	JSR	PC,PRDEC
+	.TTYOU	#HT
+	MOV	(R1)+,R0	;print device size
+	JSR	PC,PRDEC
+	.CRLF
+4$:	MOV	(SP)+,R1
+	RTS	PC
+;
+; 'on' (cmd) set option bits
+; (segment of command language interpreter)
+; Arg = option bits
+;
+CMDON:	JSR	PC,RDOCT	;get bits
+	BIS	R0,PAROPT(R3)	;set them
+	RTS	PC
+;
+; 'off' (cmd) clear option bits
+; (segment of command language interpreter)
+; Arg = option bits
+;
+CMDOFF:	JSR	PC,RDOCT	;get bits
+	BIC	R0,PAROPT(R3)	;clear them
+	RTS	PC
+;
+; 'time' (cmd) set/display time-of-day in hh:mm:ss format
+; (segment of command language interpreter)
+; Arg1 = time (display only if missing)
+;
+CMDTIM:	.GDAT			;save current system date
+	BIC	#140000,R0
+	MOV	R0,R3
+	.GCLK			;save current system clock
+	MOV	R0,-(SP)
+	MOV	R1,-(SP)
+	JSR	PC,RDCLK	;read clock
+	TST	R0
+	BNE	1$		;branch if present
+	TST	R1
+	BEQ	2$		;branch if missing
+1$:	SUB	(SP)+,R1	;compute new-old
+	SBC	R0
+	SUB	(SP)+,R0
+	.TRAP	#TR.CLK,#0*400+CK.MAN,#60000.,R3,R0,R1
+	RTS	PC
+;
+2$:	MOV	(SP)+,R1	;print system clock
+	MOV	(SP)+,R0
+	JSR	PC,PRCLK
+	.CRLF
+	RTS	PC
+;
+; 'date' (cmd) set/display date in dd-mm-yy format
+; Arg1 = date (display only if missing)
+;
+CMDATE:	JSR	PC,RDDAT	;read date
+	TST	R0
+	BEQ	1$		;branch if missing
+	.TRAP	#TR.CLK,#0*400+CK.MAN,#60000.,R0,#0,#0
+	RTS	PC
+;
+1$:	.GDAT			;print system date
+	JSR	PC,PRDAT
+	.CRLF
+	RTS	PC
+;
+; 'daytime" (cmd) display time/date
+; (no arguments)
+;
+CMDDAY:	MOV	PC,R0		;display time/date
+	ADD	#FMT2-.,R0
+	JSR	PC,FORMAT
+	RTS	PC
+;
+; 'asg' (cmd26) assign logical device
+; (segment of command language interpreter)
+; Arg1 = logical device name, arg1 = physical device/file name
+;
+CMDASG:	JSR	PC,HASH		;get logical name
+	BEQ	3$		;branch if missing
+	MOVB	PARLNG(R3),R1	;scan device table
+	MOV	R3,R2
+	ADD	#PARLDN,R2
+	CLR	-(SP)
+1$:	TST	@R2		;is this slot assigned
+	BNE	2$		;branch if yes
+	MOV	R2,@SP		;no. save pointer
+2$:	CMP	R0,@R2		;do names match
+	BEQ	4$		;branch if yes
+	ADD	#10,R2
+	SOB	R1,1$
+	MOV	@SP,R2		;no more. was there a hole
+	BNE	4$		;branch if yes
+	TST	(SP)+		;no. aint no room
+	MOV	PC,R0		;print comment
+	ADD	#COM4-.,R0
+	JSR	PC,FORMAT
+3$:	RTS	PC
+;
+4$:	MOV	R0,@SP		;found hole. save name
+	SUB	#39.*2,SP	;make room for arguments
+	MOV	SP,R1
+	MOV	PC,R0		;get physical device/file name
+	ADD	#DEFTY2-.,R0
+	.CSIGE	R1,R0,R4
+	MOV	R1,SP		;amputate options
+	BCS	5$		;branch if error
+	CMP	(R1)+,(R1)+	;get channel info
+	MOV	SP,R0
+	.SAVES	R0,#3,R1	;get channel info
+	BCC	6$		;branch if opne
+	CLR	(R2)+		;not open. must be delete
+	CLR	(R2)+
+	CLR	(R2)+
+	CLR	(R2)+
+5$:	ADD	#40.*2,SP	;error. repair stack
+	RTS	PC		;leave entry unchanged
+;
+6$:	ADD	#39.*2,SP	;no error. repair stack
+	MOV	(SP)+,(R2)+	;initialize entry
+	MOVB	C.STAT(R1),(R2)+
+	MOVB	C.DEVQ+1(R1),(R2)+
+	MOV	C.SBLK(R1),(R2)+
+	MOV	C.LENG(R1),(R2)+
+	RTS	PC
+;
+; 'output' (cmd) change console device output
+; (segment of command language interpreter)
+; Arg = output device name
+;
+CMDOUT:	JSR	PC,HASH		;get new name
+	BEQ	1$		;branch if missing
+	.MSG
+	RTS	PC
+;
+1$:	.MSG	<#^RTT >	;default to "tt"
+	RTS	PC
+;
+; 'quit' (cmd21) return to base cli
+; (segment of command language interpreter)
+;
+CMDTOP:	MOV	IOHTOP(R5),SP	;reset all storage pointers
+	MOV	SP,IOHCLI(R5)
+	MOV	SP,IOHBRK(R5)
+	BIC	#CLSBIT,IOHFLG(R5) ;close telnet connection
+	.EXIT
+;
+; 'r' (cmd21) start rt-11 program
+; (segment of command language interpreter)
+; Arg1 = load module name, arg2 = parameter string
+;
+CMDRDF:	MOV	#100000,R1	;set switch
+	BR	RUN1
+;
+; 'run' (cmd21) start rt-11 program
+; (segment of command language interpreter)
+; Arg1 = load module name, arg2 = parameter string
+;
+CMDRUN:	CLR	R1		;set switch
+RUN1:	MOV	IOHTOP(R5),IOHCLI(R5) ;give user all of memory
+	MOV	IOHTOP(R5),IOHBRK(R5)
+	.SRESE			;purge all channels
+	MOV	R1,-(SP)	;pos reloc, load chain, load cache, start
+	BR	CMD78
+;
+; 'load' (cmd24) load program
+; (segment of command language interpreter)
+; Arg = program name
+;
+CMDLOD:	MOV	#020000,-(SP)	;pos reloc, load chain, load cache, no start
+CMD78:	MOV	IOHBOT(R5),R1	;get chain area pointer
+	BNE	1$		;branch if foreground
+	ADD	#500,R1
+1$:	ADD	#10,R1		;point to argument area
+	MOV	R1,R2
+	CLR	(R2)+
+	MOV	R4,R0
+2$:	TSTB	@R0		;is this end of argument string
+	BEQ	3$		;branch if yes
+	CMPB	#' ,(R0)+	;no. is this space
+	BNE	2$		;branch if no
+	CLRB	-1(R0)		;yes. store backstop for csispc
+4$:	MOVB	(R0)+,(R2)+	;copy rest of string to chain area
+	BEQ	3$		;branch if done
+	INC	@R1		;update count
+	BR	4$
+;
+3$:	SUB	#39.*2,SP	;make room for csispc
+	MOV	SP,R3
+	MOV	PC,R2
+	ADD	#DEFTY1-.,R2
+	.CSISP	R3,R2,R4
+	BCC	5$		;branch if no error
+	.EXIT
+;
+5$:	MOV	R3,SP		;pop off switch trash
+	ADD	#30.+10,R3	;point to end of file name
+	MOV	-(R3),-(R1)	;copy file name into chain area
+	MOV	-(R3),-(R1)
+	MOV	-(R3),-(R1)
+	MOV	-(R3),-(R1)
+	ADD	#39.*2,SP	;pop trash off stack
+	TST	@SP		;is this r (default)
+	BPL	7$		;branch if no
+	MOV	#<^RSY >,@R1	;yes. force system device
+	BIC	#100000,@SP
+7$:	TST	10(R1)		;were arguments stored
+	BEQ	6$		;branch if no
+	BIS	#100000,@SP	;yes. simulate chain
+6$:	MOV	(SP)+,@#JSW	;get control info back
+	$LOAD			;do the dirty deed
+;
+; 'start' (cmd22) start loaded program
+; (segment of command language interpreter)
+; Arg = start address (default from loc 40)
+;
+CMDSTR:	.SRESE			;reset, among other things, window segment
+	JSR	PC,RDOCT	;get start address
+	BNE	1$		;branch if present
+	BIT	#RSTRT$,@#JSW	;missing. is default valid
+	BEQ	2$		;branch if no
+	MOV	@#USERPC,R0	;yes. use loaded start address
+1$:	BIT	#1,R0		;is starting address valid
+	BNE	2$		;branch if no
+	MOV	IOHBOT(R5),R1
+	BNE	4$
+	ADD	#500,R1
+4$:	CMP	R0,R1
+	BLOS	2$		;branch if no
+	CMP	@#USERSP,R1	;is sp valid
+	BLOS	2$		;branch if no
+	MOV	@#USERSP,SP	;yes. off we go
+	JMP	@R0		;timberrrrr....
+;
+2$:	MOV	PC,R0		;invalid start or stack address
+	ADD	#COM6-.,R0
+	.PRINT
+	RTS	PC
+	.PAGE
+	.SBTTL	Subroutines
+;
+; Kwik (kwk) set options for dsr procs
+; R0 = keyword table pointer
+;
+KWIK:	MOV	R1,-(SP)	;save something
+	MOV	R4,-(SP)
+	MOV	R0,R1		;get command name
+	JSR	PC,HASH
+	BEQ	3$		;branch if empty
+1$:	TST	@R1		;search keyword table for match
+	BEQ	4$		;branch if not found
+	CMP	R0,(R1)+
+	BEQ	2$		;branch if found
+	TST	(R1)+		;advance to next entry
+	BR	1$
+;
+4$:	MOV	@SP,R4		;not found. restore pointer
+	TST	(R1)+
+2$:	ADD	@R1,R1		;dive into code segment
+	JSR	PC,@R1
+3$:	TST	(SP)+		;discard pointer
+	MOV	(SP)+,R1	;restore something
+	RTS	PC
+;
+; Rdbyt (rdb) read byte from command buffer
+; Returns r0 = byte
+;
+RDBYT:	MOVB	@R4,R0		;get next byte
+	BEQ	1$		;branch if eor
+	INC	R4		;byte ok. bump for next time
+1$:	RTS	PC
+;
+; Prbyt (prb) send byte to control process
+; R0 = byte
+;
+PRBYT:	.TTYOU			;the cowards way
+	RTS	PC
+	.PAGE
+	.SBTTL	DATA SEGMENT
+;
+	.PSECT	$BOSD,RO,D
+;
+; Options table
+;
+CLOPT:	.KWTAB	<CMD>,CMDHLP	;print command list
+	.KWTAB	<SHO>,CMDSHO	;print process status
+	.KWTAB	<ON>,CMDON	;set option bits
+	.KWTAB	<OFF>,CMDOFF	;clear option bits
+	.KWTAB	<TIM>,CMDTIM	;set/display time of day
+	.KWTAB	<DAT>,CMDATE	;set/display calender date
+	.KWTAB	<DAY>,CMDDAY	;display date/time
+	.KWTAB	<ASG>,CMDASG	;assign device
+	.KWTAB	<OUT>,CMDOUT	;change console device output
+	.KWTAB	<DEV>,CMDVIC	;print device status
+	.KWTAB	<SET>,CMDSET	;set process options
+	.KWTAB	<BAS>,CMDBAS	;set display/alter base
+	.KWTAB	<ALT>,CMDALT	;alter storage
+	.KWTAB	<DIS>,CMDISP	;display storage
+	.KWTAB	<RES>,CMDRST 	;reset system
+	.KWTAB	<CPU>,CMDCPU	;display elaped cpu time
+	.KWTAB	<PSA>,CMDSNS	;display psa
+	.KWTAB	<TES>,CMDTST	;send test message
+	.KWTAB	<QUI>,CMDTOP	;return to base cli
+	.KWTAB	<RUN>,CMDRUN	;run rt-11 program
+	.KWTAB	<R  >,CMDRDF	;run rt-11 program (system device)
+	.KWTAB	<STA>,CMDSTR	;start rt-11 program
+	.KWTAB	<LOA>,CMDLOD	;load rt-11 program
+	.KWTAB	<   >,CMDRDF	;not found (default run command)
+;
+DEFTY1:	.RAD50	'SAV         '	;default run/load file extensions
+DEFTY2:	.RAD50	'DSK         '	;default virtual volume extensions
+;
+; Command index table
+; (indexed by process type)
+;
+CMDTAB:	.WORD	DKOPT-.		;00 rk05 disk
+	.WORD	0		;01 tc11 dectape
+	.WORD	CLOPT-.		;02 user process
+	.WORD	SQOPT-.		;03 line printer/spool pseudo-device
+	.WORD	TTOPT-.		;04 console terminal
+	.WORD	DKOPT-.		;05 rl01 disk
+	.WORD	DKOPT-.		;06 rx02 diskette
+	.WORD	0		;07 pc11 tape reader/punch
+	.WORD	0		;RFOPT-. ;10 radio-terminal interface
+	.WORD	0		;11 magtape (tm11, tma11)
+	.WORD	DKOPT-.		;12 rf11 disk
+	.WORD	0		;13 ta11 cassette
+	.WORD	0		;14 card reader (cr11, cm11)
+	.IF	NE,CS.BIG	;include for extended features
+	.WORD	SPOPT-.		;15 lpcm packet-speech interface
+	.IFF
+	.WORD	0		;15 lpcm packet-speech interface
+	.ENDC
+	.WORD	DKOPT-.		;16 rj03/4 fixed-head disk
+	.IF	NE,CS.BIG	;include for extended features
+	.WORD	FXOPT-.		;17 dacom facsimile interface
+	.IFF
+	.WORD	0		;17 dacom facsimile interface
+	.ENDC
+	.WORD	0		;20 tju16 magtape
+	.WORD	DKOPT-.		;21 rp02 disk
+	.WORD	DKOPT-.		;22 rx01 diskette
+	.WORD	DKOPT-.		;23 rk06/07 disk
+	.WORD	0		;24 error log handler
+	.WORD	0		;25 null handler
+	.WORD	IPOPT-.		;26 internet process
+	.WORD	GTOPT-.		;27 network process
+	.WORD	HLOPT-.		;30 hostel process
+	.WORD	0		;31 peritek vcg bitmap display (dummy)
+	.WORD	CLOPT-.		;32 special server process
+;
+; Pointer table to error strings
+; (indexed by return code from .exit)
+;
+ERRTAB:	.WORD	ERR00-.		;0 invalid
+	.WORD	ERR00-.		;-1 called usr from completion routine
+	.WORD	ERR00-.		;-2 no device handler
+	.WORD	ERR03-.		;-3 usr-directory i/o error
+	.WORD	ERR00-.		;-4 fetch error
+	.WORD	ERR05-.		;-5 ovl-overlay read error
+	.WORD	ERR06-.		;-6 usr-directory overflow
+	.WORD	ERR07-.		;-7 rmon-illegal instruction or operand
+	.WORD	ERR10-.		;-10 rmon-illegal channel number
+	.WORD	ERR11-.		;-11 rmon-illegal emt
+	.WORD	ERR12-.		;-12 load-file not found
+	.WORD	ERR13-.		;-13 load-input error
+	.WORD	ERR14-.		;-14 load-bad file format
+	.WORD	ERR15-.		;-15 load-program too large
+	.WORD	ERR16-.		;-16 load-invalid start address
+	.WORD	ERR17-.		;-17 rmon-floating-point trap
+	.WORD	ERR00-.		;-20 rmon-attention interrupt
+	.WORD	ERR21-.		;-21 rmon-timer interrupt
+	.WORD	ERR22-.		;-22 rmon-memory-parity trap
+	.WORD	ERR23-.		;-23 rmon-memory-management abort
+	.WORD	ERR24-.		;-24 rmon-illegal iot trap
+	.WORD	ERR24-.		;-25 rmon-illegal trap trap
+	.WORD	ERR26-.		;-26 rmon-event queue overflow
+;
+; Text strings for error comments
+;
+ERR00:	.ASCIZ	'?-F-Unknown error code'
+ERR03:	.ASCIZ	'?USR-F-Directory I/O error'
+ERR05:	.ASCIZ	'?OVL-F-Overlay read error'
+ERR06:	.ASCIZ	'?USR-F-Directory overflow'
+ERR07:	.ASCIZ	'?RMON-F-Illegal instruction or operand at ^K'<0>
+ERR10:	.ASCIZ	'?RMON-F-Illegal channel number'
+ERR11:	.ASCIZ	'?RMON-F-Illegal EMT'
+ERR12:	.ASCIZ	'?LOAD-F-File not found'
+ERR13:	.ASCIZ	'?LOAD-F-Input error'
+ERR14:	.ASCIZ	'?LOAD-F-Bad file format'
+ERR15:	.ASCIZ	'?LOAD-F-Program too large'
+ERR16:	.ASCIZ	'?LOAD-F-Invalid start address'
+ERR17:	.ASCIZ	'?RMON-F-Floating-point trap at ^K'<0>
+ERR21:	.ASCIZ	'?RMON-F-Illegal LDN at ^K'<0>
+ERR22:	.ASCIZ	'?RMON-F-Memory-parity trap at ^K'<0>
+ERR23:	.ASCIZ	'?RMON-F-Memory-management abort at ^K'<0>
+ERR24:	.ASCIZ	'?RMON-F-Illegal trap'
+ERR26:	.ASCIZ	'?RMON-F-Event queue overflow'
+;
+; Format strings
+;
+FMT1:	.ASCII	'	^BK'<PARPID>'	^K'<PARTPE>'	^K'<PARMAX>
+	.ASCIZ	'	^K'<PARVEC>'	^K'<PARREG>'	^K'<PAROPT>
+FMT2:	.ASCIZ	'^LD ^LT-UT'
+;
+; Text strings
+;
+COM8:	.ASCII	<CR><LF>'.'<200>	;prompt string
+COM10:	.ASCIZ	'Commands are:'
+COM2:	.ASCII	'Proc	PortID	Type	Size	VecAdr	RegAdr	Option^/'
+	.ASCIZ	'------------------------------------------------------'
+COM3:	.ASCII	'LDN	Name	Proc	Unit	Start	Size^/'
+	.ASCIZ	'--------------------------------------------'
+COM4:	.ASCIZ	'?KWIK-F-No room'
+COM1:	.ASCIZ	'?KWIK-F-Illegal device'
+COM6:	.ASCIZ	'?KWIK-F-Invalid start or stack address'
+COM7:	.ASCIZ	'?KWIK-F-Invalid virtual address'
+COM1A:	.ASCIZ	'?KWIK-F-Illegal command'
+HERALD:	.ASCIZ	'Fuzzball (21-Oct-84 Version) ^LD ^LT'
+RUN10:	.ASCIZ	'LOGIN'
+COM60A:	.ASCIZ	'(You have new SMTP mail since last login)'
+COM60C:	.ASCIZ	'(You have new MPM mail since last login)'
+COM60B:	.ASCIZ	'(Your files were accessed remotely since last login)'
+COM60D:	.ASCIZ	'(Your files have been printed since last login)'
+	.EVEN
+;
+	.END
+                                                                                                                                                                                                                                                                                                                                                                                            

@@ -1,0 +1,1681 @@
+.MACRO	AUTOSPOOL
+AUTOSPOOL	Automatic transparent spooling
+
+  SYNTAX
+	See PIP and other output-oreinted utilities.
+
+  SEMANTICS
+	Autospool is an operating-system feature that supports automatic
+	transparent spooling for local and remote devices such as line
+	printers, facsimile printers, voice codecs and bitmap displays.
+	It is invoked when output is directed to any of a number of
+	network virtual devices indicated in the configuration tables.
+	 The output is spooled in a special file preceeded by control
+	information. When the file is closed an internal message is sent
+	to the spooling daemon PRTQ, which then transmits the file to a
+	local device or forwards it to another host for processing there.
+
+	See help information for MPM, PRINT, PRTQ, SPQSRV and UDP for
+	further information. Note that for both the FTP and TFTP
+	file-transfer servers, a destination device specification of an
+	autospool device will cause the file to be processed by the
+	spooling system. This feature is intended primarily for use by
+	IBM Personal Computers with the MIT PC-IP software, but can be
+	used in other applications as well.
+
+	The autospool system can also be used to exchange apool files
+	between Unix and Fuzzball machines, since the protocols used are
+	compatable. For example, it is possible to spool files from
+	Fuzzball to Unix-compatible print servers and from Unix machines
+	to Fuzzball devices, such as Dacom facsimile printers and LPC
+	voice codecs.
+
+	The autospool system is also used with the Multi-Media Mail
+	(MMM) system. See Help information under MMM for further
+	information.
+	
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	BINCOM
+BINCOM		Binary compare program
+
+  SYNTAX
+	BINCOM                  ;invoke BINCOM.SAV
+	*[listfile][,SIPPfile]=oldfile,newfile[/options]
+	*...                    ;* is CSI prompt
+	*^Z                     ;exit to CLI
+
+  SEMANTICS
+	See the RT-11 System User's Guide
+
+  OPTIONS
+	/B      Compares bytes instead of words
+	/D      Compares two entire volumes
+	/E:n    Ends comparison at block n
+	/H      Prints help information on terminal
+	/O      Creates a difference listing file or SIPP command file even if
+		no differences between the input files are found
+	/Q      Suppresses terminal output of differences
+	/S:n    Starts comparison at block n
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	BUP
+BUP		Backup utility program
+
+  SYNTAX
+	BUP                     ;invoke BUP.SAV
+	*<filespec>[/options]=<filespec>[/options]
+	*...                    ;* is CSI prompt
+	*^Z                     ;exit to CLI
+
+  SEMANTICS
+	See the RT-11 System User's Guide
+
+  OPTIONS
+	/I      Backs up a large volume on multiple smaller volumes
+	/L      Lists directory of a backup volume
+	/X      Restores a large file or, with /L, a large volume from
+		multiple backup volumes
+	/Z      Initializes a volume for backup
+	no option Backs up a large file on multiple smaller volumes
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	CONFIGURATION
+CONFIGURATION	Configuration
+
+  SYNTAX
+	None
+
+  SEMANTICS
+	There are four tables which must be adjusted for each configuration.
+	These are normally part in a module which is included in every
+	fuzzball sharing a single net/subnet configuration and is the same in
+	every fuzzball. The name of this module is usually something like
+	DCN.MAC, where DCN represents the generic name of the configuration.
+
+	Internet address/mask (.NETID)
+
+	This establishes the subnet address and address mask for the physical
+	host (note there can be one or more virtual hosts co-resident in that
+	host). The format is as illustrated below, in decimal, where the first
+	field represents the subnet address and the host ID (HID) represents
+	the subfield used for subnet addressing. The second field represents
+	the address mask, which is used only to determine whether an arbitrary
+	address is local or foreign to the subnet. Note that the convention in
+	assigning zero and one bits is opposite to that used in some other
+	systems (e.g. MIT PCIP) and that the bits corresponding to the HID
+	field must be one. Following is an example:
+
+		.NETID	<128,4,0,HID>,<0,0,0,255> ;internet address/mask
+
+	A standard mask-and-match operation consists of first exclusive-ORing
+	the arbitrary address and the subnet address above, then clearing the
+	bits of the result corresponding to the one bits of the address mask.
+	If the result is zero the arbitrary address is in the same subnet,
+	otherwise not.
+
+	Clock synchronizing table
+
+	This table consists of a list of host/network addresses used to
+	syncrhonize the local clock. The entries are used in the order listed.
+	The system will lock on the first address in the list that is up,
+	according to the routing algorithm. Following is an example:
+
+		.CLKID	<128,4,0,15>	;dcn1 clock
+		.CLKID	<128,4,0,14>	;dcn6 clock
+		.CLKID	<128,5,0,0>	;fordnet clock
+		.CLKID	<35,0,0,0>	;umichnet clock
+		.CLKID			;end of table
+
+	Local host table
+
+	This table establishes the mapping of Internet address to host ID for
+	all local-net addresses (e.g. those that pass the mask-and-match test
+	implied by the above Internet address/mask quantities). Each line in
+	the table consists of (a) Internet address, (b) HID, (c) address mask
+	(defaults to <0,0,0,0>), (d) flags field. Ordinarily, only those
+	local-net hosts and gateways participating in the Hello routing
+	algorithm need have entries in this table; however, space must be
+	allocated for those hosts whose routing is handled by ARP and/or EGP.
+
+	Ordinarily, only the last and automatic-ARP lines (defaults) have a
+	nonzero address mask, which is constructed so as to capture all
+	addresses not matched by the preceding items. If the HID field of any
+	entry is set to something larger than the largest possible value
+	(determined from the routing table described later) such as 255, the
+	routing function returns a "destination unreachable;" otherwise, the
+	default HID determines the route. The flags field in the default item
+	is set to NGB to discourage accidental routing updates from broken
+	neighbor hosts that may have invalid subnet addresses. The flags field
+	of the last entry is set to END to avoid castrophe if the
+	automatic-ARP table becomes full.
+
+	$LOCAD:	.GATBL	<128,4,0,0>,0	;broadcast
+		.GATBL	<128,4,0,1>,1	;dcn1 (pogo)
+		.GATBL	<128,4,0,2>,2	;dcn2 (boombah)
+		.GATBL	<128,4,0,3>,3	;dcn3 (albert)
+		.GATBL	<128,4,0,4>,4	;umichnet agent
+		.GATBL	<128,4,0,5>,5	;dcn5 (hepzibah)
+		.GATBL	<128,4,0,6>,6	;dcn6 (backroom)
+		.GATBL	<128,4,0,7>,7	;dcn7 (snavely)
+		.GATBL	<128,4,0,8>,8	;dcn8 (porkypine)
+		.GATBL	<128,4,0,9>,9	;dcn9 (churchy)
+		.GATBL	<128,4,0,11>,11	;fordnet agent
+		.GATBL	<128,4,0,12>,12	;umdnet agent
+		.GATBL	<128,4,0,13>,13	;default agent
+		.GATBL	<128,4,0,14>,14	;dcn6 clock/echo
+		.GATBL	<128,4,0,15>,15	;dcn1 clock/echo
+		.GATBL	<128,4,0,17>,17	;dcn17 (bridgeport)
+		.GATBL	<128,4,0,18>,18	;dcn18 (miggle)
+		.REPT	3
+		.GATBL	<0,0,0,0>,23,<255,255,255,255>,NGB ;subnet 0 agent
+		.ENDR
+		.GATBL	<0,0,0,0>,23,<255,255,255,255>,END+NGB ;subnet 0 agent
+
+	Note the inclusion of several copies of the default entry in the
+	table. More than one copy is necessary only when the automatic-ARP
+	feature is used (see below).
+
+	Foreign host table
+
+	This table establishes the mapping of Internet address to physical
+	host ID for all foreign-net addresses (e.g. those that do not pass the
+	mask-and-match test implied by the above Internet address/mask
+	quantitues). The structure of this table is identical to the local
+	host table above, although non-zero masks are more common. The
+	automatic-ARP feature (see below) can be used in this table as in the
+	local host table, but in the example shown an explicit gateway is
+	shown instead.
+
+	$GATAD:	.GATBL	<10,0,0,111>,1,,NGB ;dcn1 (pogo)
+		.GATBL	<10,0,1,111>,6,,NGB ;dcn6 (backroom)
+		.GATBL	<10,0,2,111>,4,,NGB ;gw.umich.edu
+		.GATBL	<10,0,0,0>,10,<0,255,255,255>,EGP ;arpanet agent
+		.GATBL	<35,0,0,0>,4,<0,255,255,255>,EGP+HLO,<128,4,0,4>
+						;umichnet agent
+		.GATBL	<128,4,1,0>,19,<0,0,0,255> ;subnet 1 agent
+		.GATBL	<128,4,0,0>,255,<0,0,255,255>,EGP+NGB
+						;trap remaining subnets
+		.GATBL	<128,5,0,0>,11,<0,0,255,255>,EGP+HLO,<128,4,0,11>
+						;fordnet agent
+		.GATBL	<128,8,0,0>,12,<0,0,255,255>,ALT+HLO,<128,4,0,12>
+						;umdnet agent
+		.GATBL	<0,0,0,0>,13,<255,255,255,255>,END+NGB,<128,4,0,13>
+						;egp agent
+
+	In the example a single isolate for 10.0.0.111 is shown, which
+	illustrates the capability to tunnel foreign addresses to or through
+	the subnet. The hop-count field is set nonzero to avoid neighbor
+	routing updates from disturbing the routing for the generic ARPANET
+	10.0.0.0. Note the default gateway is specified as 128.4.0.13, in
+	which case this address must also occur in the local host table
+	(default agent) above. The hop-count field in the default item is set
+	nonzero to avoid accidental updates; however, this field would
+	ordinarily be set to zero for nets without an EGP default agent.
+
+	Routing table
+
+	The routing table determines the packet routes, including local leader
+	(i.e. Ethernet address), process ID (PID) and other information. It
+	consists of two parts, the Hello portion followed by the ARP portion
+	and is preceeded by a count of the total and Hello portions. The Hello
+	portion corresponds to the entities covered by the DCN Hello
+	algorithm, which automatically determines routes between the entities
+	using Hello messages. Those Ethernet entities that do not participate
+	in the Hello algorthm, but do support ARP, are assigned HIDs in the
+	ARP portion. Note that these assignements have nothing to do with the
+	Internet addresses, which are determined by the local and foreign host
+	tables.
+
+	Each item consists of (a) PID of the network process (defaults to
+	zero, which is interpreted as undefined), (b) delay (milliseconds)
+	(defaults to 30 seconds, which is interpreted as "down"), (c) a flag
+	"B" for broadcast or a string for local leader (defaults to zero).
+
+		.BYTE	30,24		;number of (total,routing) entities
+	$HOSAD:	.HSTBL	6,100,B		;0 broadcast
+		.HSTBL			;1 dcn1 (pogo)
+		.HSTBL			;2 dcn2 (boombah)
+		.HSTBL			;3 dcn3 (albert)
+		.HSTBL	,,,WWV		;4 umichnet agent
+		.HSTBL			;5 dcn5 (hepzibah)
+		.HSTBL			;6 dcn6 (backroom)
+		.HSTBL			;7 dcn7 (snavely)
+		.HSTBL			;8 dcn8 (porkypine)
+		.HSTBL			;9 dcn9 (churchy)
+		.HSTBL			;10 arpanet agent
+		.HSTBL	,,,GOES		;11 fordnet agent
+		.HSTBL			;12 umdnet agent
+		.HSTBL			;13 default agent
+		.HSTBL	,,,WWV		;14 dcn6 clock/echo
+		.HSTBL	,,,WWVB		;15 dcn1 clock/echo
+		.HSTBL			;16 dcn16 (beauregard)
+		.HSTBL			;17 dcn17 (bridgeport)
+		.HSTBL			;18 dcn18 (miggle)
+		.HSTBL			;19 subnet 1 agent
+		.HSTBL			;20
+		.HSTBL			;21
+		.HSTBL			;22
+		.HSTBL	6,100		;23 subnet 0 agent
+		.HSTBL			;24
+		.HSTBL			;25
+		.HSTBL			;26
+		.HSTBL			;27
+		.HSTBL			;28
+		.HSTBL			;29
+
+	In principle, only the broadcast agent and local-net agent (subnet 0
+	agent in the example) need to have explicit values, since all others
+	are determined automatically by either the Hello algorithm or ARP. In
+	addition, of course, the clock sources must be declared.
+
+	The above configuration handles the routing for seven entities,
+	including one isolate 10.0.0.111, three neighbor nets 128.5, 128.8 and
+	35, two subnets 128.4.0 and 128.4.1, and a default which in this case
+	is the EGP process. Note that 128.5 and 35 share the same PID and
+	presumably the same circuit to the neighbor entity. The host for which
+	the tables are shown here "belongs" to subnet 128.4.0, as determined
+	by the Internet address/mask. For all except the default the routing
+	will depend upon ARP response, assuming this host is on an Ethernet;
+	while, for the default case all traffic will be sent to the Ethernet
+	entity responding to the specified gateway address 128.4.0.13.
+
+	Note that in this configuration a reference to a 128.4 subnet other
+	than 128.4.0 or 128.4.1 will select the default foreign host entry.
+	Presumably, the agent servicing this traffic will return a "net
+	unreachable" ICMP message if the subnet is undefined. In other cases,
+	an entry such as
+
+		.GATBL	<128,4,0,0>,255,<0,0,255,255>
+
+	can be positioned after all 128.4 references in the foreign host table
+	to trap undefined subnets and avoid routing loops.
+
+	Automatic ARP
+
+	In the case of Ethernet hosts (and in future EGP), a feature is
+	included so that hosts not subscribing to the Hello protocols can be
+	supported without explicitly configuring them in the tables. What
+	happens is this: When a host not appearing in the local or foreign
+	host tables is found the specified default is used. For local-subnet
+	hosts in the example configuration shown this results in an Ethernet
+	ARP broadcast for the designated IP destination address but no
+	adjustment in the table entries.
+
+	The ARP reply causes a search for that address, which lands on the
+	default. A special check inserted at that point causes new entries to
+	be created in either the local/foreign host tables and the routing
+	table. The entry is created with a mask field of zero, so that in the
+	case of foreign hosts a separate entry will be created for very
+	distinct address, not for every generic network. The alternative,
+	which is used in the example configuration, is to explicitly declare
+	a default gateway.
+
+	Subsequently, the ARP-created entries are used just as if created
+	a-priori. The feature should be of value in configurations including
+	hosts that cannot be modified to support the Hello protocol, such as
+	IBM PCs and silicon front-ends. Note however that a hellod is
+	available for Unix 4.2 systems that does support that protocol. In the
+	current version no provisions are included to discard old ARP-created
+	entries and the only way an old leader can be discarded is if the host
+	goes down with respect to the Hello algorithm. This is slated for
+	early attention.
+
+	Routing explained
+
+	The routing function is activated at the time a datagram arrives or is
+	created internally in the host. It first determines whether the
+	destination is in the same subnet or not using the Internet
+	address/mask, then selects either the local or foreign host tables.
+	The tables are constructed so that a match always occurs, if not
+	otherwise at the default.
+
+	A match results in the following information: (a) the HID of the
+	routing table entry, and thus (b) the PID and (c) the leader
+	(Ethernet address) and, in addition, (d) the gateway address from the
+	local/foreign net table. At this point the datagram buffer is
+	forwarded to the output process with indicated PID and a field in the
+	buffer header filled in with (c) the leader (if nonzero) or (d) the
+	gateway address (if the leader is zero) or the original destination
+	address (if both leader and gateway address are zero). The coding of
+	the field is such that the output process can determine whether the
+	contents are a leader or an IP address.
+
+	The output process extracts the field from the buffer header and
+	proceeds accordinaly: If a leader is present it is incorporated in the
+	Ethernet leader and the packet forwarded directly. If not, an ARP
+	request is constructed (in a separate buffer) including the specified
+	IP address and the original datagram buffer held for 500 milliseconds.
+	Upon completion of the holding interval the output process calls the
+	routing function again, which results in a recomputation of the buffer
+	header as before, but based on current table contents. If a leader is
+	found the datagram is transmitted as indicated; if not, it sinks
+	without a trace.
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO CRMAIL
+CRMAIL		Create mail and log files
+
+  SYNTAX
+	CRMAIL                  ;invoke CRMAIL.SAV
+	><filespec> <blocks>    ;> is CRMAIL prompt
+
+  SEMANTICS
+	This program creates a mail or log file with name <filespec> and
+	length <blocks>.  The file is initialized with the first byte set to
+	SUB (^Z) and the remaining bytes set to zero.
+
+  OPTIONS
+	None
+
+  EAAMPLES
+	CRMAIL
+	>unsent.msg 500
+.ENDM
+.MACRO	DACOM
+DACOM		Facsimile to Bitmap conversion
+
+  SYNTAX
+	DACOM			;invoke DACOM.SAV
+	*<outfilespec>=<infilespec>[/options]
+	*...                    ;* is CSI prompt
+	*^Z                     ;exit to CLI
+
+  SEMANTICS
+	This program converts a file in Dacom (compressed) facsimile format
+	to Sun bitmap format (version 2.0) without scaling or clipping. The
+	resulting file requires 475200 octets (922 blocks) for the
+	1726 x 2200 x 1 raster. Sun graphics tools presently cannot handle
+	such a large file directly, although the Fuzzball SUNFAX and VCG
+	programs can (See Help information).
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	DIR
+DIR		Directory program
+
+  SYNTAX
+	DIR                     ;invoke DIR.SAV
+	*<filespec>[/options]   ;* is CSI prompt
+	*...
+	*^Z                     ;exit to CLI
+
+  SEMANTICS
+	See the RT-11 System User's Guide
+
+  OPTIONS
+	The syntax of date is dd.:mmm:yy.  where dd-day, mmm-month, yy-year
+	/A      Lists the directory alphabetically
+	/B      Includes starting block numbers in directory listing
+	/C:n    Lists directory in n columns;  n can be 1 to 9
+	/D:date Includes only files with date
+	/E      Lists entire directory, including unused spaces
+	/F      lists short format directory in five columns
+	/G      Lists directory entry of specified file and all subsequent
+		directory entries
+	/J:date Lists files created on or after date
+	/K:date Lists files created before date
+	/L      Lists volume directory in order of entry
+	/M      Lists unused areas
+	/N      Lists directory summary
+	/O      Gives sizes and block numbers in octal
+	/P      Lists all files except those you specify
+	/Q      Lists deleted files
+	/R      Sorts directory in reverse order;  use with /S
+	/S:xxx  Sorts directory listing;  xxx can be DAT, NAM, POS, SIZ or TYP
+	/T      Lists only protected files
+	/U      Lists only unprotected files
+	/V:ONL  Includes volume ID and owner name as part of directory
+		listing;  with ONL lists only ID and name
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	DUMP
+DUMP		File dump program
+
+  SYNTAX
+	DUMP                    ;invoke DUMP.SAV
+	*<filespec>[/options]=<filespec>[/options]
+	*...                    ;* is CSI prompt
+	*^Z                     ;exit to CLI
+
+  SEMANTICS
+	See the RT-11 System User's Guide
+
+  OPTIONS
+	/B      Outputs octal bytes
+	/E:n    Ends output at block n
+	/G      Ignores input errors
+	/N      Suppresses ASCII output
+	/O:n    Outputs only block n
+	/S:n    Starts output at block n
+	/T      Defines a magtape as non-RT-11 file structured
+	/W      Outputs octal words
+	/X      Outputs Radix-50 characters
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	DUP
+DUP		Device utility program
+
+  SYNTAX
+	DUP                     ;invoke DUP.SAV
+	*<filespec>[/options]   ;* is CSI prompt
+	*...
+	*^Z                     ;exit to CLI
+
+  SEMANTICS
+	See the RT-11 System User's Guide
+
+  OPTIONS
+	/B:RET  Writes FILE.BAD entries over bad blocks;  use with /Z;  with
+		RET, retains FILE.BAD entries created on previous
+		initialization
+	/C      Creates a file;  use with /G:n
+	/D      Restores previously initialized volume
+	/E:n    Specifies last block number;  use with /I or /K
+	/F      Prints names of bad blocks;  use with /K
+	/G:n    Specifies starting block number;  use with /C, /I, or /K
+	/H      Verifies after copying;  use with /I
+	/I      Copies image of one volume to another
+	/K      Scans a device for bad blocks
+	/N:n    Defines number of directoy segments;  use with /Z;  n can be 1
+		to 37 (octal)
+	/O      Boots a volume or file (not supported in BOS/VOS)
+	/Q      Boots a volume that is not RT-11 V4 or later;  use with /O
+		(not supported in BOS/VOS)
+	/R:RET  Scans volume for bad blocks and creates a block replacement
+		table;  with RET retains previous table (not supported in
+		BOS/VOS)
+	/S      Consolidates free space on a volume
+	/T:n    Extends a file by n blocks;  n free blocks must follow the
+		file
+	/U:DEV  Writes bootstrap into blocks 0, 2 through 5 of a volume;  DEV
+		is the volume name (not supported in BOS/VOS)
+	/V:ONL  Printes user ID and owner name;  use with /Z to write new
+		directory, ID and name on volume;  with ONL, writes only the a
+		ID and name
+	/W      Waits for volume to be mounted before executing the command
+	/X      Prevents automatic reboot after using /S on system device
+	/Y      Suppresses query messages
+	/Z:n    Initializes device directory;  n is the number of extra words
+		in each directory entry
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	FAX
+FAX		Dacom 450 Facsimile Transceiver operator's guide
+
+  SYNTAX
+   SCANNING
+	PIP     (* is CSI prompt)
+	*<filespec>=FAX:
+	*...
+	*^Z     (exit to CLI)
+   PRINTING
+	PIP     (* is CSI prompt)
+	*FAX:=<filespec>
+	*...
+	*^Z     (exit to CLI)
+
+  SEMANTICS
+	The Dacom 450 Computerfax Facsimile Transceiver scans and prints
+	documents at resolutions up to 200 pels per inch in a 1726 x 2200
+	pel raster.  It uses a two-dimensional adaptive run-length
+	compressiong algorithm and ordinarily operates at speeds to 2400
+	bps with the LSI-11/23 processor and to 4800 bps with the
+	LSI-11/73 processor using the DEC DPV11 synchronous interface.
+
+	Files used with the facsimile system must be formatted as
+	described in RFC-769. The SUNFAX program can be used to convert
+	Sun bitmap files to RFC-769 format and the DACOM program from this
+	format to Sun-bitmap format. The spooling system automatically
+	converts between formats as required. In addition, the VCG
+	program can convert RFC-769 format files for display on the
+	Peritek bitmap display.	
+
+	Facsimile files can be transferred between Internet hosts using the
+	FTP or TFTP programs (IMAGE mode) or using the spooling system.
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	FILES
+FILES		File specifications and formats
+
+  SYNTAX
+	<logname>:<filename>.<extension>[<size>]
+
+  SEMANTICS
+	All programs operate with RT-11 file formats and either
+	file-structured or sequential devices.  RT-11 files are
+	block-structured with a block size of 512 bytes.  There are two types
+	of files, ASCII and IMAGE.  ASCII files consist of a stream of 7-bit
+	ASCII characters stored in eight-bit bytes with the high-order bit set
+	to zero.  During transmission the NUL and DEL characters are discarded
+	and the SUB character terminates the transfer.  IMAGE files consist of
+	a stream of eight-bit bytes with all bits significant.  In both cases
+	data are zero-filled to a block boundary before writing to the device.
+
+	Files and devices are named according to RT-11 conventions in the
+	following syntax:
+
+	<logname>:<filename>.<extension>[<size>]
+
+	where <logname> is the logical device name, consisting of up to three
+	alphanumeric characters, <filename> is the file name, consisting of up
+	to six alphanumeric characters including $, <extension> is the file
+	extension, consisting of up to three characters including $, and
+	<size> is a decimal integer used to specify the maximum file size in
+	blocks.
+
+	The logical device name (together with the colon) is optional and
+	defaults to DK:, which is the name of the standard RT-11 work volume.
+	With certain exceptions transfers can be specified to or from either
+	file-structured or sequential devices.  In the latter case the name,
+	extension and size are ignored.  Logical device names are bound to
+	physical devices by the CLI command ASG.
+
+	The <size> specification (together with the braces) is optional and
+	applies only to new or replacement files to be stored on
+	file-structured devices and not to files that are to be stored on
+	sequential devices or to be read.  The algorithm used to estabish the
+	maximum size of a file is as follows:  If the <size> specification is
+	missing or zero, half the largest hole on the volume is allocated.  If
+	it is a negative number, then the entire extent of the largest hole is
+	allocated.  Otherwise, the number of blocks specified is allocated in
+	the first hole large enough to contain them.
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	FRUN
+FRUN		Foreground loader program
+
+  SYNTAX
+	FRUN <filespec>         ;invoke FRUN.SAV
+	*<filespec>             ;* is CSI prompt
+	;exit to loaded program
+
+  SEMANTICS
+	The foreground loader is used to load programs linked to run in an
+	RT-11 foreground or system job with or without overlays.  These
+	programs usually usually have the .REL extension and contain
+	relocatoin information along with the program text.  This program
+	would be used ordinarily only in systems without memory-management
+	facilities and when one or more foreground processes have been
+	configured in the system.
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	FTP
+FTP		File transfer user program
+
+  SYNTAX
+	FTP                     ;invoke FTP.SAV
+	...
+	QUIT                    ;exit to CLI
+				;or
+	FTP <hostname>          ;invoke FTP.SAV and execute an
+				;implied CONNECT <hostname>
+	...                     ;command
+	QUIT                    ;exit to CLI
+
+  SEMANTICS
+	The File Transfer Protocol (FTP) functions are provided using two
+	programs, the FTP User and the FTP Server.  The FTP User runs in
+	interactive mode on a Fuzzball host. The FTP Server normally resides
+	at some other host and is activated upon receipt of a TCP connection
+	on port 20. The FTP User is controlled by user commands in the same
+	way as the Command Language Interpreter (CLI) and other user programs.
+	It in turn controls the FTP Server by standardized server commands,
+	with the actions taken indicated by standardized replies.  These
+	programs operate with the protocol described in RFC-959 and can be
+	used with other implementations conforming to this protocol.
+
+	A file transfer operation proceeds by first opening a control
+	connection to a remote host using the CONNECT command and then to its
+	operating system using the LOGIN command.  In the case of the Fuzzball
+	FTP Server, the LOGIN sequence is supported but the specified user
+	name and password are ignored.  Following the connection phase, the
+	SEND and GET commands are used to transfer files to and from the
+	remote host as required.  For each transfer a data connection separate
+	from the control connection is established by the remote server.  The
+	sender closes the connection to signal end-of-file and terminate the
+	transfer.  The QUIT command is used to close the control connection
+	and exit to the CLI.
+
+	The FTP User prompt is "*", signifying the program is ready for the
+	next command.  The first prompt appears when the herald is received
+	from the FTP Server following the CONNECT command.  Subsequent prompts
+	appear as each command sequence is completed with the FTP Server.
+	Prompts will not appear following commands which have only local
+	significance or in which errors are detected.
+
+	FTP transfers can be in either ASCII (default) or IMAGE mode (see the
+	FILES help information for relevant file structures).  ASCII mode is
+	compatible with all implementations of RFC-765 servers known at this
+	time.  In the case of IMAGE mode with the TOPS-20, however, care must
+	be taken to assure that 8-bit bytes are stored four per 36-bit TOPS-20
+	word.  This is assured if the TYPE L 8 command is used, rather than
+	the TYPE I command (see the IMAGE command below).
+
+  OPTIONS
+   ABORT
+	If a file transfer is not in progress, do nothing.  If it is, abort
+	the transfer, send the ABOR command to the Server and wait for it to
+	close the data connection.
+   ASCII
+	The ASCII and IMAGE commands set the mode for subsequent file
+	transfers.  The default is ASCII.  In the case of the IMAGE command, a
+	TYPE I command is sent to the server unless an optional argument is
+	present, in which case a TYPE L <bytesize> command is sent, where
+	<bytesize> is the argument.  In all except unusual cases <bytesize>
+	should be 8.  This feature is included to support the TOPS-20.
+   ASG <filespec>
+	Assign the local work volume DK:  for subsequent file transfers to
+	<filespec>.  See the VOLUMES help information for further details.
+   BRIEF
+	The BRIEF and VERBOSE commands control output of detailed commentary
+	dialog.  BRIEF disables this and VERBOSE enables it.  The default is
+	BRIEF.
+   CONNECT <hostname>
+	Open a control connection to host <hostname>.
+   CWD <filespec>
+	Assign the working directory on the remote host for subsequent file
+	transfers to <filespec>.
+   DELETE <remotename>
+	Delete the file <remotename> on the remote host.  The <remotename>
+	must contain no more than 40 ASCII printing characters.
+   DIRECTORY <directory> <localname>
+	Open a data connection to the remote host previously specified by the
+	CONNECT and LOGIN commands.  Then transmit a list of the files in
+	<directory> on the remote host to <localname> on the local host.  The
+	<directory> must contain no more than 40 ASCII printing characters.
+	When operating with the Fuzzball FTP Server, it must be a valid RT-11
+	file name and can include wildcards in the same manner as the RT-11
+	DIRECTORY command.  The <localname> must be a valid RT-11 file or
+	sequential device name.
+   DISCONNECT
+	If the control connection does not exist, do nothing.  Otherwise, send
+	the QUIT command to the Server and wait for the it to close the
+	connection.
+   GET <remotename> <localname>
+	Open a data connection to the remote host previously specified by the
+	CONNECT, LOGIN and ASCII/IMAGE commands.  Then transfer the file
+	<remotename> on the remote host to <localname> on the local host.  The
+	<remotename> must contain no more than 40 ASCII printing characters,
+	while the <localname> must be a valid RT-11 file name or sequential
+	device name.  If <localname> is missing, assume the string
+	<remotename> in its place.
+   HELP
+	Display helpful information, including a list of commands.
+   IMAGE
+	(see the ASCII command)
+   LOCAL <hostname>
+	Set the local address for the control and data connections to
+	<hostname>, with default the local primary address. This feature can
+	be used to select local secondary addresses in the case of a
+	multi-homed host.
+   LOGIN <user> <password>
+	Log into the remote host previously specified by the CONNECT command
+	as <user> with <password>.  Both <user> and <password?  must contain
+	no more than 40 ASCII printing characters.
+   QUIT
+	Execute an implied DISCONNECT command and exit to the CLI.
+   QUOTE ...
+	Send the remainder of the command line to the remote host via the
+	control connection.
+   RENAME <fromname> <toname>
+	Rename the file <fromname> on the remote host to <toname>.  Both
+	<fromname> and <toname> must contain no more than 40 ASCII printing
+	characters.
+   ROUTE <hostname1> <hostname2> ...
+	Specify the Internet source route as the sequence <hostname1>
+	<hostname2> ...  (up to nine) for the data connection.
+   SEND <localname> <remotename>
+	Open a data connection to the remote host previously specified by the
+	CONNECT, LOGIN and ASCII/IMAGE commands.  Then transfer the file
+	<localname> on the local host to <remotename> on the remote host.  The
+	<localname> must be a valid RT-11 file or sequential device name,
+	while the <remotename> must contain no more than 40 ASCII printing
+	characters.  If <remotename> is missing, assume the string <localname>
+	in its place.
+   SHOW
+	Display a formatted summary of various quantitites of interest,
+	including the current host, file and block number.
+   TOS <type-of-service>
+	Specify the Internet type-of-service octet (in octal) for the data
+	connection.
+   VERBOSE
+	(see the BRIEF command)
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	FTPSRV
+FTPSRV		File transfer server program
+
+  SYNTAX
+	See RFC-959.
+
+  SEMANTICS
+	The FTP Server is designed to be compatible with the protocol
+	specified in RFC-959.  It is invoked by the TELSRV progam upon receipt
+	of a TCP connection on port 21.  Commands consist of four characters,
+	only the first three of which are significant.  Replies consist of a
+	three-digit code, the first of which indicates the status of the
+	request according to the following codes:
+
+	1xx     The action requested has begun.  Additional server commands
+		can be given to initiate unrelated actions.
+	2xx     The action requested has completed successfully.
+	3xx     Additional commands are necessary to completely specify the
+		action requested.
+	4xx     The action requested was aborted due to an error condition
+		believed to be temporary.  The command may be retried at a
+		later time.
+	5xx     The action requested was aborted due to an error condition
+		believed to be permanent.
+
+	FTP transfers can be in either ASCII (default) or IMAGE mode (see the
+	FILES help information for relevant file structures).  ASCII mode is
+	compatible with all implementations of RFC-959 servers known at this
+	time.  In the case of IMAGE mode with the TOPS-20, however, care must
+	be taken to assure that 8-bit bytes are stored four per 36-bit TOPS-20
+	word.  This is assured if the TYPE L 8 command is used, rather than
+	the TYPE I command (see the TOPS-20 documentation).
+
+  OPTIONS
+   ABOR
+	If a data transfer is not in progress, return a 200 reply code.  If a
+	data transfer is in progress, signal the data connection to close and
+	return a 426 reply code, flushing data received meanwhile.  When the
+	connection closes return a 226 reply code.
+   CWD <filespec>
+	Assign the work volume DK:  on the local hosts for subsequent file
+	transfers to <filespec>.  See the VOLUMES help information for further
+	details.
+   DELE <filespec>
+	Delete the file <filespec> on the local host, where <filespec> must be
+	a valid RT-11 file name.  Reply code 200 is returned.
+   HELP
+	Display helpful user information, including a list of FTP Server
+	commands.  All but the last line returned have reply code 111.  The
+	last line returned has reply code 211.
+   LIST <directory>
+	Open the data connection and transfer a list of files in <directory>
+	on the local host to the FTP User host.  The <directory> must be a
+	valid RT-11 file name and can include wildcards in the same manner as
+	the RT-11 DIRECTORY command.  Reply code 150 indicates the transfer
+	has begun and that a 2xx, 4xx or 5xx will be returned when the
+	transfer terminates.  The transfer terminates normally with a 226
+	reply code when the FTP Server closes the data connection and
+	abnormally with a 4xx or 5xx reply code in all other cases.  In the
+	list of files returned each file name is on a separate line followed
+	by size and date information.
+   MODE <code>
+	Set the transfer mode for subsequent data transfers to <code>.
+	Currently, <code> must be S (STREAM), which is also the default.
+	Reply code 200 is returned.
+   NLST <directory>
+	Open the data connection and transfer a list of files in <directory>
+	on the local host to the FTP User host.  The <directory> must be a
+	valid RT-11 file name and can include wildcards in the same manner as
+	the RT-11 DIRECTORY command.  Reply code 150 indicates the transfer
+	has begun and that a 2xx, 4xx or 5xx will be returned when the
+	transfer terminates.  The transfer terminates normally with a 226
+	reply code when the FTP Server closes the data connection and
+	abnormally with a 4xx or 5xx reply code in all other cases.  In the
+	list of files returned each file name is on a separate line terminated
+	by <CR><LF> with no other information on the line.
+   NOOP
+	Do nothing.  Reply code 200 is returned.
+   PASS <password>
+	Syntax check only (for compatibility).  Reply code 230 is returned.
+   PASV
+	This command is used only in special situations involving a
+	third-party transfer to indicate the FTP Server should listen on a
+	data connection and to return the host and port of this connection in
+	the reply code.  Note that the data connection is not opened at this
+	time, but will be opened in passive mode as necessary by subsequent
+	data-transfer commands.  The reply code returned is:
+
+	227 Entering passive mode.  h1,h2,h3,h4,p1,p2
+
+	where h1,...,h4 is the host and p1,p2 is the port with the same
+	interpretation as the PORT command.
+   PORT h1,h2,h3,h4,p1,p2
+	This command is used only in special situations involving a
+	third-party transfer to specify the host and port for the data
+	connection.  The host is specified by the four decimal integers
+	h1,...,h4 and the port by the two decimal integers p1,p2.  All six of
+	these integers must have values in the range 0-255.  Note that the
+	data connection is not opened at this time, but will be opened in
+	active mode as necessary by subsequent data-transfer commands.  Reply
+	code 200 is returned.
+   QUIT
+	Close the control connection and exit to the CLI.  Reply code 226 is
+	returned.
+   REIN
+	Reinitialize the program status as it was upon initial entry.  Reply
+	code 330 is returned along with the FTP Server herald.
+   RETR <filespec>
+	Open the data connection and transfer <filespec> on the local host to
+	the FTP User host.  The <filespec> must be a valid RT-11 file or
+	sequential device name.  Reply code 150 indicates the transfer has
+	begun and that a 2xx, 4xx or 5xx will be returned when the transfer
+	terminates.  The transfer terminates normally with a 226 reply code
+	when the FTP Server closes the data connection and abnormally with a
+	4xx or 5xx reply code in all other cases.
+   RNFR <filespec>
+	Begin a file-rename sequence specifying <filespec> on the local host
+	as the existing file.  The <filespec> must be a valid RT-11 file name.
+	Reply code 333 is returned, indicating the RNTO command must follow.
+   RNTO <filespec>
+	Conclude a file-rename sequence begun by the previous RNFR command and
+	specifying <filespec> on the local host as the new file.  The
+	<filespec> must be a valid RT-11 file name on the same device
+	specified by the previous RNFR command.  Reply code 200 is returned.
+   STAT
+	Display a formatted summary of various quantitites of interest,
+	including the current host, file and block number.  All but the last
+	line returned have reply code 114.  The last line returned has reply
+	code 214.
+   STOR <filespec>
+	Open the data connection and transfer a file from the FTP User host to
+	<filespec> on the local host.  The <filespec> must be a valid RT-11
+	file or sequential device name.  Reply code 150 indicates the transfer
+	has begun and that a 2xx, 4xx or 5xx will be returned when the
+	transfer terminates.  The transfer terminates normally with a 226
+	reply code when the FTP User closes the data connection and abnormally
+	with a 4xx or 5xx reply code in all other cases.
+   STRU <code>
+	Set the file structure for subsequent data transfers to <code>.
+	Currently, <code> must be F (FILE), which is also the default.  Reply
+	code 200 is returned.
+   TYPE <code>
+	Set the representation type for subsequent data transfers to <code>.
+	Currently, <code> can be A (ASCII), I (IMAGE) or L (IMAGE).  The
+	default when this command has not been given is A.  Note that the
+	specification permits an additional argument;  however, which is
+	ignored by the FTP Server.  Reply code 200 is returned.
+   USER <user>
+	Syntax check only (for compatibility).  Reply code 331 is returned,
+	indicating the PASS command must follow.
+
+  EXAMPLES
+	See RFC-959.
+.ENDM
+.MACRO	GENERAL
+GENERAL		General description
+
+  SYNTAX
+	Following is a summary of syntactic types
+	/options        RT-11 file specification options (see OPTIONS in HELP
+			information)
+	<address>       Internet address (four fields separated by "." each
+			field a decimal integer in the rangd 0 through 255)
+	<argument>      Argument list (strings separated by <SP> and
+			terminated by <CR>
+	<command>       Command name (only the first three characters are
+			significant)
+	<devname>       RT-11 physical device name (see HELP information for
+			FILES)
+	<filespec>      RT-11 file specification (see HELP information for
+			FILES)
+	<hid>           Host ID (decimal integer in the range 0-n, where n
+			depends on network)
+	<hostname>      Host name (registered in NIC data base HOSTS.TXT, or
+			four fields as in <address> format).
+	<logname>       RT-11 logical device name (assigned by ASG command)
+	<pid>           Port ID (octal integer in the range 0-n, where n
+			depends on configuration)
+
+  SEMANTICS
+	The Fuzzball internet software system has been developed with DARPA
+	sponsorship over the last several years and used extensively for
+	testing, evaluation and experimentation with other implementations.
+	It currently runs in a sizable number of PDP11s and LSI-11s with
+	varying configurations and applications.  The system is designed to be
+	used with DCnet local-network protocols as described in RFC-891 and
+	the Fuzzball operating system for a multi-media internet workstation
+	(also called a Fuzzball), which operates using emulation techniques to
+	support the DEC RT-11 operating system and application programs.
+	However, the system has also been used on other networks, including
+	ARPANET, and with other operating systems, including RSX-11.  An
+	RSX-11 based version incorporating only the IP/TCP modules is
+	presently used to support the INTELPOST electronic-mail network.
+
+	The software system consists of a package of MACRO-11 and C modules
+	structured into levels corresponding to local-net, IP, TCP and
+	application levels, with user interfaces at each level.  The local-net
+	level supports several comunication devices, including synchronous and
+	asynchronous serial lines, 16-bit parallel links, Ethernet and 1822
+	interfaces. Hosts using these devices have been connected to ARPANET
+	IMPs, Satellite IMPs, MACRO-11 Internet Gateways, SRI Port Expanders
+	and to standard Ethernets, DECnets and X.25 public networks, as well
+	as several DCnet local networks.  When used on DCnet the system
+	supports subnets as described in RFC-950, supports network-level
+	alternate routing and local-level dynamic routing, as well as
+	time-synchronization and error-reporting functions.
+
+	The IP level conforms to the RFC-791 specification, including
+	fragmentation, reassembly, extended addressing and options, as well as
+	the source-route option. A full set of ICMP features compatible with
+	RFC-792 is available, including destination-unreachable, timestamp,
+	redirect and source-quench messages.  Destination-unreachable and
+	source-quench information is conveyed to the user level via the TCP
+	and raw-datagram protocol modules.  Internet gateway (routing and
+	non-routing) facilities conforming to the Exterior Gateway Protocol
+	(EGP) RFC-904 specification can be included on an optional basis.
+	This support can be configured to support hierarchically structured
+	gateways and subnets.
+
+	The TCP level conforms to the RFC-793 specification, including PUSH,
+	URGENT and options.  Its structure is based on circular buffers for
+	reassembly and retransmission, with repacketizing on each
+	retransmission.  Retransmission timeouts are dynamically determined
+	using measured roundtrip delays, as adjusted for backoff.  Data flow
+	into the network is controlled by measured network bandwidth, and
+	adjusted by source-quench information.  Features are included to avoid
+	excessive segment fragmentation and retransmission into zero windows.
+	The user interface level provides error and URGENT notification, as
+	well as a means to set outgoing IP/TCP options.
+
+	A raw-datagram interface is available for non-TCP protocols such as
+	UDP (RFC-768).  It includes internal congestion and fairness controls,
+	multiple-connection management and timestamping.  Protocols above UDP
+	supported in the present system include Network Time Protocol
+	(RFC-958), Time Server (RFC-868), Name Server (IEN-116), Domain-Name
+	Server (RFC-883) and Trivial File-Transfer Protocol (RFC-783). Other
+	raw-datagram services include XNET (IEN-158), Exterior Gateway
+	Protocol (RFC-904) and several experimental services.
+
+	A number of user-level protocol modules above TCP have been built and
+	tested with other internet hosts, including TELNET (RFC-854), File
+	Transfer Protocol (RFC-959), Simple Mail Transfer Protocol (RFC-821),
+	Multi-Media Mail Protocol (RFC-759/RFC-767) and	various other
+	file-transfer, debugging and control/monitoring protocols.
+
+	Code sizes and speeds depend greatly on the system configuration and
+	features selected.  A typical 30K-word LSI-11/2 single-user
+	configuration with all features selected and including the operating
+	system, device drivers and all buffers and control blocks, leaves
+	about 16K words for user-level application programs and protocol
+	modules.  A typical 124K-word LSI-11/23 or LSI-11/73  configuration
+	provides the same service for up to 24 individually relocated users.
+	Disk-to-disk FTP transfers across a DMA interprocessor link between
+	LSI-11/23s operate in the range 30-50 Kbps with 576-octet packets.
+	The 124K-word PDP11/34 INTELPOST adaptation supports two 56-Kbps lines
+	and a number of lower-speed lines. Typical throughputs range from 100
+	to 400 packets per second, depending on processor type and interface
+	type.
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	HELP
+HELP		Lists helpful information
+
+  SYNTAX
+	HELP                    ;invoke HELP.SAV
+	What topic do you want help with?  <argument>
+				;...?  is prompt
+				;<argument> has the form:  topic
+				;[ subtopic[:items...]...]] or *
+
+  SEMANTICS
+	*       lists the items for which help is available.
+	<CR>    lists the HELP text (of which this is a part).
+	topic   lists information on the specific topic only.
+	topic subtopic lists information on the specific subtopic only (for
+		example, HELP HELP SEMANTICS lists the paragraph of which this
+		text is a part).
+	topic subtopic:item lists only the text associated with the specific
+		item.
+	topic/item lists the text associated with the specific item under the
+		subtopic OPTIONS.
+	Subtopics are "SYNTAX", "SEMANTICS", "OPTIONS", and "EXAMPLES".  Items
+		are specific command options.
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	HOST
+HOST		Host Process commands
+
+  SYNTAX
+	SET <devname> <command> <argument> ;CLI command
+
+  SEMANTICS
+	See USER process commands and GENERAL help information
+
+  OPTIONS
+   CMD
+	List the available commands.  Additional information is available with
+	the HELP program.
+   HOST <hosnam> <pid> <delay> <status>
+	Set the Host Table entry for the DCnet virtual host <hosnam> to the
+	values specified in the arguments.  The Network Process PID is
+	specified by the first argument, the roundtrip delay by the second and
+	the status by the last.  If <hosnam> is missing, simply display a
+	summary of the entire table.  If <hosnam> is given with no arguments,
+	display the table entry for that host.  See Appendix C for a list of
+	DCnet virtual hosts.  Note that the Host Table is constructed
+	automatically during normal system operations and that this command is
+	provided only for exceptional circumstances.
+   IDENT <hid> <address>
+	Set the virtual-host ID for the master-clock host to <hid>.  If
+	<address> is given set the internet address for the physical host to
+	the <address>.
+   MINIMUM <lbound>
+	Set the minimum source-quench threshold to <lbound>.  ICMP
+	source-quench messages will be returned to the sender if the number of
+	free buffers falls below this threshold.
+   NET <netnam> <arglst>
+	Set the Network Table entry for the network <netnam> to the values
+	specified in <arglst>.  The only argument that can be specified at
+	present is the virtual host HID for the gateway to that network.  If
+	<netnam> is missing, display a summary of the entire table.  If
+	<netnam> is given with no arguments, display the table entry for that
+	network.
+   OFF <code>
+	The ON and OFF commands can be used to set and clear bits in the
+	options word of the parameter area associated with the process.  The
+	ON command sets the option bits corresponding to the one bits of
+	<code> (which is an octal value) to one, while the OFF command sets
+	these bits to to zero.  Options for the host process are interpreted
+	as the RT-11 configuration word, which is normally stored at relative
+	location 300 in the monitor area (see RT-11 documentation).
+   ON <code>
+	(see the OFF command)
+   SHOW
+	Display a formatted summary of various quantitites of interest.
+  EXAMPLES
+	.set hos cmd
+	Commands are:
+	CMD   SHO   ON   OFF   ID   MIN   NET   HOS
+
+	.set hos hos
+	Host    PortID  Delay   Offset  Status  Leader
+	----------------------------------------------------
+	DC6     002     0       0       119     000000000000
+
+	.set hos net
+	Net     Address         HostID  Hops    Leader
+	----------------------------------------------
+	ARP     [10.0.0.0]      0       0       0,0
+	DCN     [128.4.0.1]     6       0       0,0
+	WAS     [128.4.1.2]     14      0       0,0
+	SAN     [128.4.2.3]     11      0       0,0
+	FRD     [128.5.0.4]     13      0       0,0
+	UMD     [128.8.0.5]     12      0       0,0
+	NET     [0.0.0.6]       0       255     1,20
+
+	.set hos sho
+	Process type:  000030 options:  111001
+	Last clock update:  0 from:  1 reset:  00:00:00
+	Processes:      18
+	Vectors:        10
+	Nibbles:        29
+	Small packets:  0
+	Large packets:  12
+	Min packets:    2
+	Internet address:  [128.4.0.6]
+.ENDM
+.MACRO	HOSTS
+HOSTS		Make Internet host name/address table
+
+  SYNTAX
+	HOSTS                   ;invoke HOSTS.SAV
+	*outfile,dnsfile=infile[options],...
+	*...                    ;* is CSI prompt
+	*^Z                     ;exit to CLI
+
+  SEMANTICS
+	This program reads a file of Internet host name/address entries in the
+	Standard Network Information Center (NIC) format described in RFC810
+	and produces a hash-coded output file suitable for use by the user and
+	server programs in this system.
+
+	The domain-name system described in RFC-882 and RFC-883 is used by all
+	Fuzzball hosts to resolve an Internet address from a domain name and
+	also to resolve a domain name from its Internet address. The program
+	that does this, called the namesolver, first searches the local
+	HOSTS.DAT file and returns the name or address immediately if found.
+	If not found, the namesolver searches a set of hierarchically
+	structured remote domain-name servers as indicated by special entries
+	in HOSTS.DAT. Present practice is to configure one Fuzzball host on
+	the local net as a domain-name server along with a HOSTS.DAT file
+	produced by the HOSTS program from the complete HOSTS.TXT file
+	(obtained periodically from the NIC) and configure all other Fuzzball
+	hosts with a HOSTS.DAT file containing only the local-net hosts and
+	domain-name pointers to the server.
+
+	The primary output file outfile, usually named HOSTS.DAT, consists of
+	a set of lists, one for each block (512 bytes) terminated by a zero
+	byte.  Items in each list are either names, consisting of four bytes
+	of address, one byte of flags and a name string terminated by a zero
+	byte; or addresses, consisting of four bytes of address, one byte of
+	flags and a three-byte pointer.  Entries are hashed according to the
+	polynomial 1 + x + x**6 + x**7 reduced modulo the output file size.
+
+	The secondary output file dnsfile, usually named HOSTS.DNS, consists
+	of a domain-name data base in the format described in RFC-883. This
+	may be the primary format of the HOST.TXT table in the future. This
+	feature is included for compatibility.
+
+	One entry for every address and every name for each host in the input
+	file is included in the output file.  The address entries are hashed
+	by the address and the name entries are hashed by the name.  Bits in
+	the service-specification byte determine the entry format and whether
+	the host advertises TELNET, FTP or SMTP service.
+
+  OPTIONS
+	/A	Delete all domain-structured entries (".ARPA" domain in the
+		present table) and pad the remaining names with ".ARPA".
+		This feature is intended for use during the transition
+		period while the domain-name system is being put into place.
+	/S:n    Allocates n blocks for output file (default is 256 blocks).
+		The value of n must be at least two.
+
+  EXAMPLES
+	Following is a slightly reformatted table used as input to the HOSTS
+	program to produce the HOSTS.DAT file for a host configured without
+	the full domain-name server. The GATEWAY and HOST entries are taken
+	directly from the HOSTS.TXT table with the ".ARPA" domain edited
+	into all entries. The DOMAIN entries are associated with the name
+	server for the domain appearing in the host-name field.
+
+	GATEWAY : 10.0.0.111, 128.4.0.1, 128.5.0.1, 128.8.0.1 :
+		DCN-GATEWAY.ARPA : LSI-11/23 : FUZZ : IP/GW,GW/PRIME :
+	HOST : 128.4.0.1, 10.0.0.111 : DCN1.ARPA,POGO.ARPA : LSI-11/23 :
+		FUZZ : TCP/TELNET,TCP/SMTP,TCP/FTP,TCP/ECHO,TCP/DISCARD,
+		TCP/CHARGEN,TCP/DAYTIME,TCP/TIME,TCP/TALK,UDP/ECHO,UDP/TIME,
+		UDP/NAME,UDP/TFTP :
+	HOST : 128.4.0.2 : DCN2.ARPA,BOOMBAH.ARPA : LSI-11/2 : FUZZ :
+		TCP/TELNET,TCP/SMTP,TCP/FTP,TCP/ECHO,TCP/DISCARD,TCP/CHARGEN,
+		TCP/DAYTIME,TCP/TIME,TCP/TALK,UDP/ECHO :
+	HOST : 128.4.0.3 : DCN3.ARPA,ALBERT.ARPA : LSI-11/23 : FUZZ :
+		TCP/TELNET,TCP/SMTP,TCP/FTP,TCP/ECHO,TCP/DISCARD,TCP/CHARGEN,
+		TCP/DAYTIME,TCP/TIME,TCP/TALK,UDP/ECHO :
+	HOST : 128.4.0.4 : DCN4.ARPA,HOWLAND.ARPA : LSI-11/23 : FUZZ :
+		TCP/TELNET,TCP/SMTP,TCP/FTP,TCP/ECHO,TCP/DISCARD,TCP/CHARGEN,
+		TCP/DAYTIME,TCP/TIME,TCP/TALK,UDP/ECHO :
+	HOST : 128.4.0.5 : DCN5.ARPA,HEPZIBAH.ARPA : LSI-11/23 : FUZZ :
+		TCP/TELNET,TCP/SMTP,TCP/FTP,TCP/ECHO,TCP/DISCARD,TCP/CHARGEN,
+		TCP/DAYTIME,TCP/TIME,TCP/TALK,UDP/ECHO,UDP/TIME,UDP/NAME,
+		UDP/TFTP :
+	HOST : 128.4.0.6 : DCN6.ARPA,BACKROOM.ARPA : LSI-11/23 : FUZZ :
+		TCP/TELNET,TCP/SMTP,TCP/FTP,TCP/ECHO,TCP/DISCARD,TCP/CHARGEN,
+		TCP/DAYTIME,TCP/TIME,TCP/TALK,UDP/ECHO,UDP/TIME,UDP/NAME,
+		UDP/TFTP :
+	HOST : 128.4.0.7 : DCN7.ARPA,SNAVELY.ARPA : LSI-11/23 : FUZZ :
+		TCP/TELNET,TCP/SMTP,TCP/FTP,TCP/ECHO,TCP/DISCARD,TCP/CHARGEN,
+		TCP/DAYTIME,TCP/TIME,TCP/TALK,UDP/ECHO,UDP/TIME,UDP/NAME,
+		UDP/TFTP :
+	HOST : 128.4.0.8 : DCN8.ARPA,PORKYPINE.ARPA : LSI-11/23 : FUZZ :
+		TCP/TELNET,TCP/SMTP,TCP/FTP,TCP/ECHO,TCP/DISCARD,TCP/CHARGEN,
+		TCP/DAYTIME,TCP/TIME,TCP/TALK,UDP/ECHO :
+	HOST : 128.4.0.9 : DCN9.ARPA,CHURCHY.ARPA : SUN-170 : UNIX :
+		TCP/TELNET,TCP/SMTP,TCP/FTP,TCP/TIME,UDP :
+	HOST : 128.4.0.15 : DCN-ECHO.ARPA ::: IP/ECHO :
+	HOST : 128.4.0.16 : DCN16.ARPA,BEAUREGARD.ARPA : IBM-PC : MSDOS : IP :
+	HOST : 128.4.0.17 : DCN17.ARPA,BRIDGEPORT.ARPA : IBM-PC : MSDOS : IP :
+	HOST : 128.4.0.18 : DCN18.ARPA,MIGGLE.ARPA : IBM-PC : MSDOS : IP :
+	DOMAIN : 128.4.0.1 : ARPA ::: TCP/TELNET,TCP/FTP,TCP/SMTP :
+	DOMAIN : 128.4.0.1 : IN-ADDR ::: TCP/TELNET,TCP/FTP,TCP/SMTP :
+.ENDM
+.MACRO	IBM-PC
+IBM-PC		IBM Personal Computer Information
+
+  SYNTAX
+	None
+
+  SEMANTICS
+	An IBM Personal Computer with the MIT PC-IP software can be connected
+	via a serial line to a DCN host, which then serves as a gateway to the
+	Internet system. The PC-IP software includes support for TELNET, TFTP
+	and several other TCP- and UDP-based utility programs. It operates
+	using Internet datagrams encapsulated in the MIT serial-line protocol
+	and transmitted via the serial line. The DCN host running this
+	protocol manages the datagram-switching and encapsulation functions
+	and provides reachability information for the network.
+
+	The IBM Personal Computer can be used with DCN hosts just as with any
+	other Internet host. DCN hosts can be configured with TELNET and TFTP
+	servers.
+
+  OPTIONS
+	None
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	INFORMATION
+INFORMATION	General information
+
+  SYNTAX
+	None
+
+  SEMANTICS
+   BOOTING
+	Mount the Fuzzball work volume on DK:.  Mount an ordinary RT-11 system
+	volume on SY:.  The system volume sould contain at least the following
+	files:
+
+	PIP.SAV		Peripheral interchange program
+	DUP.SAV		Device utility program
+	DIR.SAV		Directory program
+	KED.SAV		Keypad Editor
+
+	and other RT-11 system and application programs as desired.  The
+	system volume should also contain at least the following Fuzzball
+	files:
+
+	CLI.SAV		Command language interpreter
+	FRUN.SAV	Foreground process loader (BOS only)
+	LOGIN.SAV	Login program
+	LOGOUT.SAV	Logout program
+	TN.SAV		TELNET virtual terminal user program
+	TELSRV.SAV	TELNET virtual terminal server program
+	FTP.SAV		File transfer user program
+	FTPSRV.SAV	File transfer server program
+	SMTP.SAV	Mail transfer user program
+	SMPSRV.SAV	Mail transfer server program
+	MSG.SAV		Mail reader program
+	SNDMSG.SAV	Mail composition program
+	HOSTS.DAT	Internet host table (constructed by HOSTS)
+	LOGIN.DAT	User login/password table (constructed by SYSMGR)
+	LOGIN.MSG	Login text file (constructed by KED or EDIT)
+	UNSENT.MSG	Mail file (constructed by CRMAIL)
+
+	The following files can be used in certain configurations:
+
+	UDP.SAV		Internet name/time/file server process
+	EGP.SAV		Internet gateway process
+	NSP.SAV		DECnet gateway (special configuration)
+	LOG.SAV		Log process
+	WATCH.SAV	SIMP monitor program
+	LOG.TXT		Log file (constructed by CRMAIL)
+
+	The following files will be useful for many applications:
+
+	NIFTP.SAV	Network-independent FTP user program
+	PING.SAV	Internet measurements user/server program
+	XNET.SAV	Internet loader/debugger user/server program
+	VCG.SAV		Peritek VCG display program
+	FINGER.SAV	Display user information
+	SETCLK.SAV	Set system time and date from local clock
+	NETCLK.SAV	Set system time and date from remote time server
+	RTCLK.SAV	Set TCU-50 from system time and date
+	SYSMGR.SAV	System manager utility program
+	HOSTS.SAV	Creates Internet host tables (HOSTS.DAT)
+	CRMAIL.SAV	Creates mail files (UNSENT.MSG) and log files
+			(LOG.TXT)
+	HELP.SAV	Help utility program
+	HELP.TXT	Help file (this file)
+	MPM.SAV		MPM mail utility program
+	*.CTL		MPM mail control files
+	SPQSRV.SAV	Network spooler server
+	PRINT.SAV	Local spooler server
+	PRTQ.SAV	Spooler daemon
+	WHOIS.SAV	NIC data-base access program
+	RSOLV.SAV	Domain Name Server data-base access program
+
+	These files operate with all versions of the Fuzzball software, while
+	MSG, SNDMSG, CRMAIL, HELP, SETCLK snd RTCLOK operate with RT-11 as
+	well.  In addition, the work or system volume should contain the
+	Fuzzball resident system file configured for the particular hardware
+	system on which it is run.  This file and other RT-11 system
+	components are used only to load the Fuzzball resident system and are
+	not referenced after that.
+
+	Once the system and work volumes are mounted, load the Fuzzball
+	resident system using the RT-11 RUN command.  Be sure the real-time
+	harware clock is running.  The system should come up with heralds from
+	the several daemons specified in the configuration file. One or more
+	prompt characters (".") may also appear.  The system then begins to
+	send HELLO messages to neighboring hosts and constructs its Host
+	Table, which determines the routing to these and other hosts on the
+	network.  This can take a minute or two, during which the SET HOST
+	HOST command can be used to identify the other hosts as they come up.
+	The SHOW command can be used to confirm the correct configuration of
+	the processes and devices in the system and the SET HOST SHOW command
+	to determine the resources in use.  Once the Host Table has stabilized
+	the system is ready for use.
+
+	In configurations using remote domain-name servers, some hosts may not
+	appear reachable until the entire network path to the selected
+	domain-name server(s) comes up.
+
+   IN-CASE-OF-TROUBLE
+	In case of trouble the following procedures may be helpful.  The
+	system can be restarted at any time from location zero, following
+	which it will recompute the checksum of the read-only code and data
+	areas and reinitialize all processes.  In addition, the RESET command
+	will do the same thing. Finally, the XNET Internet loader/debugger
+	can be used to send a special message to a remote system, causing the
+	same action.  Obviously, these mechanisms are potentially hazardous,
+	but in keeping with the uses the Fuzzball software is likely to be
+	put. Protection features may be incorporated in future versions.
+
+   CONFIGURATIONS
+	There are two versions of the Fuzzball resident system presently in
+	use. One of these, called the basic system, supports up to 60K bytes
+	of memory and PDP11 or LSI-11 processors without memory-management
+	features.  The other, called the virtual system, supports the maximum
+	available memory and PDP11 or LSI-11 processors with these features.
+	The standard basic system is configured for a 60K-byte LSI-11/2 with
+	EIS and one 32K-byte background process.  The standard virtual system
+	is configured for a 256K-byte LSI-11/23 and up to seven 32K-byte
+	virtual processes.  The remainder of memory is used for the resident
+	system and various storage areas.
+
+   PROCESSES
+	Processes are identified by three-character physical names, which
+	appear in the SHOW and DEVICE command arguments and their responses.
+	In the case of ordinary direct-access and sequential input/output
+	devices, these names correspond to standard RT-11 conventions.  In
+	many cases several instances of a particular process type may appear,
+	in which case the final character will be a digit in the range zero
+	through nine.  Each process is identified by a port identifier, or
+	PID, which appears as an argument in some commands.  Following is a
+	list of the current process types (n denotes a digit):
+
+	HOS     Host process
+	INP	Internet process (with optional radio-clock support)
+	DHn     Network process (SRI or ACC ARPANET 1822 link)
+	DMn     Network process (DEC DDCMP link)
+	DQn     Network process (DEC DEQNA Ethernet link)
+	HDn	Network process (ACC HDH/1822 link)
+	HYn	Network process (NSC A400 HYPERchannel link)
+	ILn	Network process (Interlan or 3COM Ethernet link)
+	KHn	Network process (U Michigan LAPB link)
+	KMn	Network process (U Maryland Univac link)
+	LHn     Network process (serial synch or asynch link)
+	LNn     Network process (Ford serial or parallel LNA link)
+	PCn	Network process (IBM PC serial asynch link)
+	PPn	Network process (ACC or RSRE X.25 link)
+	PRn	Network process (AX.25 packet radio link)
+	CWn	Terminal process (FSK radio terminal)
+	TTn     Terminal process (operator terminal/line printer)
+	MXn     Multiplexor terminal process (DEC DZ11 multiplexor)
+	BGD     Background user process (BOS)
+	FGD     Foreground user process (BOS)
+	VMn     Virtual user process (VOS)
+	DXn     Disk process (RX01 single-density floppy disk)
+	DYn     Disk process (RX02 double-density floppy disk)
+	PDn     Disk process (PDT-150 single-density floppy disk)
+	RKn     Disk process (RK05 disk cartridge)
+	DSn     Disk process (RH11/RJS03 fixed-head disk)
+	DLn     Disk process (RL11/RL01 disk cartridge)
+	FDn     Disk process (AED 6200 double-density floppy disk)
+	CSn     Disk process (USDC Winchester disk/tape cartridge)
+	SMn     Disk process (SMS Winchester disk)
+	FAX     Dacom 450 Facsimile process
+	LPC     LPCM packet speech process
+	UDP     Internet name/time/tftp server process
+	EGP	Internet gateway process
+	NSP     DECnet gateway process
+	LOG	Log process
+
+	As in RT-11, logical names can be associated with most of the above
+	names using the ASG command.
+
+   VIRTUAL-HOSTS
+	Of fundamental importance to the DCnet architecture is the concept of
+	physical and virtual hosts.  A physical host is an ordinary processor
+	with memory and a complement of direct-access and sequential devices.
+	A virtual host is a portable process that resides in a physical host.
+	Virtual hosts are assigned names and 32-bit internet addresses as
+	shown elsewhere.  Each virtual host residing in a physical host is
+	supported by an Internet process, the name of which is the name of the
+	virtual host.  The internet address of the physical host itself
+	(necessary only to break routing loops) must be the address of one of
+	its virtual hosts.
+
+	Virtual hosts are identified within DCnet by the host identifier
+	(HID), which presently is taken as the fourth octet of the four-octet
+	internet address.  The particular virtual host supported by a given
+	Internet process is determined by its HID, which can be changed by an
+	operator command.  When the HID is changed, the name is changed
+	automatically as well.
+
+   TERMINAL-OPERATIONS
+	Operation of the standard Fuzzball terminal is like RT-11, but with
+	some differences.  Following is a list of the special keyboard
+	functions (codes correspond to the standard ASCII interpretation):
+
+	Code    Echo    Function
+	------------------------
+	CR      CR-LF   End of line
+	SUB     ^Z      End of file
+	DEL  BS-SP-BS   Delete previous character
+	CAN     ^U      Delete current line
+	ETX     ^C      Interrupt
+	DLE     none    Begin escape sequence
+	EOT     ^D      Panic reset (not in RT-11)
+	DC3     ^S      Stop output
+	DC1     ^Q      Resume output
+
+	The Fuzzball interrupt and end-of-file functions operate rather
+	differently than their RT-11 counterparts.  A single (not two) ETX
+	function always causes an immediate termination of the program.  A SUB
+	function causes the emulated RT-11 Command String Interpreter (CSI) to
+	return to the Fuzzball Command Language Interpreter (CLI).  The DLE
+	function introduces a special function sequence consisting of the DLE
+	itself followed by a single character.  It the following character is
+	another DLE, a single DLE is placed in the input buffer.  If it is a
+	digit, the function performed is as follows:
+
+	0       Switch to channel 0
+	1       Switch to channel 1
+	2       Switch to channel 2
+	3       Switch to channel 3
+	4-9     Reserved
+
+	Operator terminals are ordinarily connected to user processes on a
+	one-to-one basis.  Usually channel 0 for each terminal is assigned the
+	associated user process and the remaining channels assigned for
+	special purposes, such as net servers.  These assignments can be
+	changed with the ASG command.  The options in effect for each terminal
+	can be specified with the SET command.
+
+   MEMORY-MANAGEMENT
+	In the basic system the supervisor and all processes share the
+	identity virtual-physical address mapping.  The hardware vector area
+	is followed by the working storage allocated to the background
+	process.  This is followed by the code and read-only storage areas for
+	the resident system, including the supervisor and all processes.  Next
+	is the code and read-only storage areas for the RT-11 emulator, which
+	is re-entrant, position-independent and shared by all user processes.
+	Following this is the parameter area containing tables and other
+	information which can be accessed by the SET and SHOW commands.
+	Finally are the buffers, state vectors and stacks used by the various
+	components of the system.  The working storage for each foreground
+	process is allocated as part of its state vector.
+
+	The virtual system is structured in a similar way, except that each
+	user process has its own address mapping.  Physical memory is
+	organized as in the basic system, except that there is no working
+	storage allocated to the background or foreground processes.  Instead,
+	the working storage for each user process is allocated in turn above
+	the areas described in the previous paragraph.  The supervisor and all
+	processes except user processes operate in kernel space with identity
+	virtual-physical mappings, except that segment 7 is mapped to the
+	input/output page and segments 5 and 6 are used as windows to other
+	spaces.  Each user process operates in user space with its own working
+	storage mapped to virtual space starting at location zero.  Segments 6
+	and 7 of each user process are mapped to the RT-11 emulator and
+	parameter areas, while segment 5 is used as a virtual window to other
+	spaces.  those functions that require it.
+
+	Within each user process in both the basic and virtual systems, memory
+	is organized as in RT-11.  In the background process the chain area
+	starts at location 500 and the various "RMON areas" and emulator
+	working storage extends downward from the end of its allocated working
+	storage.  In the foreground processes the chain area starts at the
+	first location of its allocated working storage.  Virtual user
+	processes appear as background processes.  Features have been
+	incorporated into the Fuzzball system to support re-entrant and
+	position-independent load modules in both background and foreground
+	processes.
+
+  EXAMPLES
+	None
+.ENDM
+.MACRO	INTERNET
+INTERNET	Internet Process commands
+
+  SYNTAX
+	SET <devname> <command> <argument>      ;CLI command
+
+  SEMANTICS
+	See USER process commands and GENERAL help information
+
+  OPTIONS
+   CCB <cid> <code>
+	Display a summary of connection data from the Connection Control Block
+	for connection <cid>.  If <cid> is missing, display all open
+	connections.  The optional <code> arguments TRA and TCP select
+	additional displays applicable only to TCP.  TRA displays a received
+	packet trace, while TCP displays packet and signal counts by type.
+   CMD
+	List the available commands.  Additional information is available with
+	the HELP program.
+   IDENT <hid>
+	Change the virtual host ID for the process to <hid>.  After this is
+	done the name of the process will change accordingly and the new
+	routing information will circulate in the network.  Once changed, the
+	ID should not be changed for at least two minutes, to allow old
+	routing information to dissipate and prevent loops.
+   OFF <code>
+	The ON and OFF commands can be used to set and clear bits in the
+	options word of the parameter area associated with the process.  The
+	ON command sets the option bits corresponding to the one bits of
+	<code> (which is an octal value) to one, while the OFF command sets
+	these bits to to zero.  Options for the internet process are as
+	follows:
+
+	12      NBS clock (OFF:  disable, ON:  enable)
+	13      Echo all datagrams (OFF:  disable, ON:  enable)
+
+   ON <code>
+	(see the OFF command)
+   SHOW
+	Display a formatted summary of various quantitites of interest.
+   SIZE <size>
+	Set the maximum datagram size to <size>, which must be a decimal
+	integer in the range 20-576 (40-576 for TCP).
+
+  EXAMPLES
+	.set dc6 ccb
+	Connection ID:  051240 protocol:  006 state:  000007
+	  CCB format:  004000 max size:  256 protocol flags:  041
+	  Local addr:  [128.4.0.6] 3072 Foreign addr:  [128.4.0.6] 23
+	  Rate:  60 delay:  1055 RTD rate:  327 RTD delay:  17
+
+	.set dc6 ccb 4 tcp
+	Catenet source quench:    0
+	Catenet unreachable:      0
+	Input packets received:   66
+	  bad format:             0
+	  bad checksum:           0
+	  connection reset:       0
+	  dropped:                1
+	Accepted packets:         66
+	  null (ACK-only):        24
+	  text stored:            42
+	  duplicate:              0
+	  outside window:         0
+	SYNs processed:           1
+	FINs processed:           0
+	Error packets sent:       0
+	Control packets sent:     1
+	Text packets sent:        25
+	Retransmissions sent:     0
+	ACK-only packets sent:    43
+	Data avail sigs to user:  43
+
+	.set dc6 ccb 4 tra
+	Seq     ID      Start   Length  Window  Offset
+	----------------------------------------------
+	30005   30005   0       1       399     0
+	35905   35905   0       216     184     0
+	37888   37888   0       46      354     0
+	38955   38955   0       1       399     0
+	46288   46288   0       68      332     0
+	46772   46772   0       1       399     0
+	62172   62172   0       155     245     0
+	63372   63372   0       1       399     0
+	64969   64969   0       214     186     0
+	1200    1200    0       1       399     0
+	5183    5183    0       216     184     0
+	6966    6966    0       46      354     0
+	8050    8050    0       1       399     0
+	25616   25616   0       216     184     0
+	27533   27533   0       216     184     0
+	30150   30150   0       216     184     0
+	32250   32250   0       216     184     0
+	34350   34350   0       216     184     0
+	36450   36450   0       108     292     0
+	38050   38050   0       1       399     0
+	46283   46283   0       216     184     0
+	48133   48133   0       216     184     0
+
+	.set dc6 cmd
+	Commands are:
+	CMD   SHO   ON   OFF   ID   SIZ   CCB
+
+	.set dc6 show
+	Process type:  000026 options:  000000
+	Host ID:  6 max conn:  8 max size:  256
+	Input packets:    156
+	  timeouts:       0
+	  net signals:    0
+	  bad format:     0
+	  bad checksum:   0
+	  returned:       0
+	  dropped:        0
+	Control msgs:     0
+	Output packets:   158
+.ENDM
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   

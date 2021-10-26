@@ -1,0 +1,968 @@
+	.TITLE	HLSET	HL/IP/GT Process options
+	.SBTTL	System and module definitions
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Hl/ip/gt process options
+;
+; External symbols
+;
+	.GLOBL	RDASC,RDDEC,RDOCT,HASH,PRDEC,PROCB,FORMAT
+	.GLOBL	CMDHLP,CMDON,CMDOFF,CMDASG,CMDVIC,CMDNTF
+;
+; Entry symbols
+;
+	.GLOBL	HLOPT,IPOPT,GTOPT
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.PSA,.SUP,.IOD,.IPD ;dcnlib definitions
+	.MCALL	.GAT,.TAP,.X25,.ETH,.DMV
+	.MCALL	.WIND,.KWTAB	;dcnlib macros
+	.MCALL	$DFTCB,$DFTBL	;moslib definitions
+	.MCALL	.TTYOU		;rt-11 macros
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.PSA			;define process save area
+	.SUP			;define host process par areas
+	.IOD			;emulator monitor area extension
+	.IPD			;define internet process psa extension
+	.GAT			;define network process psa extension
+	.TAP			;define tapr storage areas
+	.ETH			;define ethernet storage areas
+	.DMV			;define dmv11 storage areas
+	.X25			;define x25 storage areas
+	$DFTCB			;define connection control block (ccb)
+	$DFTBL			;define host/gateway table formats
+;
+	.SBTTL	Network process options
+;
+; Dsects: r3 = par, r5 = ulp
+;
+	.PSECT	$BOSI,RO,I
+;
+; 'show' (cmd) display network process status
+; (segment of command language interpreter)
+; (no arguments)
+;
+GTSHOW:	MOV	R3,R1		;display process status
+	MOV	PC,R0
+	ADD	#GTFMT-.,R0
+	JSR	PC,FORMAT
+	RTS	PC
+;
+; 'stat' (cmd) display network interface statistics
+; (segment of command language interpreter)
+; (no arguments)
+;
+GTSTAT:	MOV	PC,R0		;initialize table search
+	ADD	#SBNTAB-.,R0
+1$:	TST	@R0		;is this end of table
+	BEQ	2$		;branch if yes
+	CMP	PARSBT(R3),(R0)+ ;no. does this entry match
+	BEQ	3$		;branch if yes
+	TST	(R0)+		;no. advance to next entry
+	BR	1$
+;
+3$:	MOV	R3,R1		;found. divebomber
+	ADD	@R0,R0
+	JSR	PC,@R0
+2$:	RTS	PC
+;
+; Serial format
+;
+FMTDCN:	MOV	PC,R0		;display statistics
+	ADD	#DCNFMT-.,R0
+	JSR	PC,FORMAT
+	RTS	PC
+;
+; Arpanet format
+;
+FMTARP:	MOV	PC,R0		;display statistics
+	ADD	#GTFMT1-.,R0
+	JSR	PC,FORMAT
+	RTS	PC
+;
+; DMV11 format
+;
+FMTDMV:	MOV	PC,R0		;display statistics
+	ADD	#DMVFMT-.,R0
+	JSR	PC,FORMAT
+	RTS	PC
+;
+; ACC IF-11Q/HDH interface statistics
+;
+FMTHDH:	MOV	PC,R0		;print common HDH/X.25 statistics
+	ADD	#X25FM1-.,R0
+	JSR	PC,FORMAT
+	MOV	PC,R0		;print HDH-specific statistics
+	ADD	#X25FM2-.,R0
+	JSR	PC,FORMAT
+	RTS	PC
+;
+; ACC 5250 DDN X.25 interface statistics
+;
+FMTX25:	MOV	PC,R0		;display header
+	ADD	#X25FM3-.,R0
+	JSR	PC,FORMAT
+	MOV	R3,R2		;display all open channels
+	ADD	#X25BLK,R2
+	CLR	-(SP)
+1$:	TSTB	CB.STA(R2)
+	BEQ	2$	
+	MOV	PC,R0		;display entry number
+	ADD	#COM5A-.,R0
+	MOV	SP,R1
+	JSR	PC,FORMAT
+	MOV	PC,R0		;display statistics
+	ADD	#X25FMT-.,R0
+	MOV	R2,R1
+	JSR	PC,FORMAT
+2$:	INC	@SP
+	ADD	#CB.LEN,R2
+	CMPB	@SP,DPNMAX(R3)
+	BLO	1$
+	TST	(SP)+
+	RTS	PC
+;
+; Interlan or DEQNA Ethernet
+;
+FMTETH:	MOV	PC,R0		;print statistics
+	ADD	#ETHFMT-.,R0
+	JSR	PC,FORMAT
+	RTS	PC
+;
+; Keith Heron's HDLC Interface
+;
+FMTKHV:	MOV	PC,R0		;print statistics
+	ADD	#KHVFMT-.,R0
+	JSR	PC,FORMAT
+	RTS	PC
+;
+; Packet radio format
+;
+FMTPKT:	JSR	PC,HASH		;get table name
+	CMP	R0,#<^RNOD>
+	BEQ	PRNODE		;branch if 'node'
+	CMP	R0,#<^RLIN>
+	BEQ	PRLINK		;branch if 'link'
+	MOV	PC,R0		;display header
+	ADD	#PKTFMT-.,R0
+	JSR	PC,FORMAT
+	MOV	R3,R2		;display channel table
+	ADD	#PAXCTB,R2
+	MOV	#5,-(SP)	;get number of entries
+1$:	CMPB	PAXCHN(R3),1(SP) ;is this direct-access channel
+	BNE	3$		;branch if no
+	MOV	PC,R0		;yes. so disclose
+	ADD	#PKFMT4-.,R0
+	BR	4$
+;
+3$:	MOV	PC,R0		;nothing special
+	ADD	#PKFMT1-.,R0
+4$:	MOV	SP,R1
+	JSR	PC,FORMAT
+	MOV	PC,R0		;display remainder of entry
+	ADD	#PKFMT5-.,R0
+	MOV	R2,R1
+	JSR	PC,FORMAT
+	ADD	#CT.LEN,R2
+	INCB	1(SP)
+	CMPB	1(SP),@SP
+	BLO	1$		;continue for all entries
+	TST	(SP)+
+	RTS	PC
+;
+; Subroutine to display node table
+;
+PRNODE:	MOV	PC,R0		;display header
+	ADD	#PKFMT3-.,R0
+	JSR	PC,FORMAT
+	MOV	R3,R2
+	ADD	#PAXSRC,R2
+	ADD	@R2,R2
+	CLR	-(SP)
+1$:	TSTB	RT.CNG(R2)	;is entry active
+	BEQ	5$		;branch if no
+	MOV	#<' >,-(SP)	;yes. display callsign
+	MOV	#<' >*400+<' >,-(SP)
+	MOV	#<' >*400+<' >,-(SP)
+	MOV	#<' >*400+<' >,-(SP)
+	MOV	#<' >*400+<' >,-(SP)
+	MOV	SP,R0
+	MOV	R2,R1
+	ADD	#RT.SRC,R1
+2$:	MOVB	(R1)+,(R0)+
+	BNE	2$
+	MOVB	#<' >,-(R0)	
+	MOV	SP,R1
+	MOV	PC,R0
+	ADD	#PKFMT8-.,R0
+	JSR	PC,FORMAT
+	MOV	PC,R0		;display remainder of entry
+	ADD	#PKFMT2-.,R0
+	MOV	R2,R1
+	JSR	PC,FORMAT
+	MOV	R2,R1		;display route string
+	ADD	#RT.PEA,R1
+3$:	TSTB	@R1
+	BEQ	4$		;branch if end
+	MOV	PC,R0
+	ADD	#PKFMT0-.,R0
+	JSR	PC,FORMAT
+	INC	R1
+	BR	3$
+;
+4$:	MOV	PC,R0		;end line
+	ADD	#PKFMT9-.,R0
+	JSR	PC,FORMAT
+	ADD	#5*2,SP
+5$:	ADD	#RT.LEN,R2
+	INCB	1(SP)
+	TSTB	RT.SRC(R2)
+	BNE	1$		;continue for all entries
+	TST	(SP)+
+	RTS	PC
+;
+; Subroutine to display link table
+;
+PRLINK:	MOV	PC,R0		;display link table
+	ADD	#PKFMT6-.,R0
+	JSR	PC,FORMAT
+	MOV	R3,R1
+	ADD	#PAXLNK,R1
+	ADD	@R1,R1
+1$:	TST	@R1
+	BEQ	2$
+	MOV	PC,R0
+	ADD	#PKFMT7-.,R0
+	JSR	PC,FORMAT
+	ADD	#LT.LEN,R1
+	BR	1$
+;
+2$:	RTS	PC
+;
+; 'id' (cmd) set foreign address (network process)
+; (segment of command language interpreter)
+; Arg1-4 = foreign address
+;
+GTHID:	MOV	R3,R1		;set foreign address
+	ADD	#PARADR,R1
+1$:	JSR	PC,RDDEC	;(arg1-4)
+	BEQ	2$
+	MOVB	R0,(R1)+
+	BR	1$
+;
+2$:	RTS	PC
+;
+; 'size' (siz) set max packet size (network and internet processes)
+; (segment of command language interpreter)
+; Arg = max packet size (octets)
+;
+CMDSIZ:	JSR	PC,RDDEC	;(arg) get max packet size
+	CMP	R0,#68.		;clip for lower bound
+	BHIS	1$
+	MOV	#68.,R0
+1$:	MOV	R0,PARMAX(R3)
+	RTS	PC
+;
+; 'time' (tim) set device timeout (network processes)
+; (segment of command language interpreter)
+; Arg = device timeout (milliseconds)
+;
+CMDTIM:	JSR	PC,RDDEC	;(arg) get device timeout
+	CMP	R0,#100.	;clip for lower bound
+	BHIS	1$
+	MOV	#100.,R0
+1$:	MOV	R0,PARTRY(R3)
+	RTS	PC
+;
+; 'bias' (bia) set delay bias (network process)
+; (segment of command language interpreter)
+; Arg = delay bias (milliseconds)
+;
+CMDBIA:	JSR	PC,RDDEC	;(arg) get delay bias
+	MOV	R0,PARBIA(R3)
+	RTS	PC
+;
+; 'weight' (wgt) set weight vector parameters (*** pkt only ***)
+; (segment of command language interpreter)
+; Arg0-arg6 weight vector parameters
+;
+CMDWGT:	MOV	R3,R1		;establish pointers
+	ADD	#PAXW0,R1
+	JSR	PC,RDDEC	;get first value
+	BEQ	2$		;branch if missing
+1$:	MOV	R0,(R1)+
+	JSR	PC,RDDEC	;get next value
+	BNE	1$		;branch if missing
+	RTS	PC
+;
+2$:	MOV	PC,R0		;display weight vector
+	ADD	#PKFMTA-.,R0
+	JSR	PC,FORMAT
+	MOV	R3,R1
+	ADD	#PAXCTL,R1	;display wiretap
+	MOV	PC,R0
+	ADD	#PKFMTB-.,R0
+	JSR	PC,FORMAT
+	MOV	R3,R1		;display water levels
+	MOV	PC,R0
+	ADD	#PKFMTC-.,R0
+	JSR	PC,FORMAT
+	RTS	PC
+	.PAGE
+	.SBTTL	Internet process options
+;
+; 'show' (cmd) display internet process status
+; (segment of command language interpreter)
+; (no arguments)
+;
+IPSHOW:	MOV	R3,R1		;display process status
+	MOV	PC,R0
+	ADD	#IPFMT-.,R0
+	JSR	PC,FORMAT
+	BIT	#7,PAROPT(R3)	;is this clock process
+	BEQ	1$		;branch if no
+	MOV	PC,R0		;yes. display that, too
+	ADD	#COM11-.,R0
+	JSR	PC,FORMAT
+1$:	RTS	PC
+;
+; 'id' (cmd) set internet/host process id fields
+; (segment of command language interpreter)
+; Arg = local host id
+;
+IPHID:	JSR	PC,RDDEC	;get local host id
+	BEQ	1$
+	MOVB	R0,PARHID(R3)
+1$:	RTS	PC
+;
+; 'ccb' (cmd) display connection control block statistics
+; (segment of command language interpreter)
+; Arg1 = connection number, arg2 = format keyword
+;
+IPCCB:	MOV	R3,R2		;get connection table address
+	ADD	#PARNBS,R2
+	JSR	PC,RDDEC	;(arg1) get connection number
+	BNE	2$		;branch if present
+1$:	MOV	(R2)+,R0	;is ccb allocated
+	MOV	(R2)+,R1
+	BEQ	3$		;branch if no
+	.WIND
+	MOV	PC,R0		;yes. display connection info
+	ADD	#COM1-.,R0
+	JSR	PC,FORMAT
+	BR	1$
+;
+2$:	ASL	R0		;find ccb
+	ASL	R0
+	ADD	R0,R2
+	MOV	(R2)+,R0	;map to useful address
+	MOV	(R2)+,R1
+	BEQ	3$		;branch if none
+	.WIND
+	JSR	PC,HASH		;(arg2) get format
+	BNE	4$		;branch if given
+	MOV	PC,R0		;missing. display connection info
+	ADD	#COM1-.,R0
+	JSR	PC,FORMAT
+3$:	RTS	PC
+;
+4$:	CMP	R0,#^RTCP	;is format "tcp"
+	BNE	5$		;branch if no
+	MOV	PC,R0		;yes. display tcp measurement region
+	ADD	#COM4-.,R0
+	JSR	PC,FORMAT
+	RTS	PC
+;
+5$:	CMP	R0,#<^RON >	;set/clear trace switch
+	BNE	6$
+	BISB	#OP.TRC,CCBFLG(R1)
+6$:	CMP	R0,#<^ROFF>
+	BNE	7$
+	BICB	#OP.TRC,CCBFLG(R1)
+7$:	RTS	PC
+	.PAGE
+	.SBTTL	Host process options
+;
+; 'show' (cmd) display host process status
+; (segment of command language interpreter)
+; (no arguments)
+;
+HLSHOW:	MOV	R3,R1		;display process status
+	MOV	PC,R0
+	ADD	#HLFMT-.,R0
+	JSR	PC,FORMAT
+	ADD	#PARIDS,R1	;compute internet address pointer
+	ADD	@R1,R1
+	MOV	PC,R0		;display internet address
+	ADD	#COM14-.,R0
+	JSR	PC,FORMAT
+	RTS	PC
+;
+; 'dump ' (cmd) display panic-dump region
+; (segment of command language interpreter)
+; (no arguments)
+;
+HLDUMP:	MOV	R3,R1		;display panic-dump region
+	MOV	PC,R0
+	ADD	#PDFMT-.,R0
+	JSR	PC,FORMAT
+	MOV	R3,R1		;dump psa area
+	ADD	#PARPDP,R1
+	MOV	#30,R0
+	JSR	PC,DUMP
+	JSR	PC,RDDEC	;get count
+	BEQ	1$		;branch if missing
+	MOV	R0,PARPDN(R3)
+1$:	RTS	PC
+;
+; 'trim" (cmd) set clock trim
+; (segment of command language interpreter)
+; Arg1 = clock trim
+;
+HLTUNE:	JSR	PC,RDDEC	;get clock trim
+	MOV	R0,CLKDRF(R3)
+	RTS	PC
+;
+; 'quench' (cmd) set quench level
+; (segment of command language interpreter)
+; Arg1 = quench level
+;
+CONGS:	JSR	PC,RDDEC	;get quench level
+	MOV	R0,PARCGT(R3)
+	RTS	PC
+;
+; 'route' (cmd) set route trace
+; (segment of command language interpreter)
+; arg1-4 = trace address
+;
+ROUTE:	JSR	PC,RDDEC	;get trace address
+	MOVB	R0,PARTRN(R3)
+	JSR	PC,RDDEC
+	MOVB	R0,PARTRN+1(R3)
+	JSR	PC,RDDEC
+	MOVB	R0,PARTRN+2(R3)
+	JSR	PC,RDDEC
+	MOVB	R0,PARTRN+3(R3)
+	CLR	PARRTC+2(R3)	;clear change counter
+	RTS	PC
+;
+; 'id' (cmd) set host process id fields
+; (segment of command language interpreter)
+; Arg1 = clock hid, arg2-5 = internet address
+;
+HLHID:	JSR	PC,RDDEC	;(arg1) set clock hid
+	BEQ	2$
+	MOVB	R0,PARCKH(R3)
+	MOV	R3,R1		;compute internet address pointer
+	ADD	#PARIDS,R1	;set internet address
+	ADD	@R1,R1
+1$:	JSR	PC,RDDEC	;(arg2-5)
+	BEQ	2$
+	MOVB	R0,(R1)+
+	BR	1$
+;
+2$:	RTS	PC
+;
+; 'local' (sta) display/alter local host table
+; 'net' (sta) display/alter foreign host table
+; (segment of command language interpreter)
+; Arg1 = net id, arg2 = gateway hid, arg3 = flags, arg4... = leader
+;
+LCNET:	MOV	R3,R2		;get local host table pointer
+	ADD	#PARLCL,R2
+	BR	HLN1
+;
+HLNET:	MOV	R3,R2		;get foreign host table pointer
+	ADD	#PARNET,R2
+HLN1:	MOV	(R2)+,R0	;map onto virtual window
+	MOV	(R2)+,R1
+	.WIND
+	MOV	R1,R2
+	CLR	-(SP)		;get number of entries
+	JSR	PC,RDDEC	;(arg1) get net id
+	BNE	4$		;branch if present
+	MOV	PC,R0		;missing. display header
+	ADD	#COM13-.,R0
+	JSR	PC,FORMAT
+1$:	BITB	#GT.CAC,GATFLG(R2) ;skip inactive entries
+	BEQ	2$
+	TSTB	GATTTL(R2)
+	BEQ	3$
+2$:	MOV	PC,R0		;display net id
+	ADD	#COM5A-.,R0
+	MOV	SP,R1
+	JSR	PC,FORMAT
+	MOV	PC,R0		;display entry
+	ADD	#COM5-.,R0
+	MOV	R2,R1
+	JSR	PC,FORMAT
+3$:	BITB	#GT.END,GATFLG(R2) ;is this end of table
+	BNE	5$		;branch if yes
+	ADD	#GATLEN,R2	;no. advance to next entry
+	INC	@SP
+	BR	1$
+;
+4$:	MUL	#GATLEN,R0	;compute entry pointer
+	ADD	R1,R2
+	JSR	PC,RDDEC	;(arg2) set gateway hid
+	BEQ	5$		;branch if missing
+	MOVB	R0,GATHID(R2)
+	JSR	PC,RDOCT	;(arg3) get flags
+	BEQ	5$		;branch if missing
+	MOVB	R0,GATFLG(R2)
+	JSR	PC,RDDEC	;(arg4) get leader
+	BEQ	5$		;branch if missing
+	MOVB	R0,GATLDR(R2)
+	JSR	PC,RDDEC
+	MOVB	R0,GATLDR+1(R2)
+	JSR	PC,RDDEC
+	MOVB	R0,GATLDR+2(R2)
+	JSR	PC,RDDEC
+	MOVB	R0,GATLDR+3(R2)
+5$:	TST	(SP)+		;recover stack
+	RTS	PC
+;
+; 'host' (cmd) display/alter host table
+; (segment of command language interpreter)
+; Arg1 = host id, arg2 = port id, arg3 = delay, arg4... = leader
+;
+HLHOST:	MOV	R3,R2		;get host table pointer
+	ADD	#PARHOS,R2
+	MOV	(R2)+,R0	;map onto virtual window
+	MOV	(R2)+,R1
+	SUB	#2,R1
+	SBC	R0
+	.WIND
+	MOV	(R1)+,-(SP)	;get number of entries
+	CLR	-(SP)
+	MOV	R1,R2
+	JSR	PC,RDDEC	;(arg1) get host id
+	BNE	6$		;branch if present
+	MOV	PC,R0		;missing. display header
+	ADD	#COM6-.,R0
+	JSR	PC,FORMAT
+1$:	TSTB	HOSPID(R2)	;is host known
+	BEQ	5$		;branch if no
+	MOV	PC,R0		;display entry number
+	ADD	#COM5A-.,R0
+	MOV	SP,R1
+	JSR	PC,FORMAT
+	CMP	HOSDLY(R2),#30000. ;is host up
+	BHIS	2$		;branch if no
+	MOV	PC,R0		;yes. display entry
+	ADD	#COM7-.,R0
+	BR	4$
+;
+2$:	TSTB	HOSTTL(R2)	;is host down
+	BNE	3$		;branch if no
+	MOV	PC,R0		;yes. display entry
+	ADD	#COM12-.,R0
+	BR	4$
+;
+3$:	MOV	PC,R0		;host-down. display entry
+	ADD	#COM15-.,R0
+	MOV	R2,R1
+	JSR	PC,FORMAT
+	MOV	HOSDLY(R2),-(SP)
+	BIC	#100000,@SP
+	MOV	PC,R0
+	ADD	#COM15A-.,R0
+	MOV	SP,R1
+	JSR	PC,FORMAT
+	TST	(SP)+
+	MOV	PC,R0
+	ADD	#COM15B-.,R0
+4$:	MOV	R2,R1
+	JSR	PC,FORMAT
+5$:	ADD	#HOSLEN,R2	;advance to next entry
+	INCB	@SP
+	CMPB	@SP,2(SP)
+	BLO	1$
+	BR	12$
+;
+6$:	CMP	R0,2(SP)	;is host id in range
+	BHIS	12$		;branch if no
+	MUL	#HOSLEN,R0	;yes. compute entry pointer
+	ADD	R1,R2
+	MOV	#30000.,HOSDLY(R2) ;assume missing argument (set down)
+	CLRB	HOSTTL(R2)
+	JSR	PC,RDOCT	;(arg2) set port id
+	BEQ	12$
+	MOVB	R0,HOSPID(R2)
+	JSR	PC,RDDEC	;(arg3) set delay
+	BNE	7$
+	MOV	#100.,R0	;default delay is 100 ms
+7$:	MOV	R0,HOSDLY(R2)
+	ADD	#HOSLNA,R2	;(arg4...) set leader (hex)
+8$:	JSR	PC,RDASC	;read first nibble
+	BEQ	12$		;branch if eor
+	BCS	8$		;branch if special
+	BMI	9$		;branch if digit
+	ADD	#10.-'A,R0	;letter. convert to bcd
+9$:	BIC	#^C17,R0	;convert to binary
+	ASH	#4,R0
+	MOVB	R0,@R2
+10$:	JSR	PC,RDASC	;read second nibble
+	BEQ	12$		;branch if eor
+	BCS	10$		;branch if special
+	BMI	11$		;branch if digit
+	ADD	#10.-'A,R0	;letter. convert to bcd
+11$:	BIC	#^C17,R0	;convert to binary
+	BISB	R0,(R2)+
+	BR	8$
+;
+12$:	CMP	(SP)+,(SP)+	;recover stack
+	RTS	PC
+;
+; Subroutine to dump region
+; R1 = region pointer, r0 = region length (words)
+;
+DUMP:	MOV	R1,-(SP)	;save registers
+	MOV	R2,-(SP)
+	MOV	R3,-(SP)
+	MOV	R0,R2
+4$:	MOV	R1,-(SP)	;display current address
+	MOV	SP,R1
+	MOV	PC,R0
+	ADD	#DMP00-.,R0
+	JSR	PC,FORMAT
+	MOV	(SP)+,R1
+	MOV	#8.,R3		;set loop count
+2$:	MOV	PC,R0		;display current word
+	ADD	#DMP01-.,R0
+	JSR	PC,FORMAT
+	TST	(R1)+
+	DEC	R2
+	BLE	3$		;branch if done
+	SOB	R3,2$		;loop until end line
+	MOV	PC,R0		;end line
+	ADD	#DMP03-.,R0
+	JSR	PC,FORMAT
+	BR	4$
+;
+3$:	MOV	PC,R0		;end line
+	ADD	#DMP03-.,R0
+	JSR	PC,FORMAT
+	MOV	(SP)+,R3	;restore registers
+	MOV	(SP)+,R2
+	MOV	(SP)+,R1
+	RTS	PC
+	.PAGE
+	.SBTTL	Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+; Command table - network process
+;
+GTOPT:	.KWTAB	<CMD>,CMDHLP	;display command list
+	.KWTAB	<SHO>,GTSHOW	;display process status
+	.KWTAB	<ON>,CMDON	;set option bits
+	.KWTAB	<OFF>,CMDOFF	;clear option bits
+	.KWTAB	<ASG>,CMDASG	;assign device
+	.KWTAB	<DEV>,CMDVIC	;print device status
+	.KWTAB	<ID >,GTHID	;set id fields
+	.KWTAB	<SIZ>,CMDSIZ	;set max packet size
+	.KWTAB	<TIM>,CMDTIM	;set device timeout
+	.KWTAB	<BIA>,CMDBIA	;set delay bias
+	.KWTAB	<STA>,GTSTAT	;display interface statistics
+	.KWTAB	<WEI>,CMDWGT	;set weight vector parameters (*** pkt ***)
+	.KWTAB	<   >,CMDNTF	;not found
+;
+; Subnet table - network process
+;
+SBNTAB:	.KWTAB	<DCN>,FMTDCN	;serial (dl/du/dp)
+	.KWTAB	<ARP>,FMTARP	;arpanet (acc/sri 1822)
+	.KWTAB	<DMV>,FMTDMV	;dcnet (dmv11)
+	.KWTAB	<ETH>,FMTETH	;ethernet (interlan)
+	.KWTAB	<DEQ>,FMTETH	;ethernet (DEQNA)
+	.KWTAB	<HDH>,FMTHDH	;arpanet (acc hdh)
+	.KWTAB	<X25>,FMTX25	;pstn x25 (acc x25)
+	.KWTAB	<KHV>,FMTKHV	;KH(V)11
+	.KWTAB	<PKT>,FMTPKT	;packet radio (dl)
+	.WORD	0		;end of table
+;
+; Command table - internet process
+;
+IPOPT:	.KWTAB	<CMD>,CMDHLP	;display command list
+	.KWTAB	<SHO>,IPSHOW	;display process status
+	.KWTAB	<ON>,CMDON	;set option bits
+	.KWTAB	<OFF>,CMDOFF	;clear option bits
+	.KWTAB	<ID >,IPHID	;set id fields
+	.KWTAB	<SIZ>,CMDSIZ	;set max packet size
+	.KWTAB	<CCB>,IPCCB	;display connection block statistics
+	.KWTAB	<   >,CMDNTF	;not found
+;
+; Command table - host process
+;
+HLOPT:	.KWTAB	<CMD>,CMDHLP	;display command list
+	.KWTAB	<SHO>,HLSHOW	;display process status
+	.KWTAB	<ON>,CMDON	;set option bits
+	.KWTAB	<OFF>,CMDOFF	;clear option bits
+	.KWTAB	<TRI>,HLTUNE	;set clock trim
+	.KWTAB	<ID >,HLHID	;set id fields
+	.KWTAB	<QUE>,CONGS	;set quench level
+	.KWTAB	<ROU>,ROUTE	;set trace address
+	.KWTAB	<LOC>,LCNET	;display/alter local host table
+	.KWTAB	<NET>,HLNET	;display/alter foreign host table
+	.KWTAB	<HOS>,HLHOST	;display/alter routing table
+	.KWTAB	<DUM>,HLDUMP	;display panic-dump region
+	.KWTAB	<   >,CMDNTF	;not found
+;
+; Format strings - network process
+;
+; Show
+;
+GTFMT:	.ASCII	'Process type: ^K'<PARTPE>'  options: ^K'<PAROPT>'^/'
+	.ASCII	'Subnet: ^R'<PARSBT>'  status: ^BK'<PARSTX>
+	.ASCII	'  hello: ^BI'<PARMIN>'  timeout: ^I'<PARTRY>'^/'
+	.ASCII	'Address: ^C'<PARADR>'  max size: ^I'<PARMAX>
+	.ASCII	'  bias: ^I'<PARBIA>'  queue: ^I'<PARRHO>'^/'
+	.ASCII	'Input packets	^MI'<PARINP>
+	.ASCII	'	Output packets	^MI'<PAROUT>'^/'
+	.ASCII	'  bad format	^I'<PARFMT>
+	.ASCII	'	  frag error	^I'<PARFRG>'^/'
+	.ASCII	'  bad checksum	^I'<PARCKS>
+	.ASCII	'	  preempted	^I'<PARPMP>'^/'
+	.ASCII	'  unreachable	^I'<PARMIS>
+	.ASCII	'	  time exceeded	^I'<PARTTL>'^/'
+	.ASCII	'  HELLO msgs	^MI'<PARHLO>
+	.ASCII	'	  HELLO msgs	^MI'<PARHLX>'^/'
+	.ASCII	'Input errors	^I'<PARNRY>
+	.ASCII	'	Output errors	^I'<PARERR>'^/'
+	.ASCII	'Returned	^I'<PARRTN>
+	.ASCII	'	ICMP msgs	^I'<PARRET>'^/'
+	.ASCII	'No buffer	^I'<PARNBF>
+	.ASCIZ	'	Quenched	^I'<PARQNC>
+;
+; Serial statistics
+;
+DCNFMT:	.ASCII	'Receive errors	^I'<PARPRI>
+	.ASCII	'	Transmit errors	^I'<PARPRI+2>'^/'
+	.ASCII	'Preamble errors	^I'<PARPRI+6>
+	.ASCII	'	Protocol errors	^I'<PARPRI+10>'^/'
+	.ASCIZ	'No buffer	^I'<PARPRI+4>
+;
+; Arpanet statistics
+;
+GTFMT1:	.ASCII	'Control msgs	^I'<PARLDR>'^/'
+	.ASCIZ	'Error msgs	^I'<PARLDE>
+;
+; Dmv11 statistics
+;
+DMVFMT:	.ASCII	'Status: ^K'<STATUS>'  statistics cycles: ^I'<CYCLES>'^/'
+	.ASCII	'Control msgs		Threshold errors	Restarts^/'
+	.ASCII	'  error ^K'<DMSCTL>'	^I'<DMSCTL+2>
+	.ASCII	'	  receive 	^I'<ERRLOG+2>
+	.ASCII	'	  local		^I'<ERRLOG+24>'^/'
+	.ASCII	'  modem ^K'<DMSINF>'	^I'<DMSINF+2>
+	.ASCII	'	  transmit	^I'<ERRLOG+4>
+	.ASCII	'	  remote	^I'<ERRLOG+10>'^/'
+	.ASCII	'Data errors		Buffer errors		Timeouts^/'
+	.ASCII	'  inbound ^BK'<DMSDAI>'	^I'<DMSDAI+2>
+	.ASCII	'	  local	^BK'<DMSBFL>'	^I'<DMSBFL+2>
+	.ASCII	'	  local		^I'<DMSTOL>'^/'
+	.ASCII	'  outbound ^BK'<DMSDAO>'	^I'<DMSDAO+2>
+	.ASCII	'	  remote ^BK'<DMSBFR>'	^I'<DMSBFR+2>
+	.ASCII	'	  remote	^I'<DMSTOR>'^/'
+	.ASCII	'Station errors^/'
+	.ASCII	'  local ^BK'<DMSGSI>'	^I'<DMSGSI+2>'^/'
+	.ASCII	'  remote ^BK'<DMSGSO>'	^I'<DMSGSO+2>'^/'
+	.ASCIZ	'  hdr checksum	^I'<DMSGCK>
+;
+; ACC IF-11Q/HDH interface statistics
+;
+X25FM1:	.ASCII	'Control msgs:         ^I'<PARLDR>'^/'
+	.ASCIZ	'Error msgs:           ^I'<PARLDE>
+X25FM2:	.ASCII	'Line timeouts:        ^I'<PARLDL+16>'^/'
+	.ASCII	'Data errors:          ^I'<PARLDL+20>'^/'
+	.ASCII	'IMP sequence errors:  ^I'<PARLDL+22>'^/'
+	.ASCII	'Host sequence errors: ^I'<PARLDL+24>'^/'
+	.ASCIZ	'Unit signal:          ^K'<PARLDL+30>
+;
+; ACC 5250 DDN X.25 interface statistics
+;
+X25FM3:	.ASCII	'LCN	VCN	State	TTL	Address^/'
+	.ASCIZ	'-----------------------------------------'
+X25FMT:	.ASCIZ	'^BI'<CB.VCN>'	^BI'<CB.STA>'	^BI'<CB.TTL>'	^C'<CB.ADR>
+;
+; Ethernet Statistics
+;
+ETHFMT:	.ASCII	'Ethernet address: ^BH'<ETHADR>'^BH'<ETHADR+1>'^BH'<ETHADR+2>
+	.ASCII	'^BH'<ETHADR+3>'^BH'<ETHADR+4>'^BH'<ETHADR+5>'^/'
+	.ASCII	'ARP rqst rcvd	^I'<ETHAQR>'	^C'<ETHIQR>
+	.ASCII	'	ARP reply sent	^I'<ETHARX>'	^BH'<ETHEQR>
+	.ASCII	'^BH'<ETHEQR+1>'^BH'<ETHEQR+2>'^BH'<ETHEQR+3>'^BH'<ETHEQR+4>
+	.ASCII	'^BH'<ETHEQR+5>'^/'
+	.ASCII	'ARP rqst sent	^I'<ETHAQX>'	^C'<ETHIQX>
+	.ASCII	'	ARP reply rcvd	^I'<ETHARR>'	^BH'<ETHEQX>
+	.ASCII	'^BH'<ETHEQX+1>'^BH'<ETHEQX+2>'^BH'<ETHEQX+3>'^BH'<ETHEQX+4>
+	.ASCII	'^BH'<ETHEQX+5>'^/'
+	.ASCII	'ARP output err	^I'<ETHAXX>'	^C'<ETHIAX>
+	.ASCII	'	ARP input err	^I'<ETHAXR>'	^BH'<ETHIAR>
+	.ASCII	'^BH'<ETHIAR+1>'^BH'<ETHIAR+2>'^BH'<ETHIAR+3>'^BH'<ETHIAR+4>
+	.ASCIZ	'^BH'<ETHIAR+5>
+;
+; KHV HDLC Interface Statistics
+;
+KHVFMT:	.ASCII	'Last CSR/IR:           ^I'<PARPRI>'^/'
+	.ASCII	'Waited for Clock Tick  ^I'<PARPRI+36>'^/'
+	.ASCII	'Receiver except. Int.  ^I'<PARPRI+40>'^/'
+	.ASCII	'Receiver CRC errors    ^I'<PARPRI+42>'^/'
+	.ASCII	'Receiver Abort Frames  ^I'<PARPRI+44>'^/'
+	.ASCII	'Receiver Overruns      ^I'<PARPRI+46>'^/'
+	.ASCII	'Receiver Byte count 0  ^I'<PARPRI+50>'^/'
+	.ASCII	'Receiver IBC errors    ^I'<PARPRI+52>'^/'
+	.ASCII	'Data Set changes       ^I'<PARPRI+54>'^/'
+	.ASCIZ	'Xmitter except. int.   ^I'<PARADR+56>'^/'
+;
+; Packet radio status
+;
+PKTFMT:	.ASCII	'CID	NID	Wgt	Status	Message^/'
+	.ASCIZ	'------------------------------------------------------------'
+PKFMT1:	.ASCIZ	'^BI'<1>'^+'
+PKFMT4:	.ASCIZ	'^BI'<1>'*^+'
+PKFMT5:	.ASCII	'	^BI'<CT.NID>'	^BI'<CT.WGT>'	^BI'<CT.STA>
+	.ASCIZ	'  ^BI'<CT.TTL>'	^BI'<CT.TYP>' ^A'<CT.MSG>
+PKFMT3:	.ASCII	'NID Callsign	Flags	Links	Last Rec    Wgt   Route^/'
+	.ASCIZ	'-------------------------------------------------------'
+PKFMT8:	.ASCIZ	'^BI'<5*2+1>'   ^A'<0>'^+'
+PKFMT2:	.ASCIZ	'	^BK'<RT.TYP>'	^BI'<RT.CNG>'	^+T'<RT.UPD>'    ^BI'<RT.WGT>'	 ^+'
+PKFMT0:	.ASCII	' ^BI'<0>'^+'
+PKFMT9:	.BYTE	0
+PKFMT6:	.ASCIZ	'From	To	Flags	Age^/---------------------------'
+PKFMT7:	.ASCIZ	'^BI'<LT.FM>'	^BI'<LT.TO>'	^BK'<LT.TYP>'	^BI'<LT.TTL>
+PKFMTA:	.ASCII	'Weight vector: ^I'<0>' ^I'<2>' ^I'<4>' ^I'<6>' ^I'<10>
+	.ASCIZ	' ^I'<12>' ^I'<14>' ^I'<16>
+PKFMTB:	.ASCII	'Type: ^BK'<0>'  heard: ^BI'<1>'  destination: ^BI'<2>
+	.ASCIZ	'  route: ^BI'<3>' ^BI'<4>' ^BI'<5>' ^BI'<6>' ^BI'<7>
+PKFMTC:	.ASCII	'Nodes: ^BI'<PAXSRX>' ^BI'<PAXSRX+1>
+	.ASCIZ	'  links: ^BI'<PAXLNX>' ^BI'<PAXLNX+1>
+;
+; Format strings - internet process
+;
+; Show
+;
+IPFMT:	.ASCII	'Process type: ^K'<PARTPE>'  options: ^K'<PAROPT>'^/'
+	.ASCII	'Host ID: ^BI'<PARHID>'  max conn: ^BI'<PARCNT>
+	.ASCII	'  max size: ^I'<PARMAX>'^/'
+	.ASCII	'Input packets	^MI'<PARTOT>
+	.ASCII	'	Output packets	^MI'<PARTOP>'^/'
+	.ASCII	'  bad format	^I'<PARIPF>
+	.ASCII	'	Returned	^I'<PARECH>'^/'
+	.ASCII	'  bad checksum	^I'<PARIPX>
+	.ASCII	'	ICMP msgs rcvd	^I'<PARSIG>'^/'
+	.ASCII	'  unreachable	^I'<PARECM>
+	.ASCII	'	ICMP msgs sent	^I'<PARIPR>'^/'
+	.ASCIZ	'  reass error	^I'<PARFTO>
+COM11:	.ASCII	'NBS time ^BI'<PARVLF>'	^A'<PARNBM>'^/'
+	.ASCII	'Poll messages	^MI'<PARNBP>'^/'
+	.ASCII	'  no reply	^I'<PARNBR>'^/'
+	.ASCII	'  bad format	^I'<PARNBX>'^/'
+	.ASCII	'  bad data	^I'<PARNBD>'^/'
+	.ASCIZ	'  last set	^I'<PARLST>
+;
+; Ccb n tcp
+;
+COM1:	.ASCII	'Connection ID: ^K'<INPCID>'  protocol: ^BK'<PROTCL>
+	.ASCII	'  state: ^K'<STATE>'  flags: ^K'<FLAGS>'^/'
+	.ASCII	'  CCB format: ^K'<CCBFMT>'  max size: ^I'<MAXSIZ>
+	.ASCII	'  protocol flags: ^BK'<PROTCL+1>'^/'
+	.ASCII	'  Local addr: ^C'<LSOCK>' ^XI'<LPORT>
+	.ASCII	'  Foreign addr: ^C'<FSOCK>' ^XI'<FPORT>'^/'
+	.ASCII	'  RTX timeout: ^I'<RTXTMO>'  delay: ^I'<RTDRTX>
+	.ASCIZ	'  buffer: ^I'<RTXCNT>
+ COM4:	.ASCII	'Catenet source quench:    ^I'<NR.QNC>'^/'
+	.ASCII	'Catenet unreachable:      ^I'<NR.DNR>'^/'
+	.ASCII	'Input packets received:   ^I'<NR.PKT>'^/'
+	.ASCII	'  bad format:             ^I'<PR.BAD>'^/'
+	.ASCII	'  bad checksum:           ^I'<PR.DMG>'^/'
+	.ASCII	'  connection reset:       ^I'<PR.SPC>'^/'
+	.ASCII	'  dropped:                ^I'<PR.NOX>'^/'
+	.ASCII	'Accepted packets:         ^I'<PR.REG>'^/'
+	.ASCII	'  null (ACK-only):        ^I'<PR.NUL>'^/'
+	.ASCII	'  text stored:            ^I'<NR.TXT>'^/'
+	.ASCII	'  duplicate:              ^I'<PR.DUP>'^/'
+	.ASCII	'  outside window:         ^I'<PR.OUT>'^/'
+	.ASCII	'SYNs processed:           ^I'<NR.SYN>'^/'
+	.ASCII	'FINs processed:           ^I'<NR.FIN>'^/'
+	.ASCII	'Error packets sent:       ^I'<NS.ERR>'^/'
+	.ASCII	'Control packets sent:     ^I'<NS.CTL>'^/'
+	.ASCII	'Text packets sent:        ^I'<NS.TXT>'^/'
+	.ASCII	'Retransmissions sent:     ^I'<NS.RTX>'^/'
+	.ASCII	'ACK-only packets sent:    ^I'<NS.ACK>'^/'
+	.ASCIZ	'Data avail sigs to user:  ^I'<NU.DAT>
+;
+; Format strings - host process
+;
+; Show
+;
+HLFMT:	.ASCII	'Process type: ^K'<PARTPE>'  options: ^K'<PAROPT>'^/'
+	.ASCII	'Reference clock: ^BI'<CLKTYP>'  from: ^BI'<PARCKH>
+	.ASCII	'  dispersion: ^I'<CLKERR>'  refstamp: ^+D'<CLKREF>
+	.ASCII	' ^+T'<CLKREF+2>'^/'
+	.ASCII	'Local clock offset: ^SI'<PARINC>'  skew: ^SI'<CLKDRF>
+	.ASCII	'  comp: ^SBI'<PARDCC>'  poll: ^SBI'<PARDCC+1>
+	.ASCII	'  stratum: ^BI'<CLKSTR>'  prec: ^SI'<CLKPRE>'^/'
+	.ASCII	'Processes	^I'<PARPRO>
+	.ASCII	'	Free blocks	^I'<PARPKT>'^/'
+	.ASCII	'Vectors		^I'<PARINT>
+	.ASCII	'	Free bytes	^I'<PARPKT+2>'^/'
+	.ASCII	'Nibbles		^I'<PARNIB>
+	.ASCII	'	Quench level	^I'<PARCGT>'^/'
+	.ASCII	'Packets		^I'<PARCNG>
+	.ASCII	'	Uptime		^+T'<PARUPT>'^/'
+	.ASCII	'Lost traps: ^I'<PARTRL>
+	.ASCII	'  ^K'<PARTRB>' ^K'<PARTRB+2>' ^K'<PARTRB+4>
+	.ASCII	' ^K'<PARTRB+6>' ^K'<PARTRB+10>' ^K'<PARTRB+12>'^/'
+	.ASCII	'Route changes: ^I'<PARRTC>
+	.ASCIZ	'  net: ^C'<PARTRN>'  changes: ^I'<PARRTC+2>
+COM14:	.ASCIZ	'Internet address: ^C'<0>'  mask: ^C'<4>
+;
+; Dump
+;
+PDFMT:	.ASCII	'Sequence: ^I'<PARPDN>'  pc: ^K'<PARPDN+6>
+	.ASCII	'  code: ^BK'<PARPDN+2>'  process: ^K'<PARPDN+4>'^/'
+	.ASCII	'Regs:   ^K'<PARPDR>' ^K'<PARPDR+2>' ^K'<PARPDR+4>
+	.ASCII	' ^K'<PARPDR+6>' ^K'<PARPDR+10>' ^K'<PARPDR+12>
+	.ASCII	' ^K'<PARPDR+14>' ^K'<PARPDR+16>'^/'
+	.ASCII	'Stack:  ^K'<PARPDS>' ^K'<PARPDS+2>' ^K'<PARPDS+4>
+	.ASCII	' ^K'<PARPDS+6>' ^K'<PARPDS+10>' ^K'<PARPDS+12>
+	.ASCIZ	' ^K'<PARPDS+14>' ^K'<PARPDS+16>'^/PSA'
+DMP00:	.ASCIZ	'^K'<0>' ^+'
+DMP01:	.ASCIZ	' ^K'<0>'^+'
+DMP03:	.BYTE	0
+;
+; Net
+;
+COM13:	.ASCII	'AdrID	Address		Gateway		HostID	Flags	Status^/'
+	.ASCIZ	'--------------------------------------------------------------'
+COM5:	.ASCII	'^C'<GATNET>'	^C'<GATLDR>
+	.ASCIZ	'	^BI'<GATHID>'	^BK'<GATFLG>'	^BI'<GATHOP>'  ^BI'<GATTTL>
+COM5A:	.ASCIZ	'^I'<0>'	^+'
+;
+; Host
+;
+COM6:	.ASCII	'HostID	PortID	Delay	Offset	Status	Leader	        Update^/'
+	.ASCIZ	'----------------------------------------------------------------'
+COM7:	.ASCII	'^BK'<HOSPID>'	^I'<HOSDLY>'	^SI'<HOSOFS>
+	.ASCII	'	^BI'<HOSTTL>'	^BH'<HOSLNA>'^BH'<HOSLNA+1>
+	.ASCII	'^BH'<HOSLNA+2>'^BH'<HOSLNA+3>'^BH'<HOSLNA+4>'^BH'<HOSLNA+5>
+	.ASCIZ	'    ^+T'<HOSTIM>
+COM12:	.ASCII	'^BK'<HOSPID>'	*** Down ***'
+	.ASCII	'	^BI'<HOSTTL>'	^BH'<HOSLNA>'^BH'<HOSLNA+1>
+	.ASCII	'^BH'<HOSLNA+2>'^BH'<HOSLNA+3>'^BH'<HOSLNA+4>'^BH'<HOSLNA+5>
+	.ASCIZ	'    ^+T'<HOSTIM>
+COM15:	.ASCIZ	'^BK'<HOSPID>'^+'
+COM15A:	.ASCIZ	'	*^I'<0>'^+'
+COM15B:	.ASCII	'	^SI'<HOSOFS>
+	.ASCII	'	^BI'<HOSTTL>'	^BH'<HOSLNA>'^BH'<HOSLNA+1>
+	.ASCII	'^BH'<HOSLNA+2>'^BH'<HOSLNA+3>'^BH'<HOSLNA+4>'^BH'<HOSLNA+5>
+	.ASCIZ	'    ^+T'<HOSTIM>
+	.EVEN
+;
+	.END
+                                                                                                                                                                                                                                                                                                                                                                                                                           

@@ -1,0 +1,889 @@
+	.TITLE	TN	DCN/TN User Process
+	.SBTTL	System and module definitons
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn telnet user process
+;
+; This program is a virtual-terminal user program designed to work with;
+; network servers conforming to the TELNET protocol. It can also be used
+; with local terminals for operator-intercom and downline-loading functions.
+;
+; Conditional assembly switches
+;
+.IIF NDF,CS.VCG CS.VCG == 0	;0: no vcg, 1: vcg
+;
+; The CONNECT command is used to open a connection to specified <hostname>
+; and <port>. The <port> is a decimal integer in the range 0-255 or one of the
+; service names specified in the table below.  Following this command
+; operation continues in the transparent mode until either an escape sequence
+; or the connection is closed by the remote server.  Each instance of each
+; connection is characterized by a selection of three interacting modes of
+; operation:  (1) whether TELNET negotiations are active (see the ON/OFF
+; TELNET commands), (2) transmit mode (see the TRANSMIT command) and (3) echo
+; mode (see the ECHO command).  If <port> is specified by integer, the default
+; settings are OFF (TELNET), LINE (TRANSMIT) and LOCAL (ECHO), as modified by
+; explicit ON/OFF TELNET, TRANSMIT and ECHO commands.  If <port> is specified
+; by service name, the settings are as given in the table.  If <port> is
+; defaulted, TELNET (23) is assumed and the settings are as given for TELNET
+; in the table.
+;
+;	Name    Port    TELNET  TRANS   ECHO    Function
+;	------------------------------------------------
+;	ECHO    7       OFF     LINE    LOCAL   loopback
+;	SINK    9       OFF     LINE    LOCAL   discard
+;	SYSTAT  11      OFF     LINE    LOCAL   who-is-on
+;	DAYTIME 13      OFF     LINE    LOCAL   time and date
+;	NETSTAT 15      OFF     LINE    LOCAL   who-is-up
+;	QOD     17      OFF     LINE    LOCAL   quote-of-day
+;	TEST    19      OFF     LINE    LOCAL   char generator
+;	FTP     21      OFF     LINE    LOCAL   file transfer
+;	TELNET  23      ON      LINE    REMOTE  virtual term
+;	SMTP    25      ON      LINE    REMOTE  mail transfer
+;	TIME    37      OFF     CHAR    NONE    time server
+;	NAME    42      OFF     CHAR    NONE    name server
+;	WHOIS   43      OFF     LINE    LOCAL   NIC who-is
+;	MPM     45      OFF     CHAR    NONE    MPM mail transfer
+;	NIFTP   47      OFF     LINE    LOCAL   file transfer
+;	DNS	53	OFF	CHAR	NONE	domain-name server
+;	FINGER  79      OFF     LINE    LOCAL   who-is-there
+;	TALK    87      OFF     CHAR    LOCAL   term intercom
+;	LINK    87      OFF     CHAR    NONE    proc intercom
+;	NICNAME 101     OFF     LINE    LOCAL   NIC name server
+;	CSNAME  103     OFF     LINE    LOCAL   CSNET who-is
+;	TN      107     OFF     LINE    LOCAL   virtual term
+;	VCG     127     OFF     LINE    LOCAL   VCG display
+;	SPQ	515	OFF	CHAR	NONE	output spooler
+;
+; External symbols
+;
+	.GLOBL	RDLIN,RDBYT,RDOCT,RDDEC,HASH,TYPE,GETARG
+	.GLOBL	PRBYT,PRD50
+	.GLOBL	HELP,ERRLVL
+	.GLOBL	FLAGS,PRIDNT,CHAIN
+	.GLOBL	CTRL,SNDNET,SNDATA,TIME,TNTALK
+	.GLOBL	RNAME,GTHOST
+	.GLOBL	NETRST,NETAST
+	.IF	NE,CS.VCG	;include for vcg
+	.GLOBL	TKINIT,TKSEND
+	.ENDC
+;
+; Entry symbols
+;
+	.GLOBL	INIT,KWKTBL,COM00
+	.GLOBL	OPNBLK,SFLFCB
+	.GLOBL	STATE,WRTCHR,ESCAPE
+	.IF	NE,CS.VCG	;include for vcg
+	.GLOBL	TKRPLY
+	.ENDC
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.WIND	;dcnlib definitions
+	.MCALL	.KWTAB,.NVT	;dcnlib macros
+	.MCALL	.EXIT,.TTYOU,.TTINR,.CHAIN ;rt-11 macros
+	.MCALL	.CSISP,.LOOKU,.ENTER,.WRITW,.PURGE,.CLOSE
+	.MCALL	$DFSIG		;moslib macros
+	.MCALL	DFCON,DFFCB,OPNBLK,ADDR,CALL ;netlib macros
+	.MCALL	GETARG,DFSRV,ENTER,LOOK,FORMAT
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	DFSRV			;define service bits (note order - "IP" m def)
+	.NVT			;define telnet control codes
+	$DFSIG			;define interprocess signals
+	DFCON			;define connection block
+	DFFCB			;define file control block
+;
+; Module definitions
+;
+; Assembly parameters
+;
+P.TCP	=	6		;tcp protocol number
+TELPRT	=	23.		;telnet port
+TNECHO	=	001		;telnet echo option
+TNSUGA	=	003		;telnet supress go-agead option
+XCPT	=	036		;default escape code (^^)
+;
+; Status bits (flags)
+;
+SFLBIT	=	100000		;send file open bit
+CHRBIT	=	040000		;character-mode bit
+FILBIT	=	020000		;script file open bit
+ECHBIT	=	010000		;echo bit
+IACBIT	=	004000		;telnet iac bit
+REMBIT	=	002000		;session echo bit
+TRMBIT	=	001000		;terminal enabled bit
+SCRBIT	=	000400		;file enabled bit
+	.IF	NE,CS.VCG	;include for vcg
+VCGBIT	=	000200		;display enabled bit
+	.ENDC
+BINBIT	=	000100		;image mode bit
+URGBIT	=	000040		;disable output bit
+QUOBIT	=	000020		;quote-mode bit
+NONBIT	=	000010		;local-echo bit
+TELBIT	=	000004		;disable telnet negotiation
+	.PAGE
+	.SBTTL	COMMAND INTERPRETATION
+;
+	.PSECT	$BOSI,RO,I
+;
+; Net completion routine
+;
+NETSUB:	JSR	PC,NETAST
+TKRPLY:	RTS	PC
+;
+; Initialization
+;
+INIT:	BIS	#TRMBIT,FLAGS	;initialize
+	MOVB	#XCPT,ESCAPE
+	MOV	#1,ERRLVL
+	MOV	CHAIN,R1
+	BIT	#CHNBIT,FLAGS	;is argument in chain area
+	BEQ	3$		;branch if no
+	TSTB	12(R1)
+	BEQ	3$		;branch if no
+	TST	10(R1)		;is this talk
+	BMI	1$		;branch if yes
+	JSR	PC,NETRST	;chain. reset overlay
+	JSR	PC,CONN		;default connect command
+	RTS	PC
+;
+1$:	CALL	GTHOST,#AREA,#0,#0 ;talk. display herald
+	FORMAT	#HERAL1,#AREA
+	JSR	PC,NETRST	;reset overlay
+	MOV	#30.,TIME+2	;default transmit delay (500 ms)
+	BIS	#NONBIT,FLAGS	;set no echo before its time
+	CLR	R0
+	JSR	PC,RDLIN	;default talk command
+	JSR	PC,HASH		;get device name
+	MOV	R0,-(SP)
+	JSR	PC,HASH		;get mode
+	CMP	R0,#<^RIMA>
+	BNE	2$
+	BIS	#BINBIT,FLAGS
+2$:	MOV	(SP)+,R0
+	JSR	PC,TNTALK	;grunt
+	FORMAT	#COM87,#AREA	;closing
+	MOV	#LGONAM,R0	;chain to logout
+	MOV	#500,R1
+	MOV	(R0)+,(R1)+
+	MOV	(R0)+,(R1)+
+	MOV	(R0)+,(R1)+
+	MOV	(R0)+,(R1)+
+	.CHAIN
+;
+3$:	CALL	GTHOST,#AREA,#0,#0 ;no talk/chain. display herald
+	FORMAT	#HERALD,#AREA
+	JSR	PC,NETRST	;reset overlay
+	RTS	PC
+;
+; Unrecognized command
+;
+NTFD:	FORMAT	#COM29		;unrecognized command
+	RTS	PC
+;
+; Show (sho) show telnet status
+; (segment of command language interpreter)
+; (no arguments)
+;
+SHOW:	MOV	FLAGS,STATE+2	;move under umbrella
+	FORMAT	#COM24,#STATE
+	FORMAT	#COM20,#OPNBLK
+	FORMAT	#COM45,#FILFCB
+	FORMAT	#COM47,#SFLFCB
+	RTS	PC
+;
+; Quit (qui) leave the game
+; (segment of command language interpreter)
+; (no arguments)
+;
+QUIT:	TST	STATE		;is connection open
+	BEQ	1$		;branch if no
+	CALL	CTRL,#CM.CLS,#0,OPNBLK+CONPTR ;close connection
+	MOV	#4,STATE
+	RTS	PC
+;
+1$:	.EXIT			;scram uncomplicatedly
+;
+; Connect (log) open telnet connection
+; (segment of command language interpreter)
+; Arg1 = host name, arg2 = port, default host name indicated by "*"
+;
+CONN:	TST	STATE		;is connection open
+	BNE	RIN3		;branch if yes
+	BIC	#IACBIT+URGBIT,FLAGS ;no. clean default passive
+	BISB	#300,OPNBLK+CONFLG
+	MOV	#OPNBLK+CONLCL+4,R1
+	CLR	(R1)+		;local port
+	CLR	(R1)+		;remote socket
+	CLR	(R1)+
+	CLR	(R1)+
+	CLR	OPNBLK+CONSIZ
+	GETARG	#ARG		;get host name
+	TSTB	ARG		;is argument empty
+	BEQ	CON10		;branch if yes
+	CMPB	ARG,#'*
+	BEQ	2$		;branch if yes	
+	CALL	RNAME,#ARG,#OPNBLK+CONRMT,#TEMP ;no. get address
+	TST	R0
+	BNE	5$		;branch if not found
+	.IF	NE,CS.VCG	;include for vcg
+	BIT	#VCGBIT,FLAGS	;is vcg display enabled
+	BEQ	1$		;branch if no
+	JSR	PC,VCG		;yes. reset it
+1$:
+	.ENDC
+	JSR	PC,NETRST	;reset overlay
+	BICB	#300,OPNBLK+CONFLG ;set active
+	BITB	#TELNET,TEMP	;is host telnet-competent
+	BNE	2$		;branch if yes
+	FORMAT	#COMYY		;telnet service unsupported
+2$:	JSR	PC,HASH		;parse foreign port number
+	BMI	8$		;branch if number
+	BNE	3$		;branch if present
+	MOV	#^RTEL,R0	;missing. default "telnet"
+3$:	MOV	#PORT,R1	;search for match
+4$:	TST	@R1		;is this end of table
+	BEQ	6$		;branch if yes
+	CMP	R0,(R1)+	;no. does port match
+	BEQ	7$		;branch if yes
+	ADD	#6,R1		;no. advance to next one
+	BR	4$
+;
+5$:	JSR	PC,PRIDNT	;print reason for failure
+	JSR	PC,NETRST	;reset overlay
+	RTS	PC
+;
+6$:	FORMAT	#COMUU		;unrecognized service name
+	RTS	PC	
+;
+7$:	MOV	(R1)+,R0	;get port number
+	BIS	(R1)+,FLAGS	;set defaults
+	BIC	(R1)+,FLAGS
+8$:	SWAB	R0
+	BITB	#300,OPNBLK+CONFLG ;is this active
+	BNE	9$		;branch if no
+	MOV	R0,OPNBLK+CONRMT+4 ;yes. set foreign port
+	BR	CON10
+;
+9$:	MOV	R0,OPNBLK+CONLCL+4 ;passive. set local port
+CON10:	CALL	CTRL,#CM.OPN,#OPNBLK+CONPAR,OPNBLK+CONPTR ;open connection
+	TST	R0
+	BEQ	1$		;branch if ok
+	JSR	PC,PRIDNT	;print reason for failure
+	RTS	PC
+;
+1$:	MOV	#1,STATE	;connection opened
+	JSR	PC,NEGOT
+	JSR	PC,QUOT
+	RTS	PC
+;
+RIN3:	FORMAT	#COM38		;invalid command sequence
+	RTS	PC
+;
+; Local (con) set local address for multiply-homed hosts
+; (segment of command language interpreter)
+; Arg1 = host name (default primary address)
+;
+LOCL:	TST	STATE		;is connection open
+	BNE	RIN3		;branch if yes
+	CLR	OPNBLK+CONLCL	;no. clean slate
+	CLR	OPNBLK+CONLCL+2
+	GETARG	#ARG		;get host name
+	TSTB	ARG		;is argument missing
+	BEQ	1$		;branch if yes
+	CALL	RNAME,#ARG,#OPNBLK+CONLCL,#TEMP ;no. get address
+	TST	R0
+	BEQ	1$		;branch if found
+	JSR	PC,PRIDNT	;print reason for failure
+1$:	JSR	PC,NETRST	;reset overlay
+	RTS	PC
+;
+; Disconnect (dis) close telnet connection
+; (segment of command language interpreter)
+; (no arguments) returns r1 = telnet connection block pointer
+;
+DISC:	TST	STATE		;is connection open
+	BEQ	1$		;branch if no
+	CALL	CTRL,#CM.CLS,#0,OPNBLK+CONPTR ;close connection
+	MOV	#3,STATE
+1$:	RTS	PC
+;
+; TOS (opt) set type-of-service internet option
+; (segment of command language interpreter)
+; Arg1 = type-of-service
+;
+STOS:	JSR	PC,RDOCT	;get type-of-service
+	MOVB	R0,OPNBLK+CONOPT
+	RTS	PC
+;
+; Route (opt) set source-route internet option
+; (segment of command language interpreter)
+; Arg1 ... = host names
+;
+ROUT:	TST	STATE		;is connection open
+	BNE	RIN3		;branch if yes
+	MOV	#OPNBLK+CONOPT+1,R2 ;get options pointer
+	CLRB	(R2)+		;reset total option length
+	MOVB	#203,(R2)+	;option code (loose source route)
+	CLRB	(R2)+		;length
+	MOVB	#4,(R2)+	;route pointer
+1$:	GETARG	#ARG		;get host name
+	TSTB	ARG
+	BEQ	3$		;branch if missing
+	CALL	RNAME,#ARG,R2,#TEMP ;get host address
+	TST	R0
+	BEQ	2$		;branch if found
+	JSR	PC,PRIDNT	;print reason for failure
+	BR	1$
+;
+2$:	ADD	#4,R2		;advance to next field
+	BR	1$
+;
+3$:	SUB	#OPNBLK+CONOPT+2,R2 ;compute length
+	CMP	R2,#3
+	BLOS	4$		;branch if null route
+	MOVB	R2,OPNBLK+CONOPT+1
+	MOVB	R2,OPNBLK+CONOPT+3
+4$:	JSR	PC,NETRST	;reset overlay
+	RTS	PC
+;
+; Talk (log) talk to local device/process (echo)
+; (segment of command language interpreter)
+; Arg = device name
+;
+TALK:	TST	STATE		;is connection open
+	BNE	RIN3		;branch if yes
+	BIC	#NONBIT,FLAGS	;enable echo
+	JSR	PC,HASH		;get device name
+	JSR	PC,TNTALK	;grunt
+	JSR	PC,NETRST	;reset overlay
+	FORMAT	#PROMPT
+	RTS	PC
+;
+; Link (log) link to local device/process (no echo)
+; (segment of command language interpreter)
+; Arg = device name
+;
+LINK:	TST	STATE		;is connection open
+	BNE	RIN3		;branch if yes
+	BIS	#NONBIT,FLAGS	;disable echo
+	JSR	PC,HASH		;get device name
+	JSR	PC,TNTALK	;grunt
+	JSR	PC,NETRST	;reset overlay
+	FORMAT	#PROMPT
+	RTS	PC
+;
+; Verbose (ver) be very noisy
+; (segment of command language interpreter)
+; arg = error level
+;
+VERB:	JSR	PC,RDDEC	;set error level
+	MOV	R0,ERRLVL
+	RTS	PC
+;
+; Escape (esc) specify escape code
+; (segment of command language interpreter)
+; Arg - escape code (octal)
+;
+ESCP:	MOVB	#XCPT,ESCAPE	;reset default
+	JSR	PC,RDOCT	;get code
+	BEQ	1$		;branch if missing
+	MOVB	R0,ESCAPE
+1$:	RTS	PC
+;
+; On (on) set options on
+; Arg = "terminal", "script", "send", "vcg" or "telnet"
+; Note: default "on terminal telnet ", "off send" reset at connection close
+;
+ONSW:	JSR	PC,HASH		;get argument
+	BEQ	4$		;branch if end
+	MOV	#OPTABL,R1	;search for match
+1$:	TST	@R1
+	BEQ	3$		;branch if not found
+	CMP	R0,(R1)+
+	BEQ	2$		;branch if found
+	TST	(R1)+
+	BR	1$
+;
+2$:	BIS	@R1,FLAGS	;update flags
+	BIT	@R1,#SFLBIT	;is send specified
+	BEQ	ONSW		;branch if no
+	JSR	PC,SNDNET	;yes. tickle transfer
+	FORMAT	#COM41,#SFLFCB	;transfer begins [file]
+	BR	ONSW
+;
+3$:	FORMAT	#COM98		;invalid argument
+4$:	RTS	PC
+;
+; Off (off) set options off
+; Arg = "terminal", "script", "send", "vcg" or "telnet"
+; Note: default "on terminal telnet ", "off send" reset at connection close
+;
+OFSW:	JSR	PC,HASH		;get argument
+	BEQ	4$		;branch if end
+	MOV	#OPTABL,R1	;search for match
+1$:	TST	@R1
+	BEQ	3$		;branch if not found
+	CMP	R0,(R1)+
+	BEQ	2$		;branch if found
+	TST	(R1)+
+	BR	1$
+;
+2$:	BIC	@R1,FLAGS	;update flags
+	BIT	@R1,#SFLBIT	;is send specified
+	BEQ	OFSW		;branch if no
+	FORMAT	#COM41X		;transfer suspended
+	BR	OFSW
+;
+3$:	FORMAT	#COM98		;invalid argument
+4$:	RTS	PC
+;
+; Telnet (tel) switch to telnet connection
+; (segment of command language interpreter)
+; (no arguments)
+;
+QUOT:	BIS	#QUOBIT,FLAGS	;set quote mode
+	BIT	#ECHBIT+CHRBIT,FLAGS ;set mode
+	BEQ	1$
+	BIS	#10000,@#44
+1$:	.TTINR			;get next char
+	BIT	#QUOBIT,FLAGS
+	BEQ	11$		;branch if command mode
+	BCS	1$		;branch if not ready
+	MOVB	R0,ARG
+	BIT	#CHRBIT,FLAGS	;is this char mode
+	BEQ	2$		;branch if no
+	BIT	#NONBIT,FLAGS	;yes. is no-echo set
+	BNE	2$		;branch if yes
+	.TTYOU			;no. echo it
+2$:	BIC	#^C177,R0
+	CMPB	R0,ESCAPE	;is this escape
+	BEQ	5$		;branch if yes
+3$:	BIT	#10000,@#44	;no. copy echo if not already
+	BNE	4$
+	MOVB	ARG,R0
+	JSR	PC,CPYCHR
+4$:	MOV	#1,R0		;output char
+	MOV	#ARG,R1
+	JSR	PC,SNDATA
+	BR	1$
+;
+5$:	.TTINR			;get next char
+	BIT	#QUOBIT,FLAGS
+	BEQ	11$		;branch if command mode
+	BCS	5$		;branch if not ready
+	BIC	#^C177,R0	;is this escape
+	CMPB	R0,ESCAPE
+	BEQ	3$		;branch if yes
+	CMP	R0,#140		;fold
+	BLO	6$
+	SUB	#040,R0
+6$:	CMP	R0,#'I		;is this interrupt
+	BNE	7$		;branch if no
+	CALL	CTRL,#CM.INT,#0,OPNBLK+CONPTR ;send urgent
+	MOV	#4,R0		;send ip-dm
+	MOV	#STR04,R1
+	JSR	PC,SNDATA
+	BR	1$
+;
+7$:	CMP	R0,#'C		;is this disconnect
+	BNE	8$		;branch if no
+	JSR	PC,DISC		;yes. bail out
+	BR	1$
+;
+8$:	CMPB	R0,#'S		;is this stop file
+	BNE	9$		;branch if no
+	BIC	#SFLBIT,FLAGS	;yes. woah
+	FORMAT	#COM41X		;transfer suspended
+	BR	1$
+;
+9$:	CMPB	R0,#'Q		;is this start file
+	BNE	10$		;branch if no
+	BIS	#SFLBIT,FLAGS	;yes. giddyap
+	JSR	PC,SNDNET
+	FORMAT	#COM41,#SFLFCB	;transfer begins [file]
+	BR	1$	
+;
+10$:	CMP	R0,#'X		;is this control-escape
+	BNE	12$		;branch if no
+	BIT	#QUOBIT,FLAGS
+	BEQ	11$
+	FORMAT	#PROMPT
+11$:	BIC	#QUOBIT,FLAGS
+	BIC	#10000,@#44	;yes. return to command mode
+	RTS	PC
+;
+12$:	FORMAT	#COM28		;invalid command character
+	JMP	1$
+	.PAGE
+	.SBTTL	Transmission mode commands
+;
+; Ascii (mod) specify ascii mode
+; (segment of command language interpreter)
+;
+ASCI:	BIC	#BINBIT,FLAGS	;set ascii mode
+	RTS	PC
+;
+; Image (mod) specify image mode
+; (segment of command language interpreter)
+;
+IMAG:	BIS	#BINBIT,FLAGS	;set image mode
+	RTS	PC
+;
+; Delay (tim) specify packetization delay
+; (segment of command language interpreter)
+; Arg = delay (milliseconds)
+;
+PTIM:	JSR	PC,RDDEC	;get delay
+	BNE	1$		;branch if present
+	MOV	#500.,R0	;default is .5 second
+1$:	MUL	#3,R0		;convert to 60ths
+	DIV	#50.,R0
+	MOV	R0,TIME+2
+	RTS	PC
+;
+; Transmit (tra) specify transmission mode
+; (segment of command language interpreter)
+; Arg = "line" (default) or "character"
+; Note: this is not effective for remote echo
+; Note: default reset at connection close
+;
+TRAN:	BIC	#CHRBIT,FLAGS	;assume line mode
+	JSR	PC,HASH		;get argument
+	CMP	R0,#^RCHA	;is it "character"
+	BNE	1$		;branch if no
+	BIS	#CHRBIT,FLAGS	;yes. set character mode
+1$:	RTS	PC
+;
+; Echo (ech) specify echo mode
+; (segment of command language interpreter)
+; Arg = "remote", "local" (default) or "none"
+; Note: "none" is effective only in character mode
+; Note: default reset at connection close
+;
+ECHO:	BIC	#REMBIT+NONBIT,FLAGS ;reset default
+	JSR	PC,HASH		;get argument
+	CMP	R0,#^RREM	;is it "remote"
+	BNE	1$		;branch if no
+	BIS	#REMBIT,FLAGS	;yes. set remote echo
+1$:	CMP	R0,#^RNON	;is it "none"
+	BNE	2$		;branch if no
+	BIS	#NONBIT,FLAGS	;yes. set no-echo
+2$:	JSR	PC,NEGOT
+	RTS	PC
+	.PAGE
+	.SBTTL	File commands
+;
+; Script (get) open script file
+; (segment of command language interpreter)
+; Arg = script file name
+; (see also "on script" and "off script"
+;
+SCRP:	JSR	PC,CLOS		;close existing file
+	GETARG	#ARG		;open file
+	ENTER	#ARG,#FILFCB,#0
+	BCS	1$		;branch if error
+	FORMAT	#COM48,#FILFCB	;script begins [file]
+	MOV	#BUFFER,FILFCB+FCBBUF ;initialize transfer
+	MOV	#256.,FILFCB+FCBCNT
+	CLR	FILBCT
+	BIS	#FILBIT+SCRBIT,FLAGS
+	RTS	PC
+;
+1$:	FORMAT	#COM32		;invalid file name
+	RTS	PC
+;
+; Close (clo) close script file
+; (segment of command language interpreter)
+; (no arguments)
+;
+CLOS:	BIT	#FILBIT,FLAGS	;is file open
+	BEQ	2$		;branch if no
+	TST	FILBCT		;is buffer written
+	BEQ	1$		;branch if yes
+	CLR	R0		;no. pad to buffer boundary
+	JSR	PC,WRTFIL
+	BR	CLOS
+;
+1$:	TST	FILFCB+FCBBLK	;is file null
+	BEQ	7$		;branch if yes
+	FORMAT	#COM37		;script ends
+	.CLOSE	#0
+	BR	2$
+;
+7$:	FORMAT	#COM39,#FILFCB	;null file [file]
+	.PURGE	#0
+2$:	BIC	#FILBIT+SCRBIT,FLAGS
+	RTS	PC
+;
+; Send (snd) send file to remote host
+; (segment of command language interpreter)
+; Arg = file name
+; (aee also "on send" and "off send")
+;
+SNDF:	GETARG	#ARG		;open file
+	.PURGE	#1		;stop anything going on
+	BIC	#SFLBIT,FLAGS
+	LOOK	#ARG,#SFLFCB,#1
+	BCS	1$		;branch if error
+	CLR	SFLFCB+FCBBLK
+	RTS	PC
+;
+1$:	FORMAT	#COM40,#SFLFCB	;file not found [file]
+	RTS	PC
+;
+	.IF	NE,CS.VCG	;include for vcg
+;
+; Vcg (vcg) specify vcg options
+; (segment of command language interpreter)
+; (see also "on vcg" and "off vcg"
+;
+VCG:	MOV	#160000,R1	;restore window segment
+	MOV	#77,R0
+	.WIND
+	JSR	PC,TKINIT
+	BIS	#VCGBIT,FLAGS
+	RTS	PC
+	.ENDC
+	.PAGE
+	.SBTTL	Subroutines
+;
+; Subroutine to send telnet options
+;
+NEGOT:	BIT	#TELBIT,FLAGS	;is telnet negotiation enabled
+	BNE	3$		;branch if yes
+	BIC	#ECHBIT,FLAGS	;yes. set echo mode directly
+	BIT	#REMBIT,FLAGS
+	BEQ	11$
+	BIS	#ECHBIT,FLAGS
+	BR	11$
+;
+3$:	MOV	#3,R0		;request suppress go-ahead
+	MOV	#STR01,R1
+	JSR	PC,SNDATA
+	MOV	#3,R0		;request echo mode
+	MOV	#STR02,R1
+	BIT	#REMBIT,FLAGS
+	BEQ	2$
+	MOV	#STR03,R1
+2$:	JSR	PC,SNDATA
+11$:	RTS	PC
+;
+; Subroutine to output char
+; R0 = char
+;
+WRTCHR:	MOV	R0,-(SP)	;copy octet to various places
+	BIT	#TRMBIT,FLAGS	;is terminal enabled
+	BEQ	1$		;branch if no
+	.TTYOU			;yes. do copy to terminal
+1$:	MOV	(SP)+,R0
+CPYCHR:	MOV	R0,-(SP)
+	BIT	#SCRBIT,FLAGS	;is file enabled
+	BEQ	1$		;branch if no
+	MOV	@SP,R0		;yes. copy to file
+	JSR	PC,WRTFIL
+1$:
+	.IF	NE,CS.VCG	;include for vcg
+	BIT	#VCGBIT,FLAGS	;is vcg display enabled
+	BEQ	2$		;branch if no
+	MOV	@SP,R0		;yes. make like a tektronix display
+	JSR	PC,TKSEND
+2$:
+	.ENDC
+	MOV	(SP)+,R0
+	RTS	PC
+;
+; Subroutine to copy byte to file
+; R0 = byte
+;
+WRTFIL:	BIT	#FILBIT,FLAGS	;is file open
+	BEQ	1$		;branch if no
+	MOVB	R0,-(SP)	;yes. stash byte
+	MOV	FILBCT,R0
+	MOVB	(SP)+,BUFFER(R0)
+	INC	FILBCT
+	CMP	FILBCT,#512.	;is buffer full
+	BLO	1$		;branch if no
+	.WRITW	#ARGBLK,#0,FILFCB+FCBBUF,FILFCB+FCBCNT,FILFCB+FCBBLK
+	BCS	2$		;branch if error
+	MOV	FILFCB+FCBCNT,-(SP)
+	SWAB	@SP
+	BIC	#^C377,@SP
+	ADD	(SP)+,FILFCB+FCBBLK
+	CLR	FILBCT
+1$:	RTS	PC
+;
+2$:	FORMAT	#COM34,#FILFCB	;file write error [file]
+	.PURGE	#0
+	BIC	#FILBIT+SCRBIT,FLAGS
+	RTS	PC
+	.PAGE
+	.SBTTL	TABLES, TEXT STRINGS AND VARIABLES
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+; Command table for kwik
+;
+KWKTBL:	.KWTAB	<HEL>,HELP	;send help information
+	.KWTAB	<SHO>,SHOW	;show telnet status
+	.KWTAB	<QUI>,QUIT	;leave the game
+	.KWTAB	<CON>,CONN	;open telnet connection
+	.KWTAB	<LOC>,LOCL	;set local address
+	.KWTAB	<DIS>,DISC	;close telnet connection
+	.KWTAB	<TOS>,STOS	;set type-of-service
+	.KWTAB	<ROU>,ROUT	;set source route
+	.KWTAB	<TAL>,TALK	;talk to local device/process
+	.KWTAB	<LIN>,LINK	;link to local device/process
+	.KWTAB	<VER>,VERB	;set error level
+;
+	.KWTAB	<ASC>,ASCI	;specify ascii mode
+	.KWTAB	<IMA>,IMAG	;specify image mode
+	.KWTAB	<ECH>,ECHO	;specify echo mode
+	.KWTAB	<DEL>,PTIM	;specify packetization delay
+	.KWTAB	<TRA>,TRAN	;specify transmission mode
+	.KWTAB	<ESC>,ESCP	;specify escape code
+	.KWTAB	<ON>,ONSW	;enable devices
+	.KWTAB	<OFF>,OFSW	;disable devices
+	.KWTAB	<TEL>,QUOT	;switch to telnet connection
+	.KWTAB	<SCR>,SCRP	;open script file
+	.KWTAB	<CLO>,CLOS	;close script file
+	.KWTAB	<SEN>,SNDF	;send file
+	.IF	NE,CS.VCG	;include for vcg
+	.KWTAB	<VCG>,VCG	;specify vcg options
+	.ENDC
+	.KWTAB	<   >,NTFD	;end of table
+;
+; Miscellaneous tables and chairs
+;
+DEFTYP:	.RAD50	'TXTTXTTXTTXT'	;default file extensions
+;
+; Port name table
+;
+PORT:	.WORD	<^RECH>,7.	;echo
+	.WORD	0,0
+	.WORD	<^RSIN>,9.	;discard
+	.WORD	0,0
+	.WORD	<^RSYS>,11.	;who-is-on
+	.WORD	0,0
+	.WORD	<^RDAY>,13.	;date/time
+	.WORD	0,0
+	.WORD	<^RNET>,15.	;who-is-up
+	.WORD	0,0
+	.WORD	<^RQOD>,17.	;quote-of-the-day
+	.WORD	0,0
+	.WORD	<^RTES>,19.	;character generator
+	.WORD	0,0
+	.WORD	<^RFTP>,21.	;file transfer
+	.WORD	REMBIT+TELBIT,0
+	.WORD	<^RTEL>,23.	;telnet
+	.WORD	REMBIT+TELBIT,0
+	.WORD	<^RSMT>,25.	;simple mail transfer
+	.WORD	0,0
+	.WORD	<^RTIM>,37.	;time
+	.WORD	CHRBIT+NONBIT,0
+	.WORD	<^RNAM>,42.	;name
+	.WORD	CHRBIT+NONBIT,0
+	.WORD	<^RWHO>,43.	;whois (nic only)
+	.WORD	0,0
+	.WORD	<^RMPM>,45.	;message processing module
+	.WORD	CHRBIT+NONBIT,0
+	.WORD	<^RNIF>,47.	;network independent file transfer
+	.WORD	0,0
+	.WORD	<^RDNS>,53.	;domain-name server
+	.WORD	CHRBIT+NONBIT,0
+	.WORD	<^RFIN>,79.	;who-is-there
+	.WORD	0,0
+	.WORD	<^RTAL>,87.	;terminal link (dcn)
+	.WORD	CHRBIT,0
+	.WORD	<^RLIN>,87.	;downline link (dcn)
+	.WORD	CHRBIT+NONBIT,0
+	.WORD	<^RNIC>,101.	;nic-name (nic only)
+	.WORD	0,0
+	.WORD	<^RCSN>,103.	;csnet-name (csnet only)
+	.WORD	0,0
+	.WORD	<^RTN >,107.	;user telnet
+	.WORD	0,0
+	.WORD	<^RVCG>,127.	;vcg display (dcn)
+	.WORD	0,0
+	.WORD	<^RSPQ>,515.	;output spooler (unix)
+	.WORD	CHRBIT+NONBIT,0
+	.WORD	0		;end of table
+;
+; Option table for "on"/"off"
+;
+OPTABL:	.WORD	<^RTER>,TRMBIT	;terminal
+	.WORD	<^RSCR>,SCRBIT	;script
+	.WORD	<^RSEN>,SFLBIT	;send
+	.WORD	<^RTEL>,TELBIT	;telnet negotiations
+	.IF	NE,CS.VCG	;include for vcg
+	.WORD	<^RVCG>,VCGBIT	;vcg
+	.ENDC
+	.WORD	0		;end of table
+;
+; Text strings for telnet user protocol
+;
+LGONAM:	.RAD50	'SY LOGOUTSAV'	;name of logout program
+HERALD:	.ASCIZ	'^A'<0>' TELNET User Process (25-Mar-86 Version) ^LD ^LT'
+HERAL1:	.ASCII	'^A'<0>' TALK Service (12-Mar-84 Version) ^LD ^LT^/'
+	.ASCIZ	'?TALK-I-Enter device name and mode (default is operator): ^+'
+COM87:	.ASCIZ	'^A'<0>' Closing'
+CRLF:	.BYTE	0
+COM24:	.ASCIZ	'State: ^I'<0>' ^K'<2>'  host: ^+'
+COM20:	.ASCIZ	'(^R'<CONIDN>') ^C'<CONRMT>' ^XI'<CONRMT+4>
+COM45:	.ASCIZ	'Script file: ^F'<FCBNAM>'[^I'<FCBMAX>'] at ^I'<FCBBLK>'  ^+'
+COM47:	.ASCIZ	'send file: ^F'<FCBNAM>'[^I'<FCBMAX>'] at ^I'<FCBBLK>
+PROMPT:	.ASCIZ	'*^+'
+STR01:	.BYTE	IAC,DO,TNSUGA	;request suppress go-ahead
+STR03:	.BYTE	IAC,DO,TNECHO	;request remote echo
+STR02:	.BYTE	IAC,DONT,TNECHO	;request local echo
+STR04:	.BYTE	IAC,IP,IAC,DM	;telnet interrupt
+;
+; Text strings for error conditions
+;
+COM00:	.ASCIZ	'?TELNET-^+'
+COM29:	.ASCIZ	'?TELNET-F-Unrecognized command'
+COM28:	.ASCIZ	'?TELNET-F-Unrecognized command character'
+COM38:	.ASCIZ	'?TELNET-F-Invalid command sequence'
+COM98:	.ASCIZ	'?TELNET-F-Invalid argument'
+COM06:	.ASCIZ	'?TELNET-F-Command aborted'
+COMYY:	.ASCIZ	'?TELNET-W-TELNET service unsupported'
+COMUU:	.ASCIZ	'?TELNET-F-Unrecognized service name'
+COM32:	.ASCIZ	'?TELNET-F-Invalid file name'
+COM48:	.ASCIZ	'?TELNET-I-Script begins ^F'<FCBNAM>'[^I'<FCBMAX>']'
+COM37:	.ASCIZ	'?TELNET-F-Script ends'
+COM40:	.ASCIZ	'?TELNET-F-File not found ^F'<FCBNAM>
+COM34:	.ASCIZ	'?TELNET-F-File write error ^F'<FCBNAM>
+COM39:	.ASCIZ	'?TELNET-F-Null file ^F'<FCBNAM>
+COM41:	.ASCIZ	'?TELNET-I-Transfer begins ^F'<FCBNAM>'[^I'<FCBMAX>']'
+COM41X:	.ASCIZ	'?TELNET-I-Transfer suspended'
+	.EVEN
+;
+	.PSECT	$DATA,RW,I
+;
+; Telnet connection data
+;
+OPNBLK:	OPNBLK	0,TEL,,,NETSUB,P.TCP,341,,,,20 ;open block
+TIME:	.WORD	0,0		;packetization timeout (default 0 second)
+;
+	.PSECT	$ERAS,RW,I
+;
+; Variables
+;
+TEMP:	.BLKW	1		;temporary
+STATE:	.BLKW	2		;current state/flags (display)
+ARGBLK:	.BLKW	5		;rt-11 argument block
+AREA:	.BLKW	39.		;scratch area
+FILBCT:	.BLKW	1		;script file buffer count
+FILFCB:	.BLKW	8.		;script file control block
+SFLFCB:	.BLKW	8.		;send file control block
+BUFFER:	.BLKW	256.		;script file buffer
+ARG:	.BLKB	80.		;argument
+ESCAPE:	.BLKB	1		;escape code
+	.EVEN
+;
+	.END
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      

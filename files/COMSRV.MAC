@@ -1,0 +1,590 @@
+	.TITLE	UDP	UDP user/server process
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Pdp11/dcn - udp user/server process
+;
+; External symbols
+;
+	.GLOBL	RDDEC,RDOCT,HASH,GETARG,CHAIN ;utility routines
+	.GLOBL	FLAGS,CTRL,HELP,NETAST,PRIDNT,ERRLVL
+	.GLOBL	NAMREQ,DOMREQ,TIMREQ,TFTREQ,NTPREQ,STAREQ ;server links
+	.GLOBL	TFTOUT,NTPSND,CLEAR ;timeout entries
+;
+; Entry symbols
+;
+	.GLOBL	NETDAT,NETSIG,INIT,KWKTBL,COM00,SNDPKT,OPNBLK
+	.GLOBL	PARPTR,COMPTR,$HOSAD
+	.GLOBL	NTPTAB,NTPEND,NTPHID,NTPPTR,NTPDSP,NTPADR,NTPLOK ;ntp tables
+	.GLOBL	CMMD,BLOCK,MAXBLK,RETRY,TFTDST,TFTSRC,TIMER ;tftp state
+	.GLOBL	STAPTR		;statistics pointer
+	.GLOBL	STATS		;write statistics
+	.GLOBL	UDPDST,UDPSRC	;address/port fields
+	.GLOBL	SHOW		;for netspy
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.PSA,.SUP ;dcnlib definitions
+	.MCALL	.KWTAB,.MSG,.WIND ;dcnlib macros
+	.MCALL	$DFIH,$DFUH,$DFNH,$DFSIG ;moslib definitions
+	.MCALL	DFCON,OPNBLK,ADDR,CALL,FORMAT ;netlib macros
+	.MCALL	.GTJB,.DSTAT,.SETTO,.MRKT,.CMKT,.EXIT,.SPND,.RSUM ;rt11 macros
+	.MCALL	.LOOKU,.READW,.WRITW
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.PSA			;define process storage area
+	.SUP			;define host process par areas
+	$DFIH			;define internet header
+	$DFUH			;define user datagram header
+	$DFNH			;define network time header
+	$DFSIG			;define interprocess signals
+	DFCON			;define connection block
+;
+; Module definitions
+;
+; Assembly parameters
+;
+RTPSIZ	=	256.		;rtp control block size
+FLTMAX	=	8.		;filter size
+TIMPRT	=	37.*400		;time server port
+NAMPRT	=	42.*400		;name server port
+DOMPRT	=	53.*400		;domain name server port
+TFTPRT	=	69.*400		;tftp server port
+NTPPRT	=	123.*400	;ntp server port
+CLIPRT	=	133.*400	;statistics server port
+;
+; Status flags (flags)
+;
+OPXBIT	=	100000		;connection open bit
+;
+; NTP filter entry format
+;
+.	=	0
+FX.OFS:	.BLKW	3		;offset
+FX.DLY:	.BLKW	1		;delay
+FX.LEN	=	.		;end of entry
+;
+; NTP neighbor table entry format
+;
+.	=	0
+NG.ORG:	.BLKW	4		;(peer.org) originate timestamp (ntp format)
+NG.REC:	.BLKW	4		;(peer.rec) receive timestamp (ntp format)
+NG.XMT:	.BLKW	4		;(peer.xmt) transmit timestamp (ntp format)
+NG.SRG:	.BLKB	1		;(peer.reach) reachability status
+NG.RCT:	.BLKB	1		;(peer.valid) timeouts since last update
+	.EVEN
+NG.FLT:	.BLKW	FLTMAX*FX.LEN/2	;(peer.filter) filter register
+NG.ERS	=	.		;end of reset area
+NG.STA:	.BLKB	1		;(peer.leap) leap/version/code
+NG.STR:	.BLKB	1		;(peer.stratum) stratum
+NG.HPI:	.BLKB	1		;(peer.ppoll) peer poll interval
+NG.PRE:	.BLKB	1		;(peer.precision) precision
+NG.ERR:	.BLKW	2		;(peer.distance) synchronizing distance
+NG.DRF:	.BLKW	2		;(peer.dispersion) dispersion
+NG.RID:	.BLKW	3		;(peer.refid) ref clock id (plus backstop)
+NG.REF:	.BLKW	3		;(peer.reftime) ref timestamp (dcn format)
+NG.HLN	=	.		;end of header area
+NG.SRC:	.BLKW	3		;(peer.srcadr) neighbor ip address/port
+NG.DST:	.BLKW	3		;(peer.dstadr) local ip address/port
+NG.OFS:	.BLKW	3		;(peer.estoffset) estimated offset
+NG.DLY:	.BLKW	1		;(peer.estdelay) estimated delay
+NG.DSP:	.BLKW	1		;(peer.estdisp) estimated dispersion
+NG.TIM:	.BLKW	1		;(peer.timer) timer counter
+NG.RCV:	.BLKW	1		;messages received
+NG.SND:	.BLKW	1		;messages sent
+NG.UPD:	.BLKW	3		;last update time (rt-11 format)
+NG.FLG:	.BLKB	1		;(peer.mode) status flags
+NX.STS	=	200		;enable statistics
+NX.SEL	=	100		;disable selection
+NX.OFF	=	040		;disable transmission
+NX.MOD	=	007		;mode mask
+NG.MPI:	.BLKB	1		;(peer.hpoll) current poll interval
+NG.SIZ:	.BLKB	1		;current filter size
+	.EVEN
+NG.LEN	=	.		;length of table entry
+;
+	.PSECT	$BOSI,RO,I
+;
+; Poll timeout (one-second timeout)
+;
+POLL:	TST	TIMER		;is tftp countdown complete
+	BEQ	1$		;branch if no
+	DEC	TIMER
+	BNE	1$		;branch if no
+	JSR	PC,TFTOUT	;yes. process event
+1$:	TST	NTPLOK		;is clock reset lockout complete
+	BEQ	2$		;branch if yes
+	DEC	NTPLOK
+2$:	MOV	NTPTAB,R4	;scan ntp neighbor table
+3$:	DEC	NG.TIM(R4)	;decrement timer entries
+	ADD	#NG.LEN,R4	;advance to next entry
+	CMP	R4,NTPEND	;is scan complete
+	BLO	3$		;branch if no
+	MOV	NTPTAB,R4	;scan ntp neighbor table
+	CLR	R0
+4$:	TSTB	NG.FLG(R4)	;did timer underflow
+	BEQ	5$		;branch if no
+	TST	NG.TIM(R4)
+	BLE	6$		;branch if yes
+5$:	ADD	#NG.LEN,R4	;no. advance to next entry
+	INC	R0
+	CMP	R4,NTPEND	;is scan complete
+	BLO	4$		;branch if no
+	BR	7$
+;
+6$:	JSR	PC,NTPSND	;process event	
+7$:	.MRKT	#ARGBLK,#TIME,#POLL,#1 ;reset poll timeout
+	RTS	PC
+;
+; Net completion routine
+;
+NETSUB:	JSR	PC,NETAST	;net trap
+	RTS	PC
+;
+; Process net signals
+;
+NETSIG:	CMPB	#SG.CC,R0	;yes. is this close complete
+	BNE	1$		;branch if no
+	BIC	#OPXBIT,FLAGS	;yes. mark connection closed
+	.RSUM
+1$:	RTS	PC
+;
+; Process net packet
+;
+NETDAT:	MOV	R0,R1		;get packet pointers
+	MOV	R1,R2
+	ADD	PH.OFS(R1),R2
+	MOV	IH.DST(R1),UDPDST ;save address fields
+	MOV	IH.DST+2(R1),UDPDST+2
+	MOV	UH.DST(R2),UDPDST+4
+	MOV	IH.SRC(R1),UDPSRC
+	MOV	IH.SRC+2(R1),UDPSRC+2
+	MOV	UH.SRC(R2),UDPSRC+4
+	MOV	PH.LNG(R1),R0
+	BIT	#IH.MF+IH.OFF,IH.FRG(R1) ;is this fragmented
+	BEQ	1$		;branch if no
+	FORMAT	#COM11,#UDPSRC	;invalid fragment
+	BR	9$
+;
+1$:	CMP	R0,#UH.LEN	;is length valid
+	BHIS	2$		;branch if yes
+	FORMAT	#COM12,#UDPSRC	;invalid length
+	BR	9$
+;
+; R0 = udp length, r1 = packet pointer, r2 = udp header pointer
+;
+2$:	CMP	UDPDST+4,#NAMPRT ;is this name request
+	BNE	3$		;branch if no
+	JSR	PC,NAMREQ	;yes. send name reply
+	RTS	PC
+;
+3$:	CMP	UDPDST+4,#DOMPRT ;is this domain name request
+	BNE	4$		;branch if no
+	JSR	PC,DOMREQ	;yes. send domain name reply
+	RTS	PC
+;
+4$:	CMP	UDPDST+4,#TIMPRT ;is this time request
+	BNE	5$		;branch if no
+	JSR	PC,TIMREQ	;yes. send time reply
+	RTS	PC
+;
+5$:	CMP	UDPDST+4,#TFTPRT ;is this file request
+	BNE	6$		;branch if no
+	JSR	PC,TFTREQ	;yes. send file reply
+	RTS	PC
+;
+6$:	CMP	UDPDST+4,#NTPPRT ;is this network time request
+	BNE	7$		;branch if no
+	JSR	PC,NTPREQ	;yes. send network time reply
+	RTS	PC
+;
+7$:	CMP	UDPDST+4,#CLIPRT ;is this statistics request
+	BNE	8$		;branch if no
+	JSR	PC,STAREQ	;yes. send statistics reply
+	RTS	PC
+;
+8$:	TSTB	UDPDST+4	;who is that varmit
+	BNE	9$		;branch if old duplicate
+	FORMAT	#COM14,#UDPSRC	;unrecognized request
+9$:	CALL	CTRL,#CM.FRE,R1,OPNBLK+CONPTR ;free ip packet
+	RTS	PC
+;
+; Sndpkt (snd) send packet
+; R0 = length of ip data area, r1 = packet pointer, r2 = udp header pointer
+;
+SNDPKT:	MOV	R0,PH.LNG(R1)	;set length field
+	MOV	UDPDST,IH.SRC(R1) ;restore address fields
+	MOV	UDPDST+2,IH.SRC+2(R1)
+	MOV	UDPDST+4,UH.SRC(R2)
+	MOV	UDPSRC,IH.DST(R1)
+	MOV	UDPSRC+2,IH.DST+2(R1)
+	MOV	UDPSRC+4,UH.DST(R2)
+	CMP	IH.SRC(R1),IH.DST(R1) ;are addresses looped
+	BNE	1$		;branch if no
+	CMP	IH.SRC+2(R1),IH.DST+2(R1)
+	BNE	1$		;branch if no
+	CMP	UH.SRC(R2),UH.DST(R2)
+	BEQ	3$		;branch if yes (invalid address)
+1$:	CALL	CTRL,#CM.UDP,R1,OPNBLK+CONPTR ;send udp packet
+	TST	R0
+	BEQ	2$		;branch if ok
+	JSR	PC,PRIDNT	;display message
+2$:	RTS	PC
+;
+3$:	CALL	CTRL,#CM.FRE,R1,OPNBLK+CONPTR ;free ip packet
+	FORMAT	#COM13,#UDPSRC	;invalid address
+	RTS	PC
+;
+; Initialization
+;
+INIT:	.MSG	<#^RLOG>	;switch to log process
+	MOV	#3,ERRLVL
+	FORMAT	#HERALD,CHAIN	;from the top
+	.DSTAT	#UDPBLK,#HOSPTR	;set host process parameter pointer
+	MOV	UDPBLK+4,R3
+	MOV	R3,COMPTR
+	.GTJB	#ARGBLK,#UDPBLK,#-1 ;get process parameters
+	MOV	UDPBLK+16,PARPTR
+	ADD	#PAROPT,PARPTR
+	MOV	UDPBLK+2,R2	;find free segment
+	ADD	#17777,R2
+	ASH	#-5,R2
+	BIC	#^C<7*400>,R2
+	MOV	PARHOS(R3),R0	;map to host table
+	MOV	PARHOS+2(R3),R1
+	BIS	R2,R0
+	.WIND
+	MOV	R1,$HOSAD
+	MOV	#STOBGN,R0	;clear storage
+1$:	CLR	(R0)+
+	CMP	R0,#STOEND
+	BLO	1$
+	MOV	@#50,R1		;allocate ntp neighbor table
+	TST	(R1)+
+	MOV	R1,NTPTAB
+	MOV	@#54,R0
+	.SETTO
+	MOV	@#50,R0
+	TST	(R0)+
+2$:	MOV	R1,R2		;clear table
+	ADD	#NG.LEN,R2
+	CMP	R2,R0
+	BHIS	4$		;branch if done
+3$:	CMP	R1,R2		;clear block
+	BHIS	2$		;branch if done
+	CLR	(R1)+
+	BR	3$
+;
+4$:	MOV	R1,NTPEND	;save high limit
+	CLR	STABLK		;initialize block pointers
+	CLR	STAPTR
+	.LOOKU	#ARGBLK,#3,#STANAM ;open statistics file
+	BCC	5$		;branch if okay
+	FORMAT	#COM09		;unable to open statistics file
+	BR	9$
+;
+5$:	MOV	R0,TEMP		;save size for log
+6$:	.READW	#ARGBLK,#3,#STABUF,#256.,STABLK ;read next block
+	BCS	7$		;branch if error
+	TST	STABUF		;search for first free block
+	BEQ	8$		;branch if found (nul)
+	CMP	STABUF,#32
+	BEQ	8$		;branch if found (sub)
+	INC	STABLK
+	BR	6$
+;
+7$:	FORMAT	#COM08		;statistics file full
+	BR	9$
+;
+8$:	FORMAT	#COM07,#STOBGN	;block numbers
+	MOV	#STABUF,STAPTR	;file positioned okay
+9$:	BIT	#CHNBIT,FLAGS	;is this chain
+	BEQ	10$		;branch if no
+	JSR	PC,CONN		;yes. open connection
+	JSR	PC,NTP		;set up initial poll list
+10$:	.MRKT	#ARGBLK,#TIME,#POLL,#1 ;set poll timeout
+	RTS	PC
+;
+; Unrecognized command
+;
+NTFD:	FORMAT	#COM29		;unrecognized command
+	RTS	PC
+;
+; Show (sho) show neighbor status
+; (segment of command language interpreter)
+; Arg1 = entry id
+;
+SHOW:	JSR	PC,RDDEC	;get entry id
+	BNE	6$		;branch if present
+	CLR	-(SP)		;missing. display summary information
+	FORMAT	#COM10		;display header
+	MOV	NTPTAB,R4	;display neighbor
+1$:	CMP	R4,NTPEND
+	BHIS	5$		;branch if done
+	TST	NG.SRC(R4)
+	BEQ	4$		;branch if empty
+	MOV	SP,R1		;display entry id
+	CMP	R4,NTPPTR	;is this tracking clock
+	BNE	2$		;branch if no
+	FORMAT	#COM5C		;yes. so indicate
+	BR	3$
+;
+2$:	FORMAT	#COM5A		;not tracking clock
+3$:	FORMAT	#COM26,R4
+4$:	ADD	#NG.LEN,R4	;advance to next entry
+	INCB	1(SP)
+	BR	1$
+;
+5$:	DECB	1(SP)		;display max id
+	MOV	SP,R1
+	FORMAT	#COM5B
+	TST	(SP)+		;recover stack
+	RTS	PC
+;
+6$:	MUL	#NG.LEN,R0	;construct neighbor pointer
+	ADD	NTPTAB,R1
+	FORMAT	#COM5D		;display useful stuff
+	CMPB	NG.STR(R1),#1	;is this ntp
+	BLOS	7$		;branch if no
+	FORMAT	#HLFMT2		;yes. ip address
+	BR	8$
+;
+7$:	FORMAT	#HLFMT1		;alpha string
+8$:	FORMAT	#HLFMT3		;display filter
+	RTS	PC
+;
+; NTP (ntp) define neighbor
+; (segment of command language interpreter)
+; Arg1 = ntp clock id, arg2 = neighbor ip address, arg3 = not used
+;
+NTP:	JSR	PC,RDDEC	;get ntp clock id
+	BEQ	6$		;branch if missing
+	MOVB	R0,NTPHID	;store it
+1$:	JSR	PC,RDDEC	;get neighbor address
+	BEQ	6$		;branch if missing
+	CLR	R1
+	MOV	NTPTAB,R4	;find new neighbor
+2$:	CMP	R4,NTPEND
+	BHIS	6$		;branch if none
+	TSTB	NG.FLG(R4)	;is this neighbor instantiated
+	BEQ	4$		;branch if no
+3$:	ADD	#NG.LEN,R4	;yes. advance to next entry
+	INC	R1
+	BR	2$
+;
+4$:	MOV	#NG.LEN/2,R3	;clear entry
+	MOV	R4,R2
+5$:	CLR	(R2)+
+	SOB	R3,5$
+	MOVB	R0,NG.SRC(R4)	;save neighbor address
+	JSR	PC,RDDEC
+	MOVB	R0,NG.SRC+1(R4)
+	JSR	PC,RDDEC
+	MOVB	R0,NG.SRC+2(R4)
+	JSR	PC,RDDEC
+	MOVB	R0,NG.SRC+3(R4)
+	MOV	COMPTR,R0	;save local address
+	ADD	#PARIDS,R0
+	ADD	@R0,R0
+	MOV	(R0)+,NG.DST(R4)
+	MOV	(R0)+,NG.DST+2(R4)
+	MOV	#NTPPRT,NG.DST+4(R4) ;save ports	
+	MOV	#NTPPRT,NG.SRC+4(R4)
+	JSR	PC,CLEAR	;clear filter
+	MOV	R1,NG.TIM(R4)	;skew timers to avoid bunching
+	JSR	PC,RDOCT	;save flags/code
+	BIS	#NX.STS,R0	;set statistics on
+	MOVB	R0,NG.FLG(R4)	
+	BR	1$
+;
+6$:	RTS	PC
+;
+; FLAG (set) set ntp flags
+; arg1 = entry id, arg2 = flags
+;
+FLAG:	JSR	PC,RDDEC	;get entry id
+	BEQ	1$		;branch if missing
+	MOV	R0,R1		;compute entry pointer
+	MUL	#NG.LEN,R1
+	ADD	NTPTAB,R1
+	JSR	PC,RDOCT	;get flags
+	BEQ	1$		;branch if missing
+	BIC	#7,R0		;stuff neatly
+	BICB	#^C7,NG.FLG(R1)
+	BISB	R0,NG.FLG(R1)
+1$:	RTS	PC
+;
+; Quit (qui) leave the game
+; (segment of command language interpreter)
+; (no arguments)
+;
+QUIT:	JSR	PC,ABOR		;abort pending operation
+	.EXIT			;return to cli
+;
+; Connect (conn) open passive connection
+; (segment of command language interpreter)
+; (no arguments)
+;
+CONN:	CALL	CTRL,#CM.OPN,#OPNBLK+CONPAR,OPNBLK+CONPTR ;open connection
+	TST	R0
+	BEQ	10$		;branch if ok
+	JSR	PC,PRIDNT	;print reason for failure
+	RTS	PC
+;
+10$:	BIS	#OPXBIT,FLAGS	;declare in progress
+	RTS	PC
+;
+; Abort (abo) abort pending operation
+; (segment of command language interpreter)
+; (no arguments)
+;
+ABOR:	BIT	#OPXBIT,FLAGS	;is connection open
+	BEQ	1$		;branch if no
+	CALL	CTRL,#CM.CLS,#0,OPNBLK+CONPTR ;ip close
+	FORMAT	#COM03		;net transfer aborted
+	.SPND			;wait for connection to close
+1$:	RTS	PC
+;
+; Verbose (ver) be very noisy
+; (segment of command language interpreter)
+; arg = error level
+;
+VERB:	JSR	PC,RDDEC	;set error level
+	MOV	R0,ERRLVL
+	RTS	PC
+;
+; Output (out) change console device output
+; (segment of command language interpreter)
+; Arg = output device name
+;
+OUTP:	JSR	PC,HASH		;get new name
+	BEQ	1$		;branch if missing
+	.MSG
+	RTS	PC
+;
+1$:	.MSG	<#^RTT >	;default to "tt"
+	RTS	PC
+;
+; Subroutine to update statistics file pointer and write block
+;
+STATS:	ADD	#20,STAPTR	;update pointer
+	CMP	STAPTR,#STABUF+512. ;is block full
+	BLO	1$		;branch if no
+	.WRITW	#ARGBLK,#3,#STABUF,#256.,STABLK ;yes. write block
+	BCS	2$		;branch if error
+	INC	STABLK		;update pointers
+	MOV	#STABUF,STAPTR
+1$:	RTS	PC
+;
+2$:	FORMAT	#COM08		;statistics file full
+	CLR	STAPTR
+	RTS	PC
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D
+;
+; Command table for kwik
+;
+KWKTBL:	.KWTAB	<HEL>,HELP	;send help information
+	.KWTAB	<SHO>,SHOW	;show neighbor status
+	.KWTAB	<NTP>,NTP	;define neighbor
+	.KWTAB	<FLA>,FLAG	;set ntp flags
+	.KWTAB	<QUI>,QUIT	;leave the game
+	.KWTAB	<ABO>,ABOR	;abort operation
+	.KWTAB	<VER>,VERB	;set error level
+	.KWTAB	<OUT>,OUTP	;select log device
+	.KWTAB	<CON>,CONN	;open passive connection
+	.KWTAB	<   >,NTFD	;end of table
+;
+HOSPTR:	.RAD50	/HOS/		;name of host process
+TIME:	.WORD	0,1*60.		;poll timeout (1 sec)
+STANAM:	.RAD50	'DK STATS DAT'	;statistics file name
+;
+; Text strings
+;
+HERALD:	.ASCIZ	'?UDP-I-NAME/TIME/TFTP Server (5-Jan-88 Version) ^LD'
+COM00:	.ASCIZ	'?UDP-^+'
+COM09:	.ASCIZ	'?UDP-W-Unable to open statistics file DK:STATS.DAT'
+COM08:	.ASCIZ	'?UDP-W-Statistics file full'
+COM07:	.ASCII	'?UDP-I-Current block ^I'<STABLK-STOBGN>
+	.ASCIZ	' max blocks ^I'<TEMP-STOBGN>
+COM10:	.ASCII	'AdrID	Address		Str Pol	Status	Dist	Offset	Disp	Update^/'
+	.ASCIZ	'------------------------------------------------------------------------'
+COM5A:	.ASCIZ	'^BI'<1>'	^+'
+COM5C:	.ASCIZ	'^BI'<1>'*	^+'
+COM5B:	.ASCIZ	'^BI'<1>' max'
+COM26:	.ASCII	'^C'<NG.SRC>'	^BI'<NG.STR>'   ^BI'<NG.MPI>'	^BK'<NG.SRG>
+	.ASCIZ	'	^I'<NG.DLY>'	^SMI'<NG.OFS+2>'	^I'<NG.DSP>'	^+T'<NG.UPD+2>
+COM5D:	.ASCII	'Host address: ^C'<NG.DST>' ^XI'<NG.DST+4>
+	.ASCII	'  peer address: ^C'<NG.SRC>' ^XI'<NG.SRC+4>'^/'
+	.ASCII	'Peer mode: ^BK'<NG.STA>'  poll: ^SBI'<NG.HPI>
+	.ASCII	'  stratum: ^BI'<NG.STR>'  precision: ^SBI'<NG.PRE>'^/'
+	.ASCII	'Synch distance: ^MI'<NG.ERR>'  synch dispersion: ^MI'<NG.DRF>'^/'
+	.ASCIZ	'Reference clock ID: ^+'
+HLFMT1:	.ASCIZ	'^A'<NG.RID>'^+'
+HLFMT2:	.ASCIZ	'^C'<NG.RID>'^+'
+HLFMT3:	.ASCII	'  timestamp: ^+D'<NG.REF>' ^+T'<NG.REF+2>'^/'
+	.ASCII	'Host mode: ^BK'<NG.FLG>'  poll: ^SBI'<NG.MPI>'  filter: ^BI'<NG.SIZ>
+	.ASCII	'  sent: ^I'<NG.SND> '  received: ^I'<NG.RCV>'^/'
+	.ASCII	'Delay	^I'<NG.FLT+6>'	^I'<NG.FLT+16>
+	.ASCII	'	^I'<NG.FLT+26>'	^I'<NG.FLT+36>
+	.ASCII	'	^I'<NG.FLT+46>'	^I'<NG.FLT+56>
+	.ASCII	'	^I'<NG.FLT+66>'	^I'<NG.FLT+76>'^/'
+	.ASCII	'Offset	^SMI'<NG.FLT+2>'	^SMI'<NG.FLT+12>
+	.ASCII	'	^SMI'<NG.FLT+22>'	^SMI'<NG.FLT+32>
+	.ASCII	'	^SMI'<NG.FLT+42>'	^SMI'<NG.FLT+52>
+	.ASCIZ	'	^SMI'<NG.FLT+62>'	^SMI'<NG.FLT+72>
+COM11:	.ASCIZ	'?UDP-F-Invalid fragment ^C'<0>
+COM12:	.ASCIZ	'?UDP-F-Invalid length ^C'<0>
+COM13:	.ASCIZ	'?UDP-F-Invalid address ^C'<0>' ^XI'<4>
+COM14:	.ASCIZ	'?UDP-F-Unrecognized request ^C'<0>' ^XI'<4>
+COM29:	.ASCIZ	'?UDP-F-Unrecognized command'
+COM03:	.ASCIZ	'?UDP-F-Net transfer aborted'
+	.EVEN
+;
+	.PSECT	$DATA,RW,I
+;
+OPNBLK:	OPNBLK	0,UDP,UDPBLK,RTPSIZ,NETSUB,P.UDP,300 ;open block
+NTPPTR:	.WORD	0		;ntp route pointer
+NTPDSP:	.WORD	-1		;ntp dispersion
+NTPADR:	.BYTE	0,0,0,0		;ntp address
+NTPHID:	.BYTE	0		;ntp clock hid
+	.EVEN
+;
+	.PSECT	$ERAS,RW,I
+;
+PARPTR:	.BLKW	1		;udp process parameter pointer
+COMPTR:	.BLKW	1		;host process parameter pointer
+$HOSAD:	.BLKW	1		;host table pointer
+NTPLOK:	.BLKW	1		;clock reset lockout
+NTPTAB:	.BLKW	1		;beginning of ntp neighbor table
+NTPEND:	.BLKW	1		;end of ntp neighbor table
+;
+STOBGN	=	.		;beginning of erasable storage
+;
+; Tftp state variables
+;
+CMMD:	.BLKW	1		;command code
+BLOCK:	.BLKW	1		;file block
+MAXBLK:	.BLKW	1		;max block
+RETRY:	.BLKW	1		;retry count
+TFTDST:	.BLKW	6		;destination address/port
+TFTSRC:	.BLKW	6		;source address/port
+TIMER:	.BLKW	1		;timout counter
+;
+; Variables
+;
+TEMP:	.BLKW	1		;temp
+STABLK:	.BLKW	1		;statistics file block
+STAPTR:	.BLKW	1		;statistics buffer pointer
+ARGBLK:	.BLKW	5		;rt-11 argument block
+UDPDST:	.BLKW	6		;destination address/port
+UDPSRC:	.BLKW	6		;source address/port
+STABUF:	.BLKW	256.		;statistics file buffer
+UDPBLK:	.BLKW	RTPSIZ/2	;udp connection block
+STOEND	=	.		;end of erasable storage
+;
+	.END
+                                                                                           

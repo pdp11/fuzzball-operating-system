@@ -1,0 +1,397 @@
+	.TITLE	PRTSEQ	Sequential device spooler
+	.NLIST	BEX
+	.ENABL	LC
+;
+; Sequential device spooler
+;
+; This module is part of the spooler daemon. It copies files to a sequential
+; output device, such as a line printer, terminal or lpc codec.
+;
+; External symbols
+;
+	.GLOBL	QUELST,FILBUF,FILBLK,DEVBLK ;sharp pointers
+;
+; Entry symbols
+;
+	.GLOBL	PRTSEQ		;sequential device spooler
+;
+; System definitions
+;
+	.ASECT
+	.MCALL	.COM,.CHR,.PRT	;dcnlib macros
+	.MCALL	.READW,.WRITW	;rt-11 macroni
+	.MCALL	CALL,FORMAT	;netlib macros
+	.COM			;define common data
+	.CHR			;define ascii character codes
+	.PRT			;define queue file entry format
+;
+; Module definitions
+;
+MAXSIZ	=	4		;max blocks input buffer
+MAXLIN	=	80.		;max line chars
+MAXCOL	=	960.		;max raster columns
+TP.TT	=	4		;terminal/line printer device
+;
+; Procedure segment
+;
+	.PSECT	$BOSI,RO,I
+;
+; Sequential device spooler
+;
+PRTSEQ:	MOV	SP,STACK	;stash stack
+	MOV	#BUFFER,BUFPTR	;initialize transfer variables
+	CLR	BLOCK
+	CLR	STATE
+	CLR	LINCNT
+	MOV	#RASTER,COLPTR	;reset raster pointer
+	MOV	#RASTER,COLEND
+	CMPB	DEVBLK,#TP.TT	;is this text device
+	BNE	2$		;branch if no
+	BIT	#SX.FLT,QUELST+SQ.FLG ;yes. is this filter
+	BEQ	2$		;branch if no
+	MOV	#PREAMB,R1	;yes. copy preamble
+1$:	MOVB	(R1)+,R0
+	BEQ	2$		;branch if complete
+	JSR	PC,WRFIL
+	BR	1$
+;
+2$:	.READW	#ARGBLK,#3,#FILBUF,#MAXSIZ*256.,FILBLK ;read next segment
+	BCS	PRT20		;branch if read error
+	ADD	#MAXSIZ,FILBLK
+	MOV	R0,R2
+	CMPB	DEVBLK,#TP.TT	;is this text device
+	BEQ	3$		;branch if yes
+	.WRITW	#ARGBLK,#0,#FILBUF,R2,BLOCK ;no. write segment
+	BCS	PRT30		;branch if error
+	ADD	#MAXSIZ,BLOCK
+	BR	2$
+;
+3$:	MOV	#FILBUF,R1	;text device. set pointers
+	ASL	R2
+4$:	MOVB	(R1)+,R0	;get next char
+	BIT	#SX.FLT,QUELST+SQ.FLG ;is this postscript
+	BEQ	5$		;branch if no
+	JSR	PC,FLTPRT	;yes. postscript filter
+	BR	7$
+;
+5$:	BIT	#SX.UNX,QUELST+SQ.FLG ;is this unix
+	BEQ	6$		;branch if no
+	JSR	PC,UNXPRT	;yes. unix filter
+	BR	7$
+;
+6$:	JSR	PC,WRFIL	;vanilla
+7$:	SOB	R2,4$
+	BR	2$
+;
+PRT20:	TSTB	@#52		;read error. is this end of file
+	BEQ	1$		;branch if yes
+	FORMAT	#COM14,#QUELST	;file read error
+	BR	PRT31
+;
+1$:	CMPB	DEVBLK,#TP.TT	;is this text device
+	BNE	PRT31		;branch if no
+	BIT	#SX.FLT,QUELST+SQ.FLG ;yes. is this postscript
+	BEQ	3$		;branch if no
+	JSR	PC,FLUSH	;yes. end current line
+	MOV	#POSAMB,R1	;copy postamble
+2$:	MOVB	(R1)+,R0
+	BEQ	4$		;branch if complete
+	JSR	PC,WRFIL
+	BR	2$
+;
+3$:	MOV	#FF,R0		;eject page
+	JSR	PC,WRFIL
+4$:	MOV	BUFPTR,R1	;is buffer empty
+	SUB	#BUFFER,R1
+	BEQ	PRT31		;branch if yes
+	BIT	#777,R1		;no. is this block boundary
+	BEQ	5$		;branch if yes
+	CLR	R0		;no. zero-fill buffer
+	JSR	PC,WRFIL
+	BR	4$
+;
+5$:	ASR	R1		;write last buffer
+	.WRITW	#ARGBLK,#0,#BUFFER,R1,BLOCK
+	BCC	PRT31		;branch if ok
+PRT30:	FORMAT	#COM12,#QUELST	;output device error
+PRT31:	CLC			;normal return
+	RTS	PC
+;
+; Postscript filter
+; r0 = octet
+;
+FLTPRT:	MOV	R1,-(SP)	;save
+	ADD	STATE,PC	;handrail
+	JMP	STA00		;0 text
+	JMP	STA04		;1 control
+	JMP	STA10		;2 set line spacing
+	JMP	STA14		;3 spacing amount
+	JMP	STA20		;4 low-order column count
+	JMP	STA24		;5 image data
+;
+STA00:	TSTB	R0		;state 0. is this nul
+	BEQ	STAEND		;branch if yes
+	CMPB	R0,#CR		;no. is this cr
+	BEQ	STAEND		;branch if yes
+	CMPB	R0,#ESC		;no. is this esc
+	BNE	1$		;branch if no
+	MOV	#1*4,STATE	;yes. exit to state 1
+	BR	STAEND
+;
+1$:	TST	LINCNT		;is this first char
+	BNE	2$		;branch if no
+	MOV	R0,-(SP)	;yes. output "("
+	MOV	#'(,R0
+	JSR	PC,WRFIL
+	MOV	(SP)+,R0
+2$:	INC	LINCNT		;set switch
+	MOV	#LFSEQ,R1	;is this lf
+	CMPB	R0,#LF
+	BEQ	3$		;branch if yes
+	MOV	#FFSEQ,R1	;no. is this ff
+	CMPB	R0,#FF
+	BNE	4$		;branch if no
+3$:	MOVB	(R1)+,R0	;yes. output sequence
+	BEQ	STATXT		;branch if done
+	JSR	PC,WRFIL
+	BR	3$
+;
+4$:	CMP	LINCNT,#MAXLIN	;is line overflow
+	BHI	STAEND		;branch if yes
+	CMPB	R0,#040		;no. is this printing
+	BLO	STAEND		;branch if no
+	CMPB	R0,#377
+	BHIS	STAEND		;branch if no
+	MOV	R0,R1		;yes. save for later
+	CMPB	R0,#'(		;prefix "(", ")" and "\"
+	BEQ	5$
+	CMPB	R0,#')
+	BEQ	5$	
+	CMPB	R0,#'\
+	BNE	6$	
+5$:	MOV	#'\,R0		;output "\"
+	JSR	PC,WRFIL
+	MOV	R1,R0		;output octet
+6$:	JSR	PC,WRFIL
+STAEND:	MOV	(SP)+,R1	;evas
+	RTS	PC
+;
+STA04:	CMPB	R0,#'@		;state 1. is this begin image
+	BNE	2$		;branch if no
+	JSR	PC,FLUSH	;yes. end current line
+	MOV	#RASTER,COLPTR	;reset raster pointer
+	MOV	#RASTER,COLEND
+	BR	STATXT
+;
+2$:	CMPB	R0,#'J		;is this end raster
+	BNE	3$		;branch if no
+	MOV	#2*4,STATE	;yes. exit to state 2
+	BR	STAEND
+;
+3$:	CMPB	R0,#'L		;is this begin raster (120*72)
+	BNE	STATXT		;branch if no
+	MOV	#3*4,STATE	;yes. exit to state 3
+	BR	STAEND
+;
+STATXT:	CLR	STATE		;exit to state 0
+	CLR	LINCNT
+	BR	STAEND
+;
+STA10:	CMPB	R0,#1		;state 2. is this end of raster
+	BLOS	STATXT		;branch if no
+	MOV	#8.,R4		;yes. output raster
+1$:	MOV	#RASTER,R1
+2$:	MOV	#8.,R3
+3$:	ROLB	(R1)+		;shift next pel
+	ROLB	R0
+	SOB	R3,3$		;continue for eight pels
+	JSR	PC,XOUT		;output pels
+	CMP	R1,#RASEND
+	BLO	2$
+	SOB	R4,1$		;continue for all rows
+	MOV	#RASTER,COLPTR	;reset raster pointer
+	MOV	#RASTER,COLEND
+	MOV	#ENDIMG,R1	;copy end raster sequence
+4$:	MOVB	(R1)+,R0
+	BEQ	STATXT		;branch if done
+	JSR	PC,WRFIL
+	BR	4$
+;
+STA14:	MOVB	R0,COLCNT	;state 3. begin raster
+	MOV	#4*4,STATE	;exit to state 4
+	CMP	COLPTR,#RASEND	;is this last line
+	BHIS	STAEND		;branch if yes
+	CMP	COLPTR,#RASTER	;no. is this first line
+	BNE	2$		;branch if no
+	MOV	#RASIMG,R1	;yes. copy begin raster sequence
+1$:	MOVB	(R1)+,R0
+	BEQ	2$		;branch if done
+	JSR	PC,WRFIL
+	BR	1$
+;
+2$:	ADD	#MAXCOL,COLEND	;plant backstop
+	BR	STAEND
+;
+STA20:	MOVB	R0,COLCNT+1	;state 4. initialize raster
+	MOV	#5*4,STATE	;exit to state 5
+	BR	STAEND
+;
+STA24:	CMP	COLPTR,COLEND	;state 5. save column
+	BHIS	1$		;clip inbounds
+	MOVB	R0,@COLPTR
+	INC	COLPTR
+1$:	DEC	COLCNT		;is raster full
+	BNE	STAEND		;branch if no
+	BR	STATXT
+;
+; Subroutine to end current line
+;
+FLUSH:	TST	LINCNT		;is line empty
+	BEQ	2$		;branch if yes
+	MOV	#LFSEQ,R1	;no. output lf sequence
+1$:	MOVB	(R1)+,R0
+	BEQ	2$		;branch if complete
+	JSR	PC,WRFIL
+	BR	1$
+;
+2$:	CLR	LINCNT		;line is flush
+	RTS	PC
+;
+; Unix filter
+; r0 = octet
+;
+UNXPRT:	CMPB	R0,#LF		;is this \n
+	BNE	1$		;branch if no
+	MOV	#CR,R0		;yes. output cr/lf
+	JSR	PC,WRFIL
+	MOV	#LF,R0
+1$:	JSR	PC,WRFIL
+	RTS	PC
+;
+; Subroutine to encode and output hex octet
+; r0 = nybble
+;
+XOUT:	COM	R0		;output hex (apples are inverted)
+	MOV	R0,-(SP)
+	ASH	#-4.,R0		;output nybble 1
+	JSR	PC,WOUT
+	MOV	(SP)+,R0	;output nybble 2
+	JSR	PC,WOUT
+	RTS	PC
+;
+WOUT:	BIC	#^C17,R0	;convert to hex
+	MOVB	HEXTAB(R0),R0
+	JSR	PC,WRFIL	;output hex
+	INC	LINCNT		;is this end of line
+	CMP	LINCNT,#MAXLIN
+	BLO	1$		;branch if no
+	CLR	LINCNT		;yes. output cr/lf
+	MOV	#CR,R0
+	JSR	PC,WRFIL
+	MOV	#LF,R0
+	JSR	PC,WRFIL
+1$:	RTS	PC
+;
+; Subroutine to output byte
+; R0 = byte
+;
+WRFIL:	MOVB	R0,@BUFPTR	;stash byte
+	INC	BUFPTR
+	CMP	BUFPTR,#BUFEND	;is buffer full
+	BLO	1$		;branch if no
+	.WRITW	#ARGBLK,#0,#BUFFER,#MAXSIZ*256.,BLOCK ;yes. write block
+	BCS	2$		;branch if error
+	ADD	#MAXSIZ,BLOCK	;cool. mumble pointers
+	MOV	#BUFFER,BUFPTR
+1$:	RTS	PC
+;
+2$:	MOV	STACK,SP	;restore sanity
+	JMP	PRT30
+;
+; Data segment
+;
+	.PSECT	$BOSD,RO,D	;read-only data
+;
+HEXTAB:	.ASCII	'0123456789ABCDEF' ;hex convert table
+COM14:	.ASCIZ	'?PRTQ-F-File read error ^F'<SQ.FIL>
+COM12:	.ASCIZ	'?PRTQ-F-Output device error ^F'<SQ.DEV>
+;
+; PostScript text mode
+;
+PREAMB:	.ASCII	<EOT>'initgraphics'<CR><LF>
+	.ASCII	'/stm usertime def'<CR><LF> ;% job start time
+	.ASCII	'/pgc statusdict begin pagecount end def'<CR><LF>
+				;% get pagecount for later use
+	.ASCII	'/ps { print flush } def'<CR><LF> ;% print string on output
+	.ASCII	'/picstr 40 string def	%string for image data'<CR><LF>
+	.ASCII	'/raster { gsave 0 y translate %relocate origin'<CR><LF>
+	.ASCII	'576 8 scale		% map image to fill page'<CR><LF>
+	.ASCII	'960 24 1		%width height bits/sample'<CR><LF>
+	.ASCII	'[960 0 0 -24 0 24]	%matrix'<CR><LF>
+	.ASCII	'{ currentfile picstr readhexstring pop } %proc'<CR><LF>
+	.ASCII	'image grestore } def	%define'<CR><LF>
+	.ASCII	'clippath pathbbox pop pop exch pop 0 exch translate'<CR><LF>
+				;% move y origin up so bottom is the
+				;% bottom of the imageable region
+	.ASCII	'clippath pathbbox /pgtop exch def pop pop pop'<CR><LF>
+				;% save top of page in /pgtop
+	.ASCII	'/home { restore save newpath 0 pgtop moveto } def'<CR><LF>
+				;% begin a new page
+	.ASCII	'/af { statusdict /manualfeed false put } def'<CR><LF>
+				;% select paper tray
+	.ASCII	'/jobname (prtq) def'<CR><LF>
+	.ASCII	'userdict /jobname jobname put'<CR><LF>
+	.ASCII	'(Starting Job: ) ps jobname == flush'<CR><LF>
+	.ASCII	'af'<CR><LF>
+	.ASCII	'/y { currentpoint exch pop } def'<CR><LF> ;%y coord
+	.ASCII	'/dopage false def'<CR><LF> ;% is page dirty?
+	.ASCII	'/dpage { dopage { showpage /dopage false def } if } def'
+	.ASCII	<CR><LF>	;% print page if dirty
+	.ASCII	'/creep { /dopage true def y exch sub 0 exch moveto'<CR><LF>
+	.ASCII	' y pgbot lt { dpage home } if } def'<CR><LF>
+	.ASCII	'/n { r 12 creep } def	%lf'<CR><LF>
+	.ASCII	'/r { show 0 y moveto } def %cr'<CR><LF>
+	.ASCII	'/Courier-Bold findfont [ 12.0 0 0 12.0 0 0 ] makefont'
+	.ASCII	' setfont'<CR><LF>
+	.ASCII	'/pgtop pgtop 12 sub def'<CR><LF>
+	.ASCII	'/pgbot currentfont /FontBBox get 1 get neg 1000 div'
+	.ASCII	' 12 mul def'<CR><LF>
+	.ASCII	'18 0 translate'<CR><LF>
+	.ASCIZ	'save home'<CR><LF>
+;
+POSAMB:	.ASCII	'dpage home'<CR><LF>	;postamble
+	.ASCII	'(time  = ) ps usertime stm sub 1000 div =='<CR><LF>
+	.ASCII	'(pages = ) ps statusdict begin pagecount end pgc sub =='
+	.ASCII	' flush'<CR><LF>
+	.ASCIZ	'(Ending Job: ) ps jobname =='<CR><LF><EOT>
+;
+LFSEQ:	.ASCIZ	')n'<CR><LF>		;line feed	
+;
+FFSEQ:	.ASCIZ	')r dpage home'<CR><LF>	;form feed
+;
+; PostScript image mode
+;
+RASIMG:	.ASCIZ	'raster'<CR><LF>	;begin raster
+;
+ENDIMG:	.ASCIZ	'8 creep'<CR><LF>	;end raster
+	.EVEN
+;
+	.PSECT	$ERAS,RW,I	;read/write data
+;
+ARGBLK:	.BLKW	5		;rt-11 argument block
+STACK:	.BLKW	1		;stack stash
+STATE:	.BLKW	1		;output state
+BLOCK:	.BLKW	1		;output file block
+BUFPTR:	.BLKW	1		;output buffer pointer
+LINCNT:	.BLKW	1		;line column count
+COLCNT:	.BLKW	1		;column count
+COLPTR:	.BLKW	1		;current pointer
+COLEND:	.BLKW	1		;end of current row
+RASTER:	.BLKB	MAXCOL*3	;raster buffer
+RASEND	=	.		;end of raster (24 lines)
+	.EVEN
+BUFFER:	.BLKW	MAXSIZ*256.	;output buffer
+BUFEND	=	.		;end of output buffer
+;
+	.END
+                                                                                                                                                                                                                   

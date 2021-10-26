@@ -1,0 +1,1362 @@
+.MACRO	.COM
+;
+; This macro contains common register, message and character set
+; Definitions. it is included in all system modules.
+;
+; Common definitions (all machines)
+;
+	.IDENT	/V10/		;system version
+EXTBAS	=	060		;offset for extended emt codes
+SUPBAS	=	260		;offset for supervisor emt codes
+USEBAS	=	360		;offset for user emt codes
+BUFLDR	=	2*13.		;buffer header size (>=4 + max_leader words)
+BUFTLR	=	2*4		;buffer trailer size (>=4 words)
+QD.LEN	=	2*3		;size of cpu/semaphore queue head
+;
+; Format codes (SD.CTL)
+;
+TRPCTL	=	0		;trap msg
+STRCTL	=	1		;stream msg
+CHNCTL	=	2		;channel op msg
+PKTCTL	=	3		;packet msg
+;
+; Interprocess message format
+;
+.	=	0
+SD.DST:	.BLKB	1		;destination port id
+SD.CTL:	.BLKB	1		;control code
+SD.CHN:	.BLKB	1		;channel number/signal opcode
+SD.DEV:	.BLKB	1		;drive number
+SD.BLK:	.BLKW	1		;block number/connection id
+SD.ADR:	.BLKW	1		;buffer pointer/signal data
+SD.CNT:	.BLKW	1		;word count
+SD.AST:	.BLKW	1		;completion routine
+SD.END	=	.		;end of parameter message
+.ENDM	.COM
+.MACRO	.CHR
+;
+; Ascii x3.4-1968 character codes
+; Cc = communication control, fe = format effector,
+; Is = information separator
+;
+NUL	=	000		;null
+SOH	=	001		;start of heading (cc)
+STX	=	002		;start of text (cc)
+ETX	=	003		;end of text (cc)
+EOT	=	004		;end of transmission (cc)
+ENQ	=	005		;enquiry (cc)
+ACK	=	006		;acknowledge (cc)
+BEL	=	007		;bell
+BS	=	010		;backspace (fe)
+HT	=	011		;horizontal tabulation (fe)
+LF	=	012		;line feed (fe)
+VT	=	013		;vertical tabulation (fe)
+FF	=	014		;form feed (fe)
+CR	=	015		;carriage return (fe)
+SO	=	016		;shift out
+SI	=	017		;shift in
+DLE	=	020		;data link escape (cc)
+DC1	=	021		;device control 1
+DC2	=	022		;device control 2
+DC3	=	023		;device control 3
+DC4	=	024		;ddvice control 4
+NAK	=	025		;negative acknowledge (cc)
+SYN	=	026		;synchronous idle (cc)
+ETB	=	027		;end of transmission block (cc)
+CAN	=	030		;cancel
+EM	=	031		;end of medium
+SUB	=	032		;substitute
+ESC	=	033		;escape
+FS	=	034		;field separator (is)
+GS	=	035		;group separator (is)
+RS	=	036		;record separator (is)
+US	=	037		;unit separator (is)
+DEL	=	177		;delete
+.ENDM	.CHR
+.MACRO	.NVT
+;
+; Telnet nvt keyboard character interpretation
+;
+IAC	=	377		;interpret as command
+DONT	=	376		;don't negotiation code
+DO	=	375		;do negotiation code
+WONT	=	374		;won't negotiation code
+WILL	=	373		;will negotiation code
+SB	=	372		;begin subnegotiation sequence
+GA	=	371		;go ahead signal
+EL	=	370		;erase line function
+EC	=	367		;erase character function
+AYT	=	366		;are you there function
+AO	=	365		;abort output function
+IP	=	364		;interrupt process signal
+BRK	=	363		;break character
+DM	=	362		;data mark function
+NOP	=	361		;no operation
+SE	=	360		;end subnegotiation sequence
+.ENDM	.NVT
+.MACRO	.LGD
+;
+; Login file entry format
+;
+.	=	0
+LF.USE:	.BLKB	16.		;user id
+LF.PAS:	.BLKB	8.		;password (encrypted)
+LF.DIR:	.BLKW	4		;directory file name (rad50)
+LF.DAT:	.BLKW	1		;login date (rt-11 format)
+LF.TIM:	.BLKW	2		;login time (rt-11 format)
+LF.FLG:	.BLKB	1		;access flags
+AF.LOG	=	001		;login indicator
+AF.LGO	=	002		;logout indicator
+AF.MSG	=	004		;smtp mail indicator
+AF.MPM	=	010		;mpm mail indicator
+AF.FTP	=	020		;ftp indicator
+AF.PRT	=	040		;spool indicator
+LF.LEN	=	64.		;end of entry
+.ENDM	.LGD
+.MACRO	.PRT
+;
+; Spool control file entry format
+;
+.	=	0
+SQ.FIL:	.BLKW	4		;source filespec (rad50)
+SQ.SIZ:	.BLKW	1		;source file size (blocks)
+SQ.USR:	.BLKB	16.		;source userid (dk: only)
+;
+SQ.DEV:	.BLKW	4		;destination filespec (rad50)
+SQ.DST:	.BLKW	2		;destination host address
+SQ.USD:	.BLKB	16.		;destination userid
+SQ.PAD:	.BLKB	8.		;destination password (encrypted)
+;
+SQ.QUE:	.BLKW	4		;control filespec
+SQ.FLG:	.BLKW	1		;flags
+SX.ACK	=	000001		;acknowledge delivery
+SX.DEL	=	000002		;delete file after transfer
+SX.RMT	=	000004		;remote host
+SX.LST	=	000400		;list file
+SX.AQX	=	001000		;autospool list file
+SX.UNX	=	002000		;unix file
+SX.MPM	=	004000		;mail (mpm) file
+SX.FLT	=	010000		;filter required
+SQ.DAT:	.BLKW	1		;date queued
+SQ.TIM:	.BLKW	2		;time queued
+SQ.CPY:	.BLKB	1		;number of copies
+SQ.BAN:	.BLKB	1		;number of banner pages
+SQ.LEN	=	.		;end of entry
+.ENDM	.PRT
+.MACRO	.SMF
+;
+; Global semaphore codes
+;
+SF.USR	=	0*QD.LEN	;usr (directory)
+SF.UPD	=	1*QD.LEN	;update message header
+SF.APN	=	2*QD.LEN	;append message
+SF.SMP	=	3*QD.LEN	;smtp mailer
+SF.PRG	=	4*QD.LEN	;purge message file
+SF.PFL	=	5*QD.LEN	;login/profile
+SF.RUT	=	6*QD.LEN	;routing data base
+SF.MAX	=	6*QD.LEN	;maximum value
+.ENDM	.SMF
+.MACRO	.ERR
+;
+; Rt-11 system error codes
+;
+ER.USR	=	-1		;called usr from completion routine (not used)
+ER.HND	=	-2		;no device handler (not used)
+ER.DIR	=	-3		;usr-directory i/o error
+ER.FET	=	-4		;fetch error (not used)
+ER.OVL	=	-5		;ovl-overlay read error
+ER.OVF	=	-6		;usr-directory overflow
+ER.ADR	=	-7		;rmon-illegal instruction or operand
+ER.CHN	=	-10		;rmon-illegal channel number
+ER.EMT	=	-11		;rmon-illegal emt
+;
+; Dcn/bos system error codes
+;
+ER.FNF	=	-12		;load-file not found
+ER.INP	=	-13		;load-input error
+ER.FMT	=	-14		;load-bad file format
+ER.BIG	=	-15		;load-program too large
+ER.STR	=	-16		;load-invalid start address
+ER.FPN	=	-17		;rmon-floating-point trap
+ER.ATN	=	-20		;rmon-attention interrupt
+ER.TIM	=	-21		;rmon-timer interrupt
+ER.MEM	=	-22		;rmon-memory-parity trap
+ER.MMU	=	-23		;rmon-memory-management abort
+ER.IOT	=	-24		;rmon-illegal iot trap
+ER.TRP	=	-25		;rmon-illegal trap trap
+ER.QUE	=	-26		;rmon-event queue overflow
+ER.ERR	=	-26		;beginning of system error codes
+ER.SIG	=	ER.ERR-10	;beginning of net signal codes
+.ENDM	.ERR
+.MACRO	.PSA
+;
+; This macro contains register, parameter and process save area
+; definitions. it is included in all modules needing access to
+; these areas. in general, these include device processes, but
+; not application programs.
+;
+; Process priorities
+;
+PRI0	=	0*QD.LEN	;spare
+PRI1	=	1*QD.LEN	;user/service processes
+PRI2	=	2*QD.LEN	;utility processes
+PRI3	=	3*QD.LEN	;asynchronous processes
+PRI4	=	4*QD.LEN	;synchronous processes
+;
+; Register save area (reg)
+;
+.	=	0
+REGR0:	.BLKW	1		;r0
+REGR1:	.BLKW	1		;r1
+REGR2:	.BLKW	1		;r2 (dev pointer)
+REGR3:	.BLKW	1		;r3 (par pointer)
+REGR4:	.BLKW	1		;r4 (reg pointer)
+REGR5:	.BLKW	1		;r5 (psa pointer)
+REGPC:	.BLKW	1		;pc (program counter)
+REGPS:	.BLKW	1		;ps (processor status)
+REGEND	=	.		;end of register save area
+;
+; Parameter save area (par)
+;
+.	=	0
+PARPID:	.BLKB	1		;pid
+PARIDX:	.BLKB	1		;index
+PARTPE:	.BLKW	1		;type
+PARMAX:	.BLKW	1		;max blocks
+PARVEC:	.BLKW	1		;interrupt vector ptr/psa length
+PARREG:	.BLKW	1		;device register ptr/temporary
+PAROPT:	.BLKW	1		;option bits
+PARLNG:	.BLKW	1		;length of port table
+PARLDN	=	.		;beginning of port table
+;
+; Process save area (psa)
+;
+.	=	0
+PSAPID:	.BLKB	1		;port id
+PSASTS:	.BLKB	1		;status bits
+	.EVEN
+PSASTK:	.BLKW	1		;kernel stack pointer
+PSASTP:	.BLKW	1		;user/supervisor stack pointer
+PSAPAR:	.BLKW	1		;parameter area pointer
+PSAWDW:	.BLKW	2		;window segment block numbers (vos only)
+PSAMSG:	.BLKW	2		;message queue head
+PSACPQ:	.BLKW	1		;cpu queue pointer
+PSATMQ:	.BLKW	1		;timer queue pointer
+PSATIM:	.BLKW	1		;residual time to next timer interrupt
+PSACPU:	.BLKW	1		;accumulated time in ready state
+PSASYN:	.BLKW	1		;transfer vector pointer
+PSACOD:	.BLKW	1		;interrupt code
+PSAPRI:	.BLKB	1		;priority
+	.EVEN
+PSAEND	=	.		;end of process save area
+.ENDM	.PSA
+.MACRO	.PAT	LNG,ADR,PRI,VEC,?L ;process header
+	.WORD	LNG,PRI,ADR,L-.-2
+	.WORD	VEC
+L:
+.ENDM	.PAT
+.MACRO	.TTD			;(must follow .psa macro)
+;
+; This macro contains parameter and process save area definitions
+; For terminal devices.
+;
+; Option bits (paropt)
+;
+DTEBIT	=	000001		;dce (0), dte (1)
+IMGBIT	=	000002		;ascii (0), image (1)
+MUXBIT	=	000004		;dl11 (0), dz11 (1)
+BRKBIT	=	000010		;break (0), dtr (1) (dz11 only)
+BZYBIT	=	100000		;device in use
+;
+; Auxilliary bits (paraux)
+;
+HLDBIT	=	100000		;block-output bit
+BLKBIT	=	040000		;block-input bit
+BIPBIT	=	020000		;output timer bit
+CHRBIT	=	010000		;output char pending bit
+ESCBIT	=	004000		;select intercept bit
+STFBIT	=	002000		;output destuffing bit
+;
+; Interrupt codes
+;
+INIT	=	002+EXTBAS	;initialize
+SIO	=	003+EXTBAS	;start i/o
+INTR	=	004+EXTBAS	;device interrupt
+;
+; Ttd parameter save area extension (par)
+;
+.	=	PARLDN
+PARPRT:	.BLKW	4		;0 usr port adr
+PARRMT:	.BLKW	4		;1 rmt port adr
+PARECP:	.BLKW	4		;2 adv port adr
+PARTLK:	.BLKW	4		;3 scp port adr
+PARAUX:	.BLKW	1		;auxilliary bits
+PARNBU:	.BLKW	1		;buffer overflow
+PARINR:	.BLKW	1		;input error
+PAROUT:	.BLKB	1		;destination pid
+PARMAR:	.BLKB	1		;output right margin
+PARPAG:	.BLKB	1		;output bottom margin
+PARXSC:	.BLKB	1		;intercept character
+	.EVEN
+PARTTD	=	.		;end of ttd parameter area extension
+;
+; Process save area extension (ttr)
+;
+.	=	PSAEND
+TTRMSG:	.BLKW	SD.END/2	;parameter message
+TTREND	=	.		;end of ttr extension
+;
+; Process save area extension (ttx)
+;
+.	=	PSAEND
+TTXMSG:	.BLKW	SD.END/2	;parameter message
+TTXCOL:	.BLKB	1		;column counter
+TTXLIN:	.BLKB	1		;line counter
+TTXEND	=	.		;end of ttx extension
+.ENDM	.TTD
+.MACRO	.TTP			;(must follow .psa macro)
+;
+; Tty parameter save area extension (par)
+;
+.	=	PARTTD
+PARPAD:	.BLKW	1		;carriage-return delay
+PARSET:	.BLKW	1		;control parameters
+PARLPR:	.BLKW	1		;line parameters (dz11 only)
+.ENDM	.TTP
+.MACRO	.SPD			;(must follow .psa macro)
+;
+; This macro contains parameter save area definitions
+; For the linear predictive codec process.
+;
+; Parameter save area extension (lpc)
+;
+.	=	PARLDN
+PARVOX:	.BLKW	1		;vox threshold
+PARON:	.BLKB	1		;vox attack tine constant
+PAROFF:	.BLKB	1		;vox release time constant
+PARDLY:	.BLKB	1		;ttg delay
+PARTRM:	.BLKB	1		;termination flags
+PARPOD:	.BLKB	1		;playout delay
+	.EVEN
+.ENDM	.SPD
+.MACRO	.FLG			;define flag bits
+;
+; Flags bits (iohflg)
+;
+TTIBIT	=	040000		;ttin wait bit
+TTOBIT	=	020000		;ttout wait bit
+SROBIT	=	010000		;server output select
+SECBIT	=	004000		;ttyin suspend bit
+IACBIT	=	002000		;telnet iac bit
+TDMBIT	=	001000		;telnet dm bit
+OPEBIT	=	000400		;server connection open
+CLSBIT	=	000200		;server close at .exit
+INTBIT	=	000100		;attention-interrupt bit
+CHRBIT	=	000040		;char-mode bit (for telnet)
+ENBBIT	=	000020		;emulator-mode bit
+NETRDY	=	000010		;server input ready bit
+SERBIT	=	000004		;soft error bit
+TELBIT	=	000002		;disable telnet negotiations
+TIMBIT	=	000001		;timer-interrupt bit
+.ENDM	.FLG
+.MACRO	.IOD			;define ioh extension
+;
+; Emulator monitor extension (ioh)
+;
+.	=	0
+IOHFLG:	.BLKW	1		;000 event flags
+IOHCAP:	.BLKW	1		;002 capability flags
+IOHCSW	=	.		;beginning of channel table
+.	=	266		;reserve 4-264 ($csw)
+IOHBRK:	.BLKW	1		;266 ($usrlc) current program break
+IOHCLI:	.BLKW	1		;270 cli virtual address
+IOHBOT:	.BLKW	1		;272 low virtual address
+IOHTOP:	.BLKW	1		;274 high virtual address
+.	=	302		;reserve 276-300 (sysver, config)
+QUEBUF:	.BLKW	1		;302 signal queue pointer
+MSGBUF:	.BLKW	1		;304 message buffer pointer
+OUTBUF:	.BLKW	1		;306 output buffer pointer
+INPBUF:	.BLKW	1		;310 input buffer pointer
+CSIBUF:	.BLKW	1		;312 csi buffer pointer
+IOHPAR:	.BLKW	1		;314 parameter region pointer
+IOHGTI:	.BLKW	1		;316 buffer input get pointer
+IOHPTI:	.BLKW	1		;320 buffer input put pointer
+IOHGTO:	.BLKW	1		;322 buffer output get pointer
+IOHPTO:	.BLKW	1		;324 buffer output put pointer
+IOHISG:	.BLKW	1		;326 input buffer put segment pointer
+IOHDEV:	.BLKW	1		;330 current output device
+IOHERR:	.BLKW	1		;332 bus/instruction error trap address
+IOHFPA:	.BLKW	1		;334 floating-point trap address
+IOHSCC:	.BLKW	1		;336 attention-interrupt address
+IOHTIA:	.BLKW	1		;340 timer-interrupt address
+IOHTID:	.BLKW	1		;342 timer-interrupt id
+IOHPUT:	.BLKW	1		;344 signal queue put pointer
+IOHGET:	.BLKW	1		;346 signal queue get pointer
+IOHSIG:	.BLKW	1		;350 telnet server signal opcode
+IOHSRV:	.BLKW	1		;352 telnet server ccb pointer
+IOHDAT:	.BLKW	1		;354 telnet server message data
+IOHCTP:	.BLKW	1		;356 channel table pointer
+IOHWCT:	.BLKW	1		;360 words transferred last i/o operation
+IOHTIM:	.BLKW	2		;362 timer-interrupt residual time
+IOHDEC:	.BLKW	1		;364 decnet network header pointer
+IOHNCA:	.BLKW	1		;366 network trap address
+.	=	372		;reserve 370 (confg2)
+FLAG1:	.BLKB	1		;372 utility flag 1
+FLAG2:	.BLKB	1		;373 utility flag 2
+IOHRPY:	.BLKB	1		;374 reply port id
+IOHACK:	.BLKB	1		;375 input port id
+TELOPT:	.BLKB	1		;376 telnet command
+IOHSPD:	.BLKB	1		;377 suspend counter
+QUEENB:	.BLKB	1		;400 completion routine level
+IOHOSG:	.BLKB	1		;401 input buffer segment byte count
+IOHBAS:	.BLKB	1		;402 cli display/alter window pid
+QUESIG:	.BLKB	1		;403 signals queued
+	.EVEN
+.	=	406		;reserve 404 (pnptr)
+.	=	414		;reserve 412 (suffix)
+IOHBLK:	.BLKW	22.		;utility parameter area
+IOHUSR:	.BLKB	16.		;login userid
+	.EVEN
+IOHEND	=	.		;end of fixed offsets
+.ENDM	.IOD
+.MACRO	.CHN
+;
+; Chain area format
+;
+.	=	0
+SRVNAM:	.BLKW	4		;server file name (rad50)
+ARGLNG:	.BLKW	1		;argument length
+ARGSTR:	.BLKB	80.		;argument string
+CONBLK:	.BLKW	10.		;tcp connection block (from $stat)
+LCLNAM:	.BLKB	40.		;local host name
+RMTNAM:	.BLKB	40.		;foreign host name
+ENDCHN	=	.		;end of chain area
+.ENDM	.CHN
+.MACRO	.CLP
+;
+; This macro defines the rt-11 dsect used by the cli and rt-11 emulator
+; modules. it contains the rmon "monitor offset words", buffers and general
+; communication areas used to run rt-11 programs.
+;
+; Note: (*) indicates format or function not compatible with rt-11
+; version 4
+;
+; Process options (par)
+;
+LOGIN$	=	000001		;login required
+SERVE$	=	000002		;tcp server active
+LGFIL$	=	000004		;enable log file (log process)
+LGTTY$	=	000010		;enable log device (log process)
+SMTPQ$	=	000020		;enable mail (log process)
+SPOLQ$	=	000040		;enable spool (log process)
+NTPGO$	=	000100		;enable argument string (chain)
+;
+; Channel status table entry format
+;
+.	=	0
+C.STAT:	.BLKW	1		;status word
+HDERR$	=	000001		;i/o error
+INDX$M	=	000076		;index (bos ldn) mask (*)
+RENAM$	=	000100		;rename bit
+DWRIT$	=	000200		;directory write bit
+DBLK$M	=	017400		;directory block number mask
+EOF$	=	020000		;end of file bit
+BUSY$	=	040000		;channel busy bit
+ACTIV$	=	100000		;channel open flag
+C.SBLK:	.BLKW	1		;starting block number
+C.LENG:	.BLKW	1		;maximum file length (blocks)
+C.USED:	.BLKW	1		;current file length (blocks)
+C.DEVQ:	.BLKW	1		;virtual volume id, unit id (*)
+CD.DIR	=	200		;directory-structured device
+CD.BLK	=	100		;block-transfer device
+CD.SPQ	=	040		;spool device
+;
+; System common area definitions
+;
+.	=	20
+IOTVEC:	.BLKW	2		;20 iot vector
+.	=	34
+TRPVEC:	.BLKW	2		;34 trap vector
+USERPC:	.BLKW	1		;40 initial user pc
+USERSP:	.BLKW	1		;42 initial user sp
+JSW:	.BLKW	1		;44 job status word (*)
+GTLIN$	=	000010		;1: nonterminating .gtlin
+ESCSQ$	=	000020		;1: esc sequence in progress
+ESCFL$	=	000040		;1: esc sequence enabled
+TCBIT$	=	000100		;1: inhibit terminal wait
+HLTER	=	000200		;1: halt on i/o error
+CHAIN$	=	000400		;1: chain
+OVLY$	=	001000		;1: overlay module
+VIRT$	=	002000		;1: virtual-image module
+CHNIF$	=	004000		;1: pass line to monitor
+TTSPC$	=	010000		;0: line mode, 1: character mode
+RSTRT$	=	020000		;1: restart enabled
+TTLC$	=	040000		;1: lower-case input
+USWAP$	=	100000		;usr swap control
+USRBGN:	.BLKW	1		;46 usr load address
+USRTOP:	.BLKW	1		;50 high memory address
+ERRBYT:	.BLKB	2		;52 system/user error bytes
+SYSPTR:	.BLKW	1		;54 monitor address
+TERMIN:	.BLKB	2		;56 terminal fill control
+;
+; Rt-11 monitor offset words (used by rt-11 emulator)
+;
+.	=	0
+$RMON:	.BLKW	2		;000 interrupt address: jmp $inten
+$CSW:	.BLKW	5*16.		;004 channel table (16 channels)
+$SYSCH:	.BLKW	5		;244 internal channel (kmon only)
+BLKEY:	.BLKW	1		;256 active directory block number
+CHKEY:	.BLKW	1		;260 active directory device
+$DATE:	.BLKW	1		;262 current date
+DFLG:	.BLKW	1		;264 directory operation in progress flag
+$USRLC:	.BLKW	1		;266 usr area pointer
+QCOMP:	.BLKW	1		;270 i/o exit address
+SPUSR:	.BLKW	1		;272 special device error flag
+SYUNIT:	.BLKW	1		;274 system boot device
+SYSVER:	.BLKW	1		;276 monitor version/release number
+CONFIG:	.BLKW	1		;300 configuration word
+FBMON$	=	000001		;0: sj monitor, 1: fb/xm monitor
+FUZZY$	=	000002		;0: rt-11, 1: fuzzball (*)
+BIT22$	=	000004		;0: 18-bit bus, 1: 22-bit bus (*)
+BATCH$	=	000010		;1: batch controls background
+CLK50$	=	000040		;0: 60-hz clock, 1: 50-hz clock
+HWFPU$	=	000100		;1: fp11 floating-point unit present
+FJOB$	=	000200		;1: foreground/system job active
+GTLNK$	=	000400		;1: graphics scroller active
+USR$	=	001000		;1: usr permanently resident
+QUEUE$	=	002000		;1: queue program running
+LSI11$	=	004000		;1: no ps (lsi-11)
+KT11$	=	010000		;1: xm monitor mapped system
+LKCS$	=	020000		;1: line clock has csr
+KW11P$	=	040000		;1: kw11-p clock present
+CLOCK$	=	100000		;1: system clock present
+SCROLL:	.BLKW	1		;302 vt11 scroller entry address
+TTKS:	.BLKW	2		;304 console input register addresses
+TTPS:	.BLKW	2		;310 console output register addresses
+MAXBLK:	.BLKW	1		;314 maximum file size (blocks)
+E16LST:	.BLKW	1		;316 emt dispatch table pointer (batch only)
+CNTXT:	.BLKW	1		;320 impure area pointer
+JOBNUM:	.BLKW	1		;322 job number
+SYNCH:	.BLKW	1		;324 .synch entry address
+LOWMAP:	.BLKW	12		;326 low-memory protection bit map
+USRLOC:	.BLKW	1		;352 usr entry address
+GTVEC:	.BLKW	1		;354 vt11 display stop vector address
+ERRCNT:	.BLKW	1		;356 error count
+$MTPS:	.BLKW	1		;360 move to ps routine address
+$MFPS:	.BLKW	1		;362 move from ps routine address
+SYINDX:	.BLKW	1		;364 system device index
+STATWD:	.BLKW	1		;366 indirect file state word
+CONFG2:	.BLKW	1		;370 extension configuration word
+CACHE$	=	000001		;1: cache memory present
+MPTY$	=	000002		;1: parity memory present
+SWREG$	=	000004		;1: switch register present
+LIGHT$	=	000010		;1: lights register present
+EIS$	=	000400		;1: eis option present
+VS6$0	=	001000		;0: vt11, 1: vs60
+PDP70$	=	040000		;1: pdp11/70
+PDP60$	=	100000		;1: pdp11/60
+SYSGEN:	.BLKW	1		;372 sysgen features word
+USRARE:	.BLKW	1		;374 size of usr (bytes)
+ERRLEV:	.BLKW	1		;376 error count abort threshold
+EMTRTN:	.BLKW	1		;400 internal offset (batch only)
+FORK:	.BLKW	1		;402 offset of .fork routine
+PNPTR:	.BLKW	1		;404 offset of $pname table
+MONAME:	.BLKW	2		;406 name of monitor file (rad50)
+SUFFIX:	.BLKW	1		;412 suffix of monitor name
+CLPEND	=	.		;414 end of monitor offset words
+.ENDM	.CLP
+.MACRO	.DFBLK			;define block transfer command codes
+;
+; Block transfer command codes
+;
+BC.NOP	=	1*4		;no-operation
+BC.RED	=	2*4		;read block
+BC.WRT	=	3*4		;write block
+BC.WCK	=	4*4		;write check block
+BC.SEK	=	5*4		;seek block
+BC.CTL	=	6*4		;send controller data
+BC.SNS	=	7*4		;read controller data
+;
+; Block transfer reply codes
+;
+BR.OK	=	0*40		;normal reply
+BR.EOF	=	1*40		;end of file
+BR.ERR	=	2*40		;unspecified error
+BR.PAR	=	3*40		;command specification error
+BR.DCK	=	4*40		;data check
+BR.OVR	=	5*40		;data overrun
+BR.SCK	=	6*40		;seek or position error
+.ENDM
+.MACRO	.DSK			;(must follow .psa macro)
+;
+; This module contains parameter and process save area extensions
+; For direct-access devices (disk/tape).
+;
+; Parameter save area extension (par)
+;
+.	=	PARLDN
+PARCRC:	.BLKW	1		;data checks
+PARSEK:	.BLKW	1		;seek errors
+PARTRY:	.BLKW	1		;total retries
+PARERR:	.BLKW	1		;hard errors
+;
+; Assembly parameters
+;
+DSKSTK	=	10		;dsk process stack length
+;
+; Process save area extension (das)
+;
+.	=	PSAEND
+DASPAR:	.BLKW	SD.END/2	;parameter message
+DASOPN	=	DASPAR+SD.CTL	;operation code
+DASDRV	=	DASPAR+SD.DEV	;drive number
+DASBLK:	.BLKW	1		;current block number
+DASRWC:	.BLKW	1		;residual word count
+DASADR:	.BLKW	1		;physical address bits 0-15
+DASERC:	.BLKB	1		;error retry count
+DASADX:	.BLKB	1		;physical address bits 16-21
+	.EVEN
+DASEND	=	.		;end of das extension
+.ENDM	.DSK
+.MACRO	.FAX			;dacom 450 device par region
+;
+; Parameter save area (par)
+;
+.	=	PARLDN
+PARHRD:	.BLKW	1		;hard errors
+PARURE:	.BLKW	1		;unreported errors
+PARERR:	.BLKW	1		;hardware error (overrun)
+PAROVF:	.BLKW	1		;buffer overflow
+.ENDM	.FAX
+.MACRO	.SUP			;hostel proc
+;
+; Option bits (paropt)
+;
+CLKHLD	=	100000		;enable reset following leap
+CLKTRC	=	020000		;trace all clock updates
+;
+; Parameter save area (hos)
+;
+.	=	PARLDN
+PARPRO:	.BLKW	1		;processes
+PARINT:	.BLKW	1		;interrupt vectors
+PARNIB:	.BLKW	1		;nibbles
+PARCNG:	.BLKW	1		;packets
+PARPKT:	.BLKW	2		;free storage
+;
+PARCLK:	.BLKW	SD.END/2	;last clock update
+CLKCTL	=	PARCLK		;trap control
+CLKTYP	=	PARCLK+2	;clock type
+CLKSTR	=	PARCLK+3	;clock stratum
+CLKERR	=	PARCLK+4	;clock dispersion
+CLKREF	=	PARCLK+6	;clock offset (3 words)
+CLKPRE:	.BLKW	1		;precision of local clock
+CLKDRF:	.BLKW	1		;estimated drift rate
+PARINC:	.BLKW	2		;last clock update increment
+PARUPT:	.BLKW	2		;uptime
+PARDCC:	.BLKW	1		;drift compensation coefficient
+PARCGT:	.BLKW	1		;congestion threshold
+PARRTC:	.BLKW	2		;routing changes
+PARTRN:	.BLKW	2		;routing-trace address
+;
+PARTRB:	.BLKW	SD.END/2	;last trap
+PARTRL:	.BLKW	1		;lost traps
+PARCKH:	.BLKB	1		;master clock hid
+PARIPH:	.BLKB	1		;scanner process hid
+PARTRP:	.BLKB	1		;trap process pid
+	.EVEN
+;
+PARIDS:	.BLKW	1		;internet address relative pointer
+PARVPT:	.BLKW	1		;foreign host table virtual pointer
+PARLCL:	.BLKW	2		;local host table physical pointer
+PARNET:	.BLKW	2		;foreign host table physical pointer
+PARHOS:	.BLKW	2		;routing table physical pointer
+;
+PARPDN:	.BLKW	4		;sequence number, pc, code, active proc
+PARPDR:	.BLKW	10		;registers r0-r5,sp,pc
+PARPDS:	.BLKW	10		;stack contents
+PARPDP:	.BLKW	30		;psa contents
+PARTRC	=	.		;beginning of trace area
+.ENDM	.SUP
+.MACRO	.GAT			;gateway/bridge proc
+;
+; Assembly parameters
+;
+POLCON	=	2		;poll interval (for 4x base)
+;
+; Option bits (paropt)
+;
+HLOBIT	=	040000		;send hello
+XLPBIT	=	020000		;external loopback
+BSTBIT	=	010000		;point-point (0), broadcast (1)
+GATBIT	=	004000		;clone (0), foreign (1)
+DWNBIT	=	002000		;disable routing
+KILBIT	=	001000		;disable link
+DLXBIT	=	000400		;measured delay (0), configured delay (1)
+ERMBIT	=	000200		;disable network-level advisories
+SBNBIT	=	000100		;subnet hello
+DLMBIT	=	000040		;disable link-level advisories
+;
+; Extended interrupt codes
+;
+ASY	=	1		;asynchroonous interrupt
+INI	=	2		;initialize
+SIO	=	3		;start i/o
+INT	=	4		;device interrupt
+RSX	=	5		;reset link (output only)
+;
+; Leader linkage codes
+;
+INR	=	0		;initialize input
+INP	=	1		;start input
+SDR	=	2		;process leader
+RDR	=	3		;process redirect
+INX	=	4		;initialize output
+OUT	=	5		;start output
+RST	=	6		;reset link
+;
+; Parameter save area (gat)
+;
+.	=	PARLDN
+PARPRT:	.BLKW	4		;0 direct-access port adr
+PARRMT:	.BLKW	4		;1 monitor port adr
+PARSBT:	.BLKW	1		;subnet type
+PARSBN:	.BLKW	1		;pointer to subnet transfer vector
+PARTRY:	.BLKW	1		;poll interval
+PARTSP:	.BLKW	1		;offset of last hello msg
+PARTFL:	.BLKW	1		;length of last hello msg
+PARADR:	.BLKW	2		;foreign address
+PARBIA:	.BLKW	1		;delay bias
+PARRHO:	.BLKW	1		;queue size
+PARSTX:	.BLKB	1		;status
+PARMIN:	.BLKB	1		;hello interval (polls)
+PARSLB:	.BLKB	1		;select bit
+	.EVEN
+; statistics area
+PARINP:	.BLKW	2		;input packets
+PARFMT:	.BLKW	1		;bad format
+PARCKS:	.BLKW	1		;bad checksum
+PARMIS:	.BLKW	1		;dropped
+PARHLO:	.BLKW	2		;hello message received
+PARERR:	.BLKW	1		;input errors
+PARRTN:	.BLKW	1		;returned
+PARNBF:	.BLKW	1		;no buffer
+PAROUT:	.BLKW	2		;output packets
+PARFRG:	.BLKW	1		;fragment error
+PARTTL:	.BLKW	1		;time exceeded
+PARPMP:	.BLKW	1		;preempted
+PARHLX:	.BLKW	2		;hello messages sent
+PARNRY:	.BLKW	1		;output errors
+PARRET:	.BLKW	1		;icmp messages
+PARQNC:	.BLKW	1		;quench messages
+PARPRI	=	.		;end of primary area
+;
+; Serial-line extension
+;
+.	=	PARPRI
+PARIOV:	.BLKW	1		;receive errors
+PAROOV:	.BLKW	1		;transmit errors
+PARBZY:	.BLKW	1		;no buffer
+PARPAM:	.BLKW	1		;preamble errors
+PARVIO:	.BLKW	1		;protocol errors
+PARBOX:	.BLKW	1		;mailbox
+;
+; Arpanet extension
+;
+.	=	PARPRI
+PARLDR:	.BLKW	1		;control messages
+PARLDE:	.BLKW	1		;control errors
+PARLDL:	.BLKW	5		;last control message
+PARLDX	=	.		;end of control area
+;
+; Assembly parameters
+;
+NTISTK	=	16.		;nti process stack length (words)
+NTOSTK	=	16.		;nto process stack length (words)
+	.EVEN
+;
+; Process save area extension (ntr)
+;
+.	=	PSAEND
+NTRTIM:	.BLKW	2		;last timestamp
+NTRLNA:	.BLKB	10.		;sender local address
+	.EVEN
+GATENR	=	.		;end of receive extension
+;
+; Process save area extension (ntx)
+;
+.	=	PSAEND
+DASPAR	=	.		;parameter message
+RPYPID:	.BLKB	1		;SD.DST (destination port id)
+TYPE:	.BLKB	1		;SD.CTL (control code)
+SIGNAL:	.BLKB	1		;SD.CHN (signal opcode)
+FRMPID:	.BLKB	1		;SD.DEV (source port id)
+MSGIDN:	.BLKW	1		;SD.BLK (connection id)
+MSGDAT:	.BLKW	1		;SD.ADR (message data)
+MSGIDM:	.BLKW	2		;SD.CNT,SD.AST (message id/preempt addr)
+RESTIM:	.BLKW	1		;residual time to next poll
+HLOTIM:	.BLKW	1		;residual polls to next hello
+FRGINF:	.BLKW	1		;fragment info
+NTXBGN:	.BLKW	1		;beginning of fragment data
+NTXEND:	.BLKW	1		;end of fragment data
+PMPLNK:	.BLKW	3		;preemption controls
+GATPTR:	.BLKW	1		;type-1 hello pointer
+ACCTIM:	.BLKW	1		;accumulated queue time since last poll
+HLDOFF:	.BLKW	1		;clock holdoff counter
+GATENX	=	.		;end of transmit extension
+.ENDM	.GAT
+.MACRO	.TAP			;tapr packet radio
+;
+; Assembly parameters
+;
+CMDLEN	=	82.		;max command length (including header)
+SPFMAX	=	100.		;max spf list entries
+CHNMAX	=	5		;max channels (must match tapr)
+CALMAX	=	10.		;max callsign length (including backstop)
+MSGMAX	=	81.		;max display msg length (including backstop)
+RUTMAX	=	9.		;max route length (including backstop)
+;
+; Channel table entry format
+;
+.	=	0
+CT.STA:	.BLKB	1		;state
+CT.TTL:	.BLKB	1		;time to live
+CT.NID:	.BLKB	1		;node id
+CT.WGT:	.BLKB	1		;route weight
+CT.TYP:	.BLKB	1		;last message type
+CT.MSG:	.BLKB	MSGMAX		;last message data
+	.EVEN
+CT.LEN	=	.		;length of channel table entry
+;
+; Node table entry format
+;
+.	=	0
+RT.UPD:	.BLKW	2		;time last heard
+RT.SRC:	.BLKB	CALMAX		;callsign
+RT.CNG:	.BLKB	1		;number of incident links
+RT.TYP:	.BLKB	1		;flags
+RT.WGT:	.BLKB	1		;route weight
+RT.PEA:	.BLKB	RUTMAX		;route
+	.EVEN
+RT.LEN	=	.		;length of node table entry
+;
+; Link table entry format
+;
+.	=	0
+LT.TO:	.BLKB	1		;to nid
+LT.FM:	.BLKB	1		;from nid
+LT.TTL:	.BLKB	1		;age
+LT.TYP:	.BLKB	1		;flags
+LX.SRC	=	001		;source
+LX.DIG	=	002		;digipeated
+LX.HRD	=	004		;verified path
+LX.SYN	=	010		;synchronized
+LX.RCL	=	020		;reciprocal
+LX.IPR	=	040		;ip indicator
+LX.END	=	200		;last entry
+	.EVEN
+LT.LEN	=	.		;length of link table entry
+;
+; Parameter save area extension (pax)
+;
+.	=	PARPRI
+;
+; Path weight factors (for spf)
+;
+PAXW0:	.BLKW	1		;baseline
+PAXW1:	.BLKW	1		;digipeated
+PAXW2:	.BLKW	1		;unverified
+PAXW3:	.BLKW	1		;unsychronized
+PAXW4:	.BLKW	1		;reciprocal
+PAXW5:	.BLKW	1		;countdown interval (hello intervals)
+PAXW6:	.BLKW	1		;max link age
+PAXW7:	.BLKW	1		;initial route number (debug)
+;
+PAXSRC:	.BLKW	1		;offset to node table
+PAXLNK:	.BLKW	1		;offset to link table
+PAXCHN:	.BLKB	1		;direct access channel
+PAXENB:	.BLKB	1		;poll control
+PAXPOL:	.BLKB	1		;poll channel
+PAXSRX:	.BLKB	2		;max, remaining nodes
+PAXLNX:	.BLKB	2		;max, remaining links
+PAXQRZ:	.BLKB	CALMAX		;callsign buffer
+;
+PAXCTL:	.BLKB	1		;type
+PAXHRD:	.BLKB	1		;heard
+PAXDST:	.BLKB	1		;destination
+PAXRUT:	.BLKB	RUTMAX		;route
+	.EVEN
+PAXCTB	=	.		;channel table
+;
+; Process save area extension (asr)
+;
+.	=	GATENR
+ASRSTA:	.BLKW	1		;input state
+ASRADR:	.BLKW	1		;buffer pointer
+ASRCNT:	.BLKW	1		;byte count
+ASRBCT:	.BLKW	1		;max byte count
+ASRMSG:	.BLKW	SD.END/2	;stream message buffer
+ASRHDR:	.BLKB	1		;channel number
+ASRPCT:	.BLKB	1		;timeout counter
+	.EVEN
+	.BLKW	REGEND/2+NTISTK+10 ;process stack
+ASREND	=	.		;end of asr extension
+;
+; Process save area extension (asx)
+;
+.	=	GATENX
+ASXSTA:	.BLKW	1		;output state
+ASXADR:	.BLKW	1		;buffer pointer
+ASXCNT:	.BLKW	1		;byte count
+ASXPTR:	.BLKW	1		;message buffer pointer
+ASXMIN:	.BLKW	1		;spf min weight
+ASXSUC:	.BLKW	2		;spf successor
+ASXTMP:	.BLKW	3		;spf temporary
+ASXSPF:	.BLKW	SPFMAX*3+1	;spf list
+ASXFLR:	.BLKB	1		;spf route number
+ASXHOP:	.BLKB	1		;spf max hops
+ASXSPC:	.BLKB	1		;spf list size
+ASXLNT:	.BLKB	1		;minute countdown
+ASXLHR:	.BLKB	1		;hour countdown
+ASXHDR:	.BLKB	2		;message header
+ASXBUF:	.BLKB	CMDLEN		;message buffer
+	.EVEN
+	.BLKW	REGEND/2+NTOSTK+10 ;process stack
+ASXEND	=	.		;end of asx extension
+.ENDM	.TAP
+.MACRO	.ETH			;define ethernet storage areas
+;
+; Ethernet extension (eth)
+;
+.	=	PARPRI
+ETHADR:	.BLKW	3		;ethernet address
+ETHAQR:	.BLKW	1		;arp requests received
+ETHIQR:	.BLKW	2		;last request received for IP address
+ETHARX:	.BLKW	1		;arp replies sent
+ETHEQR:	.BLKW	3		;last reply sent to Ether address
+ETHAQX:	.BLKW	1		;arp requests sent
+ETHIQX:	.BLKW	2		;last request sent for IP address
+ETHARR:	.BLKW	1		;arp replies received
+ETHEQX:	.BLKW	3		;last reply received from Ether address
+ETHAXX:	.BLKW	1		;arp output errors
+ETHIAX:	.BLKW	2		;last output error for IP address
+ETHAXR:	.BLKW	1		;arp input errors
+ETHIAR:	.BLKW	3		;last input error from Ether address
+ETHLEN	=	.		;end of eth extension
+.ENDM	.ETH
+.MACRO	.DMV			;define dmv storage areas
+;
+; DMV11 extension (dms)
+;
+.	=	PARPRI
+STATUS:	.BLKW	1		;status vector
+CYCLES:	.BLKW	1		;statistics cycles
+ERRLOG:	.BLKW	16.		;control reply counters
+DMSPTR:	.BLKW	1		;statistics pointer
+DMSCTL:	.BLKW	2		;error messages\code
+DMSINF:	.BLKW	2		;modem status messages\code
+DMSDAO:	.BLKW	2		;(t12) outbound data errors\flags
+DMSDAI:	.BLKW	2		;(t13) inbound data errors\flags
+DMSBFL:	.BLKW	2		;(t14) local buffer errors\flags
+DMSBFR:	.BLKW	2		;(t15) remote buffer errors\flags
+DMSTOR:	.BLKW	1		;(t17l) remote timeouts
+DMSTOL:	.BLKW	1		;(t17h) local timeouts
+DMSGSO:	.BLKW	2		;(g15) outbound station errors\flags
+DMSGSI:	.BLKW	2		;(g16) inbound station errors\flags
+DMSGCK:	.BLKW	1		;(g17l+g17h) header checksum errors
+DMSEND	=	.		;end of statistics area
+.ENDM	.DMV
+.MACRO	.X25			;define x25 storage areas
+;
+; Assembly parameters
+;
+QUESIZ	=	8.		;max csr queue elements
+;
+; Queue entry format
+;
+.	=	0
+Q.DPN:	.BLKB	1		;data path number
+Q.OPN:	.BLKB	1		;operation
+Q.FUN:	.BLKB	1		;function
+Q.FLG:	.BLKB	1		;flags
+Q.ADR:	.BLKW	1		;address
+Q.CNT:	.BLKW	1		;count
+Q.LEN	=	.		;end of queue entry
+;
+; x25 interface leader format
+;
+.	=	0
+X2.DPN:	.BLKB	1		;data path number
+X2.OPN:	.BLKB	1		;interface operation
+XO.RED	=	1*2		;read
+XO.WRT	=	2*2		;write/end
+XO.SIG	=	3*2		;write/signal
+X25LEN	=	.		;beginning of command portion
+X2.CMD:	.BLKB	1		;command code
+X2.LCN:	.BLKB	1		;logical channel number
+X2.VCN:	.BLKB	1		;virtual circuit number/cause code
+X2.CNT:	.BLKB	1		;byte count
+X2.DAT	=	.		;beginning of data portion
+;
+; Logical channel entry format
+;
+.	=	0
+CB.STA:	.BLKB	1		;state
+CB.FLG:	.BLKB	1		;flags
+CB.TTL:	.BLKB	1		;time-to-live counter
+CB.VCN:	.BLKB	1		;virtual circuit number
+	.EVEN
+CB.ADR:	.BLKW	2		;internet address
+CB.LEN	=	.		;length of connection block
+;
+; Parameter area extension (par)
+;
+.	=	PARPRI
+QUEPUT:	.BLKW	1		;input queue put pointer
+QUEGET:	.BLKW	1		;input queue get pointer
+QUEBGN:	.BLKW	1		;beginning of queue
+QUEEND:	.BLKW	1		;end of queue
+X25CNT:	.BLKW	1		;output count
+X25CMD:	.BLKB	50.		;output command buffer (word aligned)
+DPNMAX:	.BLKB	1		;max dpn
+LCNMAX:	.BLKB	1		;max lcn
+X25LCN:	.BLKB	1		;output lcn
+X25FLG:	.BLKB	1		;driver flags
+X25PID:	.BLKB	1		;output pid
+	.EVEN
+QUEUE:	.BLKW	QUESIZ*Q.LEN/2	;csr queue
+X25BLK	=	.		;beginning of channels
+.ENDM	.X25
+.MACRO	.IPD			;internet process
+;
+; Parameter save area (ipd)
+;
+.	=	PARLDN
+PARTOT:	.BLKW	2		;input packets
+PARFTO:	.BLKW	1		;timeouts
+PARSIG:	.BLKW	1		;net signals
+PARIPF:	.BLKW	1		;bad format
+PARIPX:	.BLKW	1		;bad checksum
+PARECH:	.BLKW	1		;returned
+PARECM:	.BLKW	1		;dropped
+PARIPR:	.BLKW	1		;control messages
+PARTOP:	.BLKW	2		;output packets
+PARCNT:	.BLKB	1		;connection table size
+PARHID:	.BLKB	1		;host id
+PARNBS	=	.		;beginning of connection table/nbs clock area
+PARNBP:	.BLKW	2		;poll messages
+PARNBR:	.BLKW	1		;no reply
+PARNBX:	.BLKW	1		;bad format
+PARNBD:	.BLKW	1		;bad data
+PARLST:	.BLKW	1		;last set
+PARVLF:	.BLKB	1		;valid data flag
+PARNBM:	.BLKB	64.		;timecode buffer
+	.EVEN
+;
+; Option bits (paropt)
+;
+XLPBIT	=	020000		;ip loopback (1)
+CLKBIT	=	010000		;clock data valid (1)
+TRKBIT	=	004000		;disable clock tracking (1)
+;
+; Process save area extension (inp)
+;
+.	=	PSAEND
+DASPAR	=	.		;parameter message
+RPYPID:	.BLKB	1		;SD.DST (destination port id)
+TYPE:	.BLKB	1		;SD.CTL (control code)
+SIGNAL:	.BLKB	1		;SD.CHN (signal opcode)
+FRMPID:	.BLKB	1		;SD.DEV (source port id)
+MSGIDN:	.BLKW	1		;SD.BLK (connection id)
+MSGDAT:	.BLKW	1		;SD.ADR (message data)
+MSGIDM:	.BLKW	2		;SD.CNT,SD.AST (message id)
+RESTIM:	.BLKW	1		;residual ticks to next poll
+CODE:	.BLKW	1		;icmp error code
+CONLST:	.BLKW	1		;end of connection table
+SRVPTR:	.BLKW	1		;universal server connection pointer
+TABTIM:	.BLKW	1		;residual ticks to next host table scan
+TCPBGN	=	.		;end of common area
+.ENDM	.IPD
+.MACRO	.KWTAB	NAME,ENTRY	;construct kwik table entry
+	.RAD50	/NAME/		;command name
+	.WORD	ENTRY-.		;service routine entry
+.ENDM	.KWTAB
+.MACRO	.TRDEF			;define trap/clock codes
+TR.CLK	=	0*4		;clock monitor
+TR.IMP	=	1*4		;icmp received message
+TR.LUP	=	2*4		;link up
+TR.LDN	=	3*4		;link down
+TR.PMP	=	4*4		;buffer preemption
+TR.LDR	=	5*4		;link status
+TR.TCR	=	6*4		;tcp receive data segment
+TR.TCX	=	7*4		;tcp transmit data segment
+TR.SPW	=	10*4		;tcp doorbell
+TR.SMP	=	11*4		;spool request
+TR.DSK	=	12*4		;disk error
+TR.DMN	=	13*4		;daemon error
+TR.RUT	=	14*4		;route change
+TR.DWN	=	15*4		;route down
+TR.PSN	=	16*4		;PSN error message
+TR.ERR	=	17*4		;icmp rceived message
+;
+CK.UNS	=	0		;unspecified or unknown
+CK.ATM	=	1		;atom (cesium, hydrogen, etc.)
+CK.GPS	=	2		;global position system
+CK.LRN	=	3		;loran-c
+CK.WWB	=	4		;longwave (dcf77/msf/wwvb)
+CK.WWV	=	5		;shortwave (chu/wwv/wwvh)
+CK.GOS	=	6		;satellite (goes)
+CK.DCN	=	7		;dcn (local net)
+CK.NTP	=	8.		;udp/ntp
+CK.UDP	=	9.		;udp/time
+CK.MAN	=	10.		;eyeball-and-wristwatch
+CK.MDM	=	11.		;nist modem
+.ENDM	.TRDEF
+.MACRO	.TRAP	TYPE,A,B,C,D,E	;send trap message
+	.MCALL	.PUTDA
+	.IF	NB,<TYPE>
+	.IF	NB,<A>
+	.IF	NB,<E>
+	MOV	E,-(SP)		;SD.AST
+	.IFF
+	CLR	-(SP)
+	.ENDC
+	.IF	NB,<D>
+	MOV	D,-(SP)		;SD.CNT
+	.IFF
+	CLR	-(SP)
+	.ENDC
+	.IF	NB,<C>
+	MOV	C,-(SP)		;SD.ADR
+	.IFF
+	CLR	-(SP)
+	.ENDC
+	.IF	NB,<B>
+	MOV	B,-(SP)		;SD.BLK
+	.IFF
+	CLR	-(SP)
+	.ENDC
+	MOV	A,-(SP)		;SD.CHN,SD.DEV
+	.ENDC
+	MOV	#TRPCTL*400,-(SP) ;SD.DST,SD.CTL
+	BISB	TYPE,1(SP)	;type code
+	MOV	SP,R0
+	.PUTDA	R0
+	ROL	R0		;preserve c bit
+	ADD	#2*6,SP
+	ROR	R0
+	.IFF
+	.PUTDA
+	.ENDC
+.ENDM	.TRAP
+.MACRO	$OPEN			;ip open function
+	MOV	#0,R0
+	.GLOBL	$CTRL
+	JSR	PC,$CTRL
+.ENDM	$OPEN
+.MACRO	$CLOSE			;ip close function
+	MOV	#1,R0
+	.GLOBL	$CTRL
+	JSR	PC,$CTRL
+.ENDM	$CLOSE
+.MACRO	$STAT			;ip status function
+	MOV	#2,R0
+	.GLOBL	$CTRL
+	JSR	PC,$CTRL
+.ENDM	$STAT
+.MACRO	$GTPKT			;allocate and initialize internet packet
+	MOV	#3,R0
+	.GLOBL	$CTRL
+	JSR	PC,$CTRL
+.ENDM	$GTPKT
+.MACRO	$INPKT			;initialize internet packet
+	MOV	#4,R0
+	.GLOBL	$CTRL
+	JSR	PC,$CTRL
+.ENDM	$INPKT
+.MACRO	$SNPKT			;send internet packet
+	MOV	#5,R0
+	.GLOBL	$CTRL
+	JSR	PC,$CTRL
+.ENDM	$SNPKT
+.MACRO	$FRPKT			;free internet packet
+	MOV	#6,R0
+	.GLOBL	$CTRL
+	JSR	PC,$CTRL
+.ENDM	$FRPKT
+.MACRO	$SNOPT			;send options
+	MOV	#7,R0
+	.GLOBL	$CTRL
+	JSR	PC,$CTRL
+.ENDM	$SNOPT
+.MACRO	.MSG	LDN		;switch output stream for .ttyou
+	.IF	NB,<LDN>
+	.IF	DIF,<LDN>,R0
+	.IF	IDN,<LDN>,#0
+	.IFT
+	CLR	R0
+	.IFF
+	MOV	LDN,R0		;get ldn
+	.ENDC
+	.ENDC
+	.ENDC
+	EMT	^O<002+USEBAS>
+.ENDM	.MSG
+.MACRO	.EVENT			;wait for event
+	EMT	^O<004+USEBAS>
+.ENDM	.EVENT
+.MACRO	.ENBCR			;enable completion interrupt
+	EMT	^O<005+USEBAS>
+.ENDM	.ENBCR
+.MACRO	.DSBCR			;disable completion interrupt
+	EMT	^O<006+USEBAS>
+.ENDM	.DSBCR
+.MACRO	$LOAD			;load program
+	EMT	^O<007+USEBAS>
+.ENDM	$LOAD
+.MACRO	$RECV			;tcp receive data
+	EMT	^O<010+USEBAS>
+.ENDM	$RECV
+.MACRO	$SEND			;tcp send data
+	EMT	^O<011+USEBAS>
+.ENDM	$SEND
+.MACRO	$INT			;send tcp interrupt
+	EMT	^O<013+USEBAS>
+.ENDM	$INT
+.MACRO	.INIT			;000 system reset
+	EMT	^O<000+SUPBAS>
+.ENDM	.INIT
+.MACRO	.PSEM	PID		;001 semaphore p-operation
+	.IF	NB,<PID>
+	.IF	DIF,<PID>,R1
+	MOVB	PID,R1
+	.ENDC
+	.ENDC
+	EMT	^O<001+SUPBAS>
+.ENDM	.PSEM
+.MACRO	.VSEM	PID		;002 semaphore v-operation
+	.IF	NB,<PID>
+	.IF	DIF,<PID>,R1
+	MOVB	PID,R1
+	.ENDC
+	.ENDC
+	EMT	^O<002+SUPBAS>
+.ENDM	.VSEM
+.MACRO	.SKED			;003 schedule process
+	EMT	^O<003+SUPBAS>
+.ENDM	.SKED
+.MACRO	.SETC			;004 set process condition code
+	EMT	^O<004+SUPBAS>
+.ENDM	.SETC
+.MACRO	.PRIO			;005 set process priority
+	EMT	^O<005+SUPBAS>
+.ENDM	.PRIO
+.MACRO	.SETV			;006 attach interrupt
+	EMT	^O<006+SUPBAS>
+.ENDM	.SETV
+.MACRO	.WAITS			;007 wait for interrupt
+	EMT	^O<007+SUPBAS>
+.ENDM	.WAITS
+.MACRO	.GPKT			;010 get packet
+	EMT	^O<010+SUPBAS>
+.ENDM	.GPKT
+.MACRO	.FPKT	ADR		;011 free packet
+	.IF	NB,<ADR>
+	.IF	DIF,<ADR>,R0
+	MOV	ADR,R0
+	.ENDC
+	.ENDC
+	EMT	^O<011+SUPBAS>
+.ENDM	.FPKT
+.MACRO	.TSEM	PID		;012 semaphore t-operation
+	.IF	NB,<PID>
+	.IF	DIF,<PID>,R1
+	MOVB	PID,R1
+	.ENDC
+	.ENDC
+	EMT	^O<012+SUPBAS>
+.ENDM	.TSEM
+.MACRO	.PPKT			;013 preempt packet
+	EMT	^O<013+SUPBAS>
+.ENDM	.PPKT
+.MACRO	.PUTDA	PTR		;014 send message to port
+	.IF	NB,<PTR>
+	.IF	DIF,<PTR>,R0
+	MOV	PTR,R0
+	.ENDC
+	.ENDC
+	EMT	^O<014+SUPBAS>
+.ENDM	.PUTDA
+.MACRO	.GETDA	PTR,TIM		;015 receive message from port
+	.IF	NB,<TIM>
+	.IF	DIF,<TIM>,R0
+	MOV	TIM,R0
+	.ENDC
+	.IFF
+	CLR	R0
+	.ENDC
+	.IF	NB,<PTR>
+	.IF	DIF,<PTR>,R1
+	MOV	PTR,R1
+	.ENDC
+	.ENDC
+	EMT	^O<015+SUPBAS>
+.ENDM	.GETDA
+.MACRO	.ASYN			;016 send interrupt to port
+	EMT	^O<016+SUPBAS>
+.ENDM	.ASYN
+.MACRO	.STIM			;017 set interval timer
+	EMT	^O<017+SUPBAS>
+.ENDM	.STIM
+.MACRO	.CTIM			;020 clear interval timer
+	EMT	^O<020+SUPBAS>
+.ENDM	.CTIM
+.MACRO	.DLAY			;021 wait for interval timer
+	EMT	^O<021+SUPBAS>
+.ENDM	.DLAY
+.MACRO	.TPKT			;022 scavenge packet
+	EMT	^O<022+SUPBAS>
+.ENDM	.TPKT
+.MACRO	.GCLK			;023 get system clock
+	EMT	^O<023+SUPBAS>
+.ENDM	.GCLK
+.MACRO	.GDAT			;025 get system date
+	EMT	^O<025+SUPBAS>
+.ENDM	.GDAT
+.MACRO	.GMEM			;026 get free memory pointers
+	EMT	^O<026+SUPBAS>
+.ENDM	.GMEM
+.MACRO	.GTAD			;027 get real address
+	EMT	^O<027+SUPBAS>
+.ENDM	.GTAD
+.MACRO	.WIND			;030 map virtual window
+	EMT	^O<030+SUPBAS>
+.ENDM	.WIND
+.MACRO	.UNIQ			;030 get unique number
+	EMT	^O<031+SUPBAS>
+.ENDM	.UNIQ
+.MACRO	.GPSA			;032 get psa pointers
+	EMT	^O<032+SUPBAS>
+.ENDM	.GPSA
+.MACRO	.GQNC			;033 get quench packet
+	EMT	^O<033+SUPBAS>
+.ENDM	.GQNC
+.MACRO	.TRPID	PID		;034 set trap process pid
+	.IF	NB,<PID>
+	.IF	DIF,<PID>,R1
+	MOVB	PID,R1
+	.ENDC
+	.ENDC
+	EMT	^O<034+SUPBAS>
+.ENDM	.TRPID
+.MACRO	.BOOT			;035 system reboot
+	EMT	^O<035+SUPBAS>
+.ENDM	.BOOT
+.MACRO .SNCA	AREA,ADDR,CODE	;set network trap
+.IF NDF ...V1
+.MCALL .MACS
+.MACS
+.ENDC
+...CM6	<AREA>,15.,0,<CODE>,<ADDR>,E
+.ENDM
+                                                                                                                                                    
