@@ -1,0 +1,54 @@
+From comp.sys.dec Thu Feb  9 16:10:55 1995
+Path: Krille.Update.UU.SE!columba.udac.uu.se!sunic!news.kth.se!news.ifm.liu.se!owner-pdp11@lysator.liu.se
+From: wilsonj@alum01.its.rpi.edu (John Wilson)
+Newsgroups: alt.sys.pdp11,comp.sys.dec,comp.sys.dec.micro,vmsnet.pdp-11,mail-list.pdp11
+Subject: Dave Mills' Fuzzball
+Date: 5 Feb 1995 07:50:44 +0100
+Organization: Rensselaer Polytechnic Institute, Troy NY
+Lines: 38
+Sender: news@newsy.ifm.liu.se
+Approved: newsy.ifm.liu.se mail injector.
+Message-ID: <3gvfmr$kqk@usenet.rpi.edu>
+NNTP-Posting-Host: newsy.ifm.liu.se
+X-Gateway-Source-Info: USENET
+Xref: Krille.Update.UU.SE alt.sys.pdp11:440 comp.sys.dec:7350 comp.sys.dec.micro:1047 vmsnet.pdp-11:1488
+
+Dave Mills' Fuzzball operating system is now available via anonymous FTP
+from tats.wizvax.com in directory pub/pdp11/fuzzball.
+
+Fuzzball is a timesharing operating system for the PDP-11 with built-in
+TCP/IP support.  It seems to be mainly targeted at the 11/23 and 11/73,
+but has conditionals for Unibus processors and 18-bit addressing which
+seem to work.  However it supports Q-bus better, in particular there is
+no DEUNA or DELUA ethernet driver in the system.
+
+The distribution consists of four logical disk files, and RT-11 V5.X
+is required to build, boot, and run Fuzzball (it's not self-booting, so
+it has to be loaded and run from a running RT-11 system, and once running
+it needs RT-11's utility programs to do many common operations).
+
+Configuring the system is not for the faint of heart!  Actually I can't
+seem to find any real docs on how to do it, and just so you know it's
+done by modifying some assembly language source files and making up .COM
+files to assemble the pieces and link them together;  it's not magic but
+it could be intimidating to non-programmers.
+
+Also I would imagine that harrassing Mr. Mills for support would be a bad
+idea.  And you certainly shouldn't expect *me* to know more than you do!
+(You can bug me anyway if you want, I'm certainly willing to *try* to help
+figure things out.)  But the sources are pretty well commented and there's
+a HELP library which explains the user commands.
+
+One thing is clear from the sources, Mr. Mills really cares about what time
+it is!
+
+Anyway have fun, and if you screw up downloading please wait a day before
+trying again, I have an agreement with the person whose net my machine is
+on to keep usage low and the four disk images are 1MB each uncompressed.
+If anyone needs to have the files split out of the LD: images let me know,
+but if you can't read the LD:s then you probably can't assemble the files
+either.
+
+John Wilson
+<wilson@tats.wizvax.com>
+

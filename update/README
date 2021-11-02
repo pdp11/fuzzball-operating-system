@@ -1,0 +1,4 @@
+This directory contains the Fuzzball distribution disk images, courtesy
+of Dave Mills of the University of Delaware.  RT-11 is required to build
+and boot Fuzzball.  Be sure to use image mode (that is, binary) to retrieve
+them.
